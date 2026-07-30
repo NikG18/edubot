@@ -379,8 +379,6 @@ if __name__ == "__main__":
     # Запускаем асинхронный цикл
     asyncio.run(main())
 
-Add bot.py
-
 
 
 
