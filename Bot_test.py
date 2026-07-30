@@ -458,7 +458,7 @@ async def help(message: types.Message):
 # 4. Главная функция запуска бота
 async def main() -> None:
     # Настраиваем свойства бота по умолчанию (включая HTML-разметку для текста)
-    bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
     # Запускаем опрос серверов Telegram (Long Polling)
     # drop_pending_updates=True удаляет сообщения, пришедшие боту, пока он был выключен
