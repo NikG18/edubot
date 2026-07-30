@@ -34,6 +34,11 @@ async def Start(message: Message) -> None:
     await message.answer(
         f"Привет, {html.bold(message.from_user.full_name)}! Я онлайн ассистент Никиты Тимуровича. Чем могу помочь?", reply_markup=keyboard)
 
+#@dp.message()
+#async def handle_message(message: types.Message):
+#    # ID пользователя, который отправил это сообщение                     УЗНАТЬ ID
+#   user_id = message.from_user.id
+ #   await message.answer(f"Ваш ID: {user_id}")
 
 @dp.message(F.text.in_(["Назад"]))
 async def main_menu_buttons(message: Message) -> None:
@@ -145,6 +150,8 @@ async def lesson_info(message: types.Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Химия", callback_data="himiy")],
         [InlineKeyboardButton(text="Физика", callback_data="fizika")],
+        [InlineKeyboardButton(text="Математика", callback_data="matem")],
+        [InlineKeyboardButton(text="Информатика", callback_data="inform")],
         [InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")]
     ])
     await message.answer("Какой предмет Вас интересует?", reply_markup=keyboard)
@@ -154,6 +161,8 @@ async def back_to_sj(call: CallbackQuery):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Химия", callback_data="himiy")],
         [InlineKeyboardButton(text="Физика", callback_data="fizika")],
+        [InlineKeyboardButton(text="Математика", callback_data="matem")],
+        [InlineKeyboardButton(text="Информатика", callback_data="inform")],
         [InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")]
     ])
     await call.message.edit_text("Какой предмет Вас интересует?", reply_markup=keyboard)
@@ -180,6 +189,27 @@ async def fizika(call: CallbackQuery):
         ])
     )
     await call.answer()
+@dp.callback_query(F.data == "matem")
+async def matem(call: CallbackQuery):
+    await call.message.edit_text(
+        "Математику преподает пока только Никита Дмитриевич, хотели бы узнать цену?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Цена занятий", callback_data="pricem")],
+            [InlineKeyboardButton(text="Назад к списку", callback_data="back_to_sj")]
+        ])
+    )
+    await call.answer()  # обязательно отвечаем на callback
+
+@dp.callback_query(F.data == "inform")
+async def inform(call: CallbackQuery):
+    await call.message.edit_text(
+        "Информатику преподает пока только Никита Дмитриевич, хотели бы узнать цену?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Цена занятий", callback_data="pricei")],
+            [InlineKeyboardButton(text="Назад к списку", callback_data="back_to_sj")]
+        ])
+    )
+    await call.answer()  # обязательно отвечаем на callback
 
 @dp.callback_query(F.data == "priceh")
 async def priceh(call: CallbackQuery):
@@ -205,6 +235,28 @@ async def pricef(call: CallbackQuery):
     )
     await call.answer()
 
+@dp.callback_query(F.data == "pricem")
+async def pricem(call: CallbackQuery):
+    await call.message.edit_text(
+        "Цена за 1 час индивидуального занятия:"
+        "Никита Дмитриевич --> 2500 рублей",
+
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Назад к списку", callback_data="back_to_sj")]
+        ])
+    )
+    await call.answer()
+
+@dp.callback_query(F.data == "pricei")
+async def pricei(call: CallbackQuery):
+    await call.message.edit_text(
+        "Цена за 1 час индивидуального занятия:"
+        "Никита Дмитриевич --> 2500 рублей",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Назад к списку", callback_data="back_to_sj")]
+        ])
+    )
+    await call.answer()
 
 #####################################################################
 @dp.message(F.text.in_(["Запись на занятие"]))
@@ -212,17 +264,33 @@ async def zapis(message: types.Message):
     await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
                 # Создаём инлайн-кнопки для каждого репетитора
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Химия", callback_data="himiy")],
-        [InlineKeyboardButton(text="Физика", callback_data="fizika")],
+        [InlineKeyboardButton(text="Никита Тимурович", callback_data="tutor_nikitaz")],
+        [InlineKeyboardButton(text="Юлия Евгеньевна", callback_data="tutor_juliaz")],
+        [InlineKeyboardButton(text="Никита Дмитриевич", callback_data="tutor_nikitakz")],
         [InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")]
     ])
-    await message.answer("На занятие по какому прдемету вы хотите записаться?", reply_markup=keyboard)
+    await message.answer("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
+
+@dp.callback_query(F.data == "pred")
+async def pred(call: CallbackQuery):
+    await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
+                # Создаём инлайн-кнопки для каждого репетитора
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Химия", callback_data="himiyz")],
+        [InlineKeyboardButton(text="Физика", callback_data="fizikaz")],
+        [InlineKeyboardButton(text="Математика", callback_data="matemz")],
+        [InlineKeyboardButton(text="Информатика", callback_data="informz")],
+        [InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menuz")]
+    ])
+    await message.answer("На занятие по какому предмету вы хотите записаться?", reply_markup=keyboard)
 
 @dp.callback_query(F.data == "back_to_sj")
 async def back_to_sj(call: CallbackQuery):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Химия", callback_data="himiy")],
         [InlineKeyboardButton(text="Физика", callback_data="fizika")],
+        [InlineKeyboardButton(text="Математика", callback_data="matem")],
+        [InlineKeyboardButton(text="Информатика", callback_data="inform")],
         [InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")]
     ])
     await call.message.edit_text("Какой предмет Вас интересует?", reply_markup=keyboard)
@@ -363,10 +431,18 @@ async def vid(call: CallbackQuery):
 async def svyaz(message: types.Message):
     await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")]])
+        inline_keyboard=[[InlineKeyboardButton(text="Отправить", callback_data="otprav")],
+                         [InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")]
+                         ])
     await message.answer(
-        "Напишите, что вы хотите сообщить преподавателю, после чего ожидайте ответа.",
+        "Напишите, что вы хотите сообщить преподавателю, нажмите кнопку Отправить, после чего ожидайте ответа.",
         reply_markup=keyboard)
+
+
+
+
+
+######################################################################################################
 @dp.message(F.text.in_(["Помощь"]))
 async def help(message: types.Message):
     await message.answer("Сообщаю Вам информацию о каждом разделе...", reply_markup=ReplyKeyboardRemove())
@@ -382,7 +458,7 @@ async def help(message: types.Message):
 # 4. Главная функция запуска бота
 async def main() -> None:
     # Настраиваем свойства бота по умолчанию (включая HTML-разметку для текста)
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
     # Запускаем опрос серверов Telegram (Long Polling)
     # drop_pending_updates=True удаляет сообщения, пришедшие боту, пока он был выключен
