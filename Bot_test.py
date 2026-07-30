@@ -10,7 +10,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardBut
 from aiogram.types import CallbackQuery
 
 import os
-TOKEN = os.environ.get("BOT_TOKEN")
+TOKEN = BOT_TOKEN
 # 1. Токен бота (получите у @BotFather в Telegram)
 
 # Инициализируем диспетчер (главный роутер для хэндлеров)
