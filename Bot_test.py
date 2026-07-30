@@ -8,9 +8,11 @@ from aiogram.enums import ParseMode
 from aiogram.types import Message, ReplyKeyboardRemove
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import CallbackQuery
-
+import os
 # 1. Токен бота (получите у @BotFather в Telegram)
-
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не задан! Передайте его через export BOT_TOKEN=...")
 
 # Инициализируем диспетчер (главный роутер для хэндлеров)
 dp = Dispatcher()
