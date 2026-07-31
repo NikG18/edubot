@@ -10,6 +10,8 @@ from aiogram.enums import ParseMode
 from aiogram.types import Message, ReplyKeyboardRemove
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import CallbackQuery
+import os
+
 
 ADMING_ID = 846400165
 
