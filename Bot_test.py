@@ -16,7 +16,7 @@ from aiogram.types import CallbackQuery
 # ==================== КОНСТАНТЫ ====================
 ADMING_ID = 846400165
 ADMINJ_ID = 5116346967
-ADMIN_IDS = [ADMING_ID]
+ADMIN_IDS = [ADMING_ID, ADMINJ_ID]
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
