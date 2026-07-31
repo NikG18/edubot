@@ -28,7 +28,7 @@ DATA_FILE = "tutors.json"
 
 # ==================== ИНИЦИАЛИЗАЦИЯ ====================
 dp = Dispatcher()
-
+global tutors
 # ==================== ЗАГРУЗКА / СОХРАНЕНИЕ ДАННЫХ ====================
 def load_tutors():
     if os.path.exists(DATA_FILE):
@@ -299,7 +299,7 @@ async def process_prices(message: types.Message, state: FSMContext):
         price_dict = dict(zip(subjects, prices))
         await state.update_data(prices=price_dict)
 
-    global tutors
+    
     if editing:
         edit_key = data.get("edit_key")
         old_tutor = tutors.get(edit_key)
