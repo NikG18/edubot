@@ -1,22 +1,28 @@
 import asyncio
 import logging
 import sys
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram import Bot, Dispatcher, html, types, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.enums import ParseMode
 from aiogram.types import Message, ReplyKeyboardRemove
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import CallbackQuery
-import os
+
+ADMING_ID = 846400165
+
 # 1. Токен бота (получите у @BotFather в Telegram)
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не задан! Передайте его через export BOT_TOKEN=...")
+TOKEN = "8960752960:AAHw_-Pc208sokOH_BO1fFy6BkyIIIuKC-k"
 
 # Инициализируем диспетчер (главный роутер для хэндлеров)
 dp = Dispatcher()
-
+class BookingStates(StatesGroup):
+    choosing_tutor = State()       # (опционально) выбор репетитора – не используем, т.к. уже есть в callback
+    choosing_subject = State()     # аналогично
+    waiting_date_time = State()    # ожидание ввода даты и времени
+    waiting_confirmation = State()
 
 # 2. Хэндлер на команду /start
 @dp.message(Command("start"))
@@ -260,9 +266,9 @@ async def pricei(call: CallbackQuery):
 
 #####################################################################
 @dp.message(F.text.in_(["Запись на занятие"]))
-async def zapis(message: types.Message):
+async def zapis(message: types.Message, state: FSMContext):
     await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
-                # Создаём инлайн-кнопки для каждого репетитора
+    # Создаём инлайн-кнопки для каждого репетитора
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Никита Тимурович", callback_data="tutor_nikitaz")],
         [InlineKeyboardButton(text="Юлия Евгеньевна", callback_data="tutor_juliaz")],
@@ -270,22 +276,210 @@ async def zapis(message: types.Message):
         [InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")]
     ])
     await message.answer("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
+    # Сбрасываем состояние на случай, если оно было
+    await state.clear()
 
-@dp.callback_query(F.data == "pred")
-async def pred(call: CallbackQuery):
-    await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
-                # Создаём инлайн-кнопки для каждого репетитора
+# 3. Выбор репетитора (сохраняем в состояние)
+@dp.callback_query(F.data.startswith("tutor_"))
+async def choose_tutor(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    # Сохраняем выбранного репетитора
+    tutor_map = {
+        "tutor_nikitaz": "Никита Тимурович",
+        "tutor_juliaz": "Юлия Евгеньевна",
+        "tutor_nikitakz": "Никита Дмитриевич"
+    }
+    tutor_name = tutor_map.get(call.data)
+    if not tutor_name:
+        await call.message.edit_text("Ошибка выбора репетитора.")
+        return
+    await state.update_data(tutor=tutor_name)
+
+    # Показываем предметы в зависимости от репетитора
+    if call.data == "tutor_nikitaz":
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Химия", callback_data="himiyz")],
+            [InlineKeyboardButton(text="Физика", callback_data="fizikaz")],
+            [InlineKeyboardButton(text="Назад к репетиторам", callback_data="back_to_menuz")]
+        ])
+    elif call.data == "tutor_juliaz":
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Химия", callback_data="himiyz")],
+            # У Юлии только химия (как у вас)
+            [InlineKeyboardButton(text="Назад к репетиторам", callback_data="back_to_menuz")]
+        ])
+    elif call.data == "tutor_nikitakz":
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Химия", callback_data="himiyz")],
+            [InlineKeyboardButton(text="Физика", callback_data="fizikaz")],
+            [InlineKeyboardButton(text="Математика", callback_data="matemz")],
+            [InlineKeyboardButton(text="Информатика", callback_data="informz")],
+            [InlineKeyboardButton(text="Назад к репетиторам", callback_data="back_to_menuz")]
+        ])
+    else:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Назад к репетиторам", callback_data="back_to_menuz")]
+        ])
+
+    await call.message.edit_text("На занятие по какому предмету вы хотите записаться?", reply_markup=keyboard)
+
+# 4. Кнопка "Назад к репетиторам"
+@dp.callback_query(F.data == "back_to_menuz")
+async def back_to_menuz(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    # Очищаем данные о репетиторе, так как пользователь возвращается
+    await state.clear()
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Химия", callback_data="himiyz")],
-        [InlineKeyboardButton(text="Физика", callback_data="fizikaz")],
-        [InlineKeyboardButton(text="Математика", callback_data="matemz")],
-        [InlineKeyboardButton(text="Информатика", callback_data="informz")],
-        [InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menuz")]
+        [InlineKeyboardButton(text="Никита Тимурович", callback_data="tutor_nikitaz")],
+        [InlineKeyboardButton(text="Юлия Евгеньевна", callback_data="tutor_juliaz")],
+        [InlineKeyboardButton(text="Никита Дмитриевич", callback_data="tutor_nikitakz")],
+        [InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")]
     ])
-    await message.answer("На занятие по какому предмету вы хотите записаться?", reply_markup=keyboard)
+    await call.message.edit_text("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
 
+# 5. Обработчики выбора предмета (все с "z" на конце)
+@dp.callback_query(F.data == "himiyz")
+async def subject_himiyz(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.update_data(subject="Химия")
+    # Переходим к вводу даты и времени
+    await call.message.edit_text(
+        "Вы выбрали предмет: Химия.\n"
+        "Теперь введите желаемую дату и время занятия в формате:\n"
+        "ДД.ММ.ГГГГ ЧЧ:MM\n"
+        "Например: 15.08.2026 14:30"
+    )
+    await state.set_state(BookingStates.waiting_date_time)
+
+@dp.callback_query(F.data == "fizikaz")
+async def subject_fizikaz(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.update_data(subject="Физика")
+    await call.message.edit_text(
+        "Вы выбрали предмет: Физика.\n"
+        "Теперь введите желаемую дату и время занятия в формате:\n"
+        "ДД.ММ.ГГГГ ЧЧ:MM\n"
+        "Например: 15.08.2026 14:30"
+    )
+    await state.set_state(BookingStates.waiting_date_time)
+
+@dp.callback_query(F.data == "matemz")
+async def subject_matemz(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.update_data(subject="Математика")
+    await call.message.edit_text(
+        "Вы выбрали предмет: Математика.\n"
+        "Теперь введите желаемую дату и время занятия в формате:\n"
+        "ДД.ММ.ГГГГ ЧЧ:MM\n"
+        "Например: 15.08.2026 14:30"
+    )
+    await state.set_state(BookingStates.waiting_date_time)
+
+@dp.callback_query(F.data == "informz")
+async def subject_informz(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.update_data(subject="Информатика")
+    await call.message.edit_text(
+        "Вы выбрали предмет: Информатика.\n"
+        "Теперь введите желаемую дату и время занятия в формате:\n"
+        "ДД.ММ.ГГГГ ЧЧ:MM\n"
+        "Например: 15.08.2026 14:30"
+    )
+    await state.set_state(BookingStates.waiting_date_time)
+
+# 6. Обработка ввода даты и времени (текст от пользователя)
+@dp.message(BookingStates.waiting_date_time)
+async def process_date_time(message: types.Message, state: FSMContext):
+    date_time_text = message.text.strip()
+    # Простейшая проверка формата (можно улучшить)
+    if not date_time_text or len(date_time_text) < 10:
+        await message.answer("Пожалуйста, введите дату и время в формате ДД.ММ.ГГГГ ЧЧ:MM")
+        return
+    # Сохраняем дату/время
+    await state.update_data(date_time=date_time_text)
+    # Получаем сохранённые данные
+    data = await state.get_data()
+    tutor = data.get("tutor")
+    subject = data.get("subject")
+    # Показываем подтверждение
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить запись", callback_data="confirm_booking")],
+        [InlineKeyboardButton(text="✏️ Изменить дату/время", callback_data="change_datetime")],
+        [InlineKeyboardButton(text="❌ Отменить запись", callback_data="cancel_booking")]
+    ])
+    await message.answer(
+        f"Проверьте данные:\n"
+        f"👨‍🏫 Репетитор: {tutor}\n"
+        f"📚 Предмет: {subject}\n"
+        f"📅 Дата и время: {date_time_text}\n\n"
+        "Всё верно?",
+        reply_markup=keyboard
+    )
+    await state.set_state(BookingStates.waiting_confirmation)
+
+# 7. Кнопка "Подтвердить запись"
+@dp.callback_query(F.data == "confirm_booking", StateFilter(BookingStates.waiting_confirmation))
+async def confirm_booking(call: CallbackQuery, state: FSMContext, bot: Bot):
+    await call.answer()
+    data = await state.get_data()
+    tutor = data.get("tutor")
+    subject = data.get("subject")
+    date_time = data.get("date_time")
+    user = call.from_user
+    username = user.username or user.full_name
+    user_id = user.id
+
+    # Формируем сообщение для администратора
+    booking_message = (
+        f"📝 Новая запись на занятие!\n\n"
+        f"👤 Ученик: {username} (ID: {user_id})\n"
+        f"👨‍🏫 Репетитор: {tutor}\n"
+        f"📚 Предмет: {subject}\n"
+        f"📅 Дата и время: {date_time}\n"
+        f"📞 Связаться с учеником: @{username}" if username else f"ID: {user_id}"
+    )
+
+    # Отправляем администратору
+    try:
+        await bot.send_message(chat_id=ADMING_ID, text=booking_message)
+        await call.message.edit_text("✅ Запись успешно подтверждена! Преподаватель свяжется с вами.")
+        # Можно также отправить пользователю подтверждение
+        await call.message.answer("Вы записаны на занятие. Ожидайте подтверждения от преподавателя.")
+    except Exception as e:
+        await call.message.edit_text(f"❌ Произошла ошибка при отправке записи. Попробуйте позже.\nОшибка: {e}")
+    finally:
+        await state.clear()
+
+# 8. Кнопка "Изменить дату/время"
+@dp.callback_query(F.data == "change_datetime", StateFilter(BookingStates.waiting_confirmation))
+async def change_datetime(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await call.message.edit_text(
+        "Введите новую дату и время в формате ДД.ММ.ГГГГ ЧЧ:MM"
+    )
+    await state.set_state(BookingStates.waiting_date_time)
+
+# 9. Кнопка "Отменить запись"
+@dp.callback_query(F.data == "cancel_booking", StateFilter(BookingStates.waiting_confirmation))
+async def cancel_booking(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await call.message.edit_text("Запись отменена. Возвращаемся в главное меню.")
+    await state.clear()
+    # Возвращаем главное меню
+    await call.message.answer("Главное меню:", reply_markup=back_to_menu)
+
+# 10. Кнопка "Назад в меню" (главное)
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.clear()
+    await call.message.delete()  # удаляем текущее сообщение с инлайн-кнопками
+    await call.message.answer("Главное меню:", reply_markup=back_to_menu)
+
+# 11. (Опционально) Обработчик back_to_sj, если используется в других частях
 @dp.callback_query(F.data == "back_to_sj")
 async def back_to_sj(call: CallbackQuery):
+    await call.answer()
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Химия", callback_data="himiy")],
         [InlineKeyboardButton(text="Физика", callback_data="fizika")],
@@ -294,9 +488,8 @@ async def back_to_sj(call: CallbackQuery):
         [InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")]
     ])
     await call.message.edit_text("Какой предмет Вас интересует?", reply_markup=keyboard)
-    await call.answer()
 
-
+# 12. Ваши существующие обработчики для himiy, fizika (без z) – оставляем как есть
 @dp.callback_query(F.data == "himiy")
 async def himiy(call: CallbackQuery):
     await call.message.edit_text(
@@ -306,7 +499,8 @@ async def himiy(call: CallbackQuery):
             [InlineKeyboardButton(text="Назад к списку", callback_data="back_to_sj")]
         ])
     )
-    await call.answer()  # обязательно отвечаем на callback
+    await call.answer()
+
 @dp.callback_query(F.data == "fizika")
 async def fizika(call: CallbackQuery):
     await call.message.edit_text(
@@ -458,7 +652,7 @@ async def help(message: types.Message):
 # 4. Главная функция запуска бота
 async def main() -> None:
     # Настраиваем свойства бота по умолчанию (включая HTML-разметку для текста)
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
     # Запускаем опрос серверов Telegram (Long Polling)
     # drop_pending_updates=True удаляет сообщения, пришедшие боту, пока он был выключен
@@ -469,6 +663,9 @@ if __name__ == "__main__":
     # Настраиваем вывод логов в консоль, чтобы видеть работу бота и ошибки
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
+
+    # Запускаем асинхронный цикл
+    asyncio.run(main())
 
     # Запускаем асинхронный цикл
     asyncio.run(main())
