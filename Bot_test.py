@@ -9,26 +9,25 @@ from aiogram import Bot, Dispatcher, html, types, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command, StateFilter
 from aiogram.enums import ParseMode
-from aiogram.types import Message, ReplyKeyboardRemove, FSInputFile
+from aiogram.types import Message, ReplyKeyboardRemove
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import CallbackQuery
-
 
 # ==================== КОНСТАНТЫ ====================
 ADMING_ID = 846400165
 ADMINJ_ID = 5116346967
-ADMIN_IDS = [ADMING_ID]  
-# 1. Токен бота (получите у @BotFather в Telegram)
+ADMIN_IDS = [ADMING_ID]  # теперь оба админа видят админ-панель
+
+# Токен берётся из переменной окружения
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан! Передайте его через export BOT_TOKEN=...")
-
 
 DATA_FILE = "tutors.json"
 
 # ==================== ИНИЦИАЛИЗАЦИЯ ====================
 dp = Dispatcher()
-global tutors
+
 # ==================== ЗАГРУЗКА / СОХРАНЕНИЕ ДАННЫХ ====================
 def load_tutors():
     if os.path.exists(DATA_FILE):
@@ -43,8 +42,8 @@ def load_tutors():
             tutor.setdefault("description", "")
         return data
     else:
-        # Начальные данные с тремя репетиторами (включая Никиту Дмитриевича)
-        return {
+        # Начальные данные с тремя репетиторами
+        initial_data = {
             "tutor_nikitaz": {
                 "name": "Никита Тимурович",
                 "description": (
@@ -77,6 +76,9 @@ def load_tutors():
                 "prices": {"Химия": 2500, "Физика": 2500, "Математика": 2500, "Информатика": 2500}
             }
         }
+        # Сразу сохраняем в файл, чтобы при следующих запусках данные читались оттуда
+        save_tutors(initial_data)
+        return initial_data
 
 def save_tutors(tutors):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -299,7 +301,8 @@ async def process_prices(message: types.Message, state: FSMContext):
         price_dict = dict(zip(subjects, prices))
         await state.update_data(prices=price_dict)
 
-    
+    # Сохраняем или обновляем
+    global tutors
     if editing:
         edit_key = data.get("edit_key")
         old_tutor = tutors.get(edit_key)
