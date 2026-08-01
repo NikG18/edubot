@@ -544,6 +544,7 @@ async def cancel_booking(call: CallbackQuery, state: FSMContext):
 @dp.message(F.text.in_(["📋 Мои записи"]))
 async def my_records(message: types.Message, state: FSMContext):
     await state.clear()
+    await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
     user_id = message.from_user.id
     user_bookings = []
     for bid, b in bookings.items():
@@ -741,7 +742,7 @@ async def process_reply_button(call: CallbackQuery, state: FSMContext):
 async def send_reply_to_student(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     student_id = data["reply_student_id"]
-    reply_text = f"📬 Ответ от преподавателя/администратора:\n{message.text}"
+    reply_text = f"📬 Ответ от преподавателя:\n{message.text}"
     try:
         await bot.send_message(student_id, reply_text)
         await message.answer("✅ Ответ отправлен ученику.", reply_markup=get_main_menu(message.from_user.id))
@@ -1137,6 +1138,7 @@ async def tutor_panel(message: types.Message):
     for tid, t in tutors.items():
         if t.get("telegram_id") == user_id:
             tutor_id = tid
+            await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())###############################################################################################################
             break
     if not tutor_id:
         await message.answer("⛔ Вы не зарегистрированы как преподаватель.")
@@ -1206,7 +1208,8 @@ async def schedule_main(call: CallbackQuery, state: FSMContext):
     text = "Ваше расписание:\n"
     for day in WEEKDAYS:
         slots = sched.get(day, [])
-        text += f"{WEEKDAY_NAMES[day]}: {', '.join(slots) if slots else 'нет'}\n"
+        icon = "✅" if slots
+        text += f"{icon} {WEEKDAY_NAMES[day]}: {', '.join(slots) if slots else 'нет'}\n"
     buttons = [[InlineKeyboardButton(text=f"✏️ {WEEKDAY_NAMES[day]}", callback_data=f"sched_day_{day}")] for day in WEEKDAYS]
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_tutor_panel_{tid}")])
     await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
@@ -1238,7 +1241,8 @@ async def back_to_schedule(call: CallbackQuery, state: FSMContext):
     text = "Ваше расписание:\n"
     for day in WEEKDAYS:
         slots = sched.get(day, [])
-        text += f"{WEEKDAY_NAMES[day]}: {', '.join(slots) if slots else 'нет'}\n"
+        icon = "✅" if slots
+        text += f"{icon} {WEEKDAY_NAMES[day]}: {', '.join(slots) if slots else 'нет'}\n"
     buttons = [[InlineKeyboardButton(text=f"✏️ {WEEKDAY_NAMES[day]}", callback_data=f"sched_day_{day}")] for day in WEEKDAYS]
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_tutor_panel_{tid}")])
     await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
