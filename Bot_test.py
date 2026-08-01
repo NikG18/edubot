@@ -411,7 +411,7 @@ async def subject_chosen(call: CallbackQuery, state: FSMContext):
     dates = get_available_dates(tid)  # по умолчанию 30 дней
     if not dates:
         await call.message.edit_text(
-            "У этого преподавателя пока нет свободных дат.\nПопробуйте позже или свяжитесь с администратором.",
+            "У этого преподавателя пока нет свободных дат.\nПопробуйте позже или свяжитесь с преподавателем",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔙 Назад к репетиторам", callback_data="back_to_tutors_booking")]
             ])
@@ -570,7 +570,7 @@ async def card(call: CallbackQuery):
 
 @dp.callback_query(F.data == "sbp")
 async def sbp(call: CallbackQuery):
-    await call.message.edit_text("📲 Перевод выполняйте, указывая предмет и дату занятия, по номеру 89035370929 на Т-банк", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+    await call.message.edit_text("📲 Перевод выполняйте, указывая предмет и дату занятия, по номеру +7(933)120-96-03 на Т-банк", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_pay")]
     ]))
     await call.answer()
