@@ -169,7 +169,10 @@ async def main_menu_buttons(message: Message) -> None:
 async def back_to_menu(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await state.clear()
-    await call.message.delete()
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
     await call.message.answer("Главное меню:", reply_markup=main_menu)
 
 # ==================== ИНФОРМАЦИЯ О РЕПЕТИТОРАХ ====================
@@ -182,7 +185,12 @@ async def repet(message: types.Message):
 @dp.callback_query(F.data == "back_to_tutors")
 async def back_to_tutors(call: CallbackQuery):
     keyboard = make_tutors_keyboard("tutor_info")
-    await call.message.edit_text("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
+    # Если сообщение с фото, его нельзя редактировать как текст — удаляем и отправляем новое
+    if call.message.content_type == 'photo':
+        await call.message.delete()
+        await call.message.answer("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
+    else:
+        await call.message.edit_text("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
     await call.answer()
 
 @dp.callback_query(F.data.startswith("tutor_info_"))
