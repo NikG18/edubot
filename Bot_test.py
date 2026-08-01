@@ -1208,7 +1208,7 @@ async def schedule_main(call: CallbackQuery, state: FSMContext):
     text = "Ваше расписание:\n"
     for day in WEEKDAYS:
         slots = sched.get(day, [])
-        icon = "✅" if slots
+        icon = "✅" if slots else ""
         text += f"{icon} {WEEKDAY_NAMES[day]}: {', '.join(slots) if slots else 'нет'}\n"
     buttons = [[InlineKeyboardButton(text=f"✏️ {WEEKDAY_NAMES[day]}", callback_data=f"sched_day_{day}")] for day in WEEKDAYS]
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_tutor_panel_{tid}")])
@@ -1241,7 +1241,7 @@ async def back_to_schedule(call: CallbackQuery, state: FSMContext):
     text = "Ваше расписание:\n"
     for day in WEEKDAYS:
         slots = sched.get(day, [])
-        icon = "✅" if slots
+        icon = "✅" if slots else ""
         text += f"{icon} {WEEKDAY_NAMES[day]}: {', '.join(slots) if slots else 'нет'}\n"
     buttons = [[InlineKeyboardButton(text=f"✏️ {WEEKDAY_NAMES[day]}", callback_data=f"sched_day_{day}")] for day in WEEKDAYS]
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_tutor_panel_{tid}")])
