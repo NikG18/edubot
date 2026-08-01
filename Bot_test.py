@@ -130,6 +130,9 @@ class ContactStates(StatesGroup):
     waiting_message = State()
     waiting_reply = State()
 
+class StudentRecordsStates(StatesGroup):
+    viewing = State()
+
 class AdminStates(StatesGroup):
     waiting_name = State()
     waiting_photo = State()
@@ -162,8 +165,9 @@ def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="ℹ️ Информация о репетиторах")],
         [KeyboardButton(text="📚 Информация о занятиях")],
         [KeyboardButton(text="📝 Запись на занятие")],
+        [KeyboardButton(text="📋 Мои записи")],
         [KeyboardButton(text="💳 Оплата")],
-        [KeyboardButton(text="📖 Учебные материалы")],
+        [KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
         [KeyboardButton(text="✉️ Связь с преподавателем")],
         [KeyboardButton(text="❓ Помощь")],
         [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
@@ -363,7 +367,7 @@ async def show_discount_info(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("lesson_subject_"))
 async def show_lesson_subject_info(call: CallbackQuery):
     subject = call.data.split("lesson_subject_", 1)[1]
-    lines = [f"Предмет: {subject}", ""]
+    lines = [f"Предмет: {subject} (цены указаны за 1 час, время МСК)\n"]
     for t in tutors.values():
         if subject in t["subjects"]:
             lines.append(f"👨‍🏫 {t['name']} — {t['subjects'][subject]} руб.")
@@ -500,28 +504,38 @@ async def confirm_booking(call: CallbackQuery, state: FSMContext, bot: Bot):
         "subject": subject,
         "date": date,
         "time_slot": slot,
-        "status": "active"
+        "status": "pending"       # теперь ожидает подтверждения преподавателем
     }
-    save_bookings()
+    await save_bookings()
 
+    # Уведомление админу
     booking_msg = (
-        f"📝 Новая запись на занятие!\n"
+        f"📝 Новая заявка на занятие (ожидает подтверждения преподавателя)\n"
         f"👤 Ученик: {username} (ID: {uid})\n"
         f"👨‍🏫 Репетитор: {tutor_name}\n"
         f"📚 Предмет: {subject}\n"
-        f"📅 Дата: {date}\n"
-        f"🕒 Время: {slot}"
+        f"📅 Дата: {date} (МСК)\n"
+        f"🕒 Время: {slot} (МСК)"
     )
     await bot.send_message(ADMING_ID, booking_msg)
+
+    # Уведомление преподавателю с кнопками подтверждения/отклонения
     tutor = tutors.get(tid)
     if tutor and tutor.get("telegram_id"):
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"tutor_confirm_{new_id}")],
+            [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"tutor_reject_{new_id}")]
+        ])
         try:
-            await bot.send_message(tutor["telegram_id"], booking_msg)
+            await bot.send_message(tutor["telegram_id"], booking_msg, reply_markup=keyboard)
         except:
             pass
 
-    await call.message.edit_text("✅ Запись успешно подтверждена! Преподаватель свяжется с вами.")
-    await call.message.answer("Вы записаны на занятие. Ожидайте подтверждения от преподавателя.", reply_markup=get_main_menu(call.from_user.id))
+    await call.message.edit_text("✅ Заявка отправлена преподавателю. Ожидайте подтверждения.")
+    await call.message.answer(
+        "Ваша заявка на занятие принята и будет рассмотрена преподавателем.",
+        reply_markup=get_main_menu(call.from_user.id)
+    )
     await state.clear()
 
 @dp.callback_query(F.data == "cancel_booking", StateFilter(BookingStates.waiting_confirmation))
@@ -530,6 +544,68 @@ async def cancel_booking(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text("Запись отменена. Возвращаемся в главное меню.")
     await state.clear()
     await call.message.answer("Главное меню:", reply_markup=get_main_menu(call.from_user.id))
+
+# === МОИ ЗАПИСИ (УЧЕНИК) ===
+@dp.message(F.text.in_(["📋 Мои записи"]))
+async def my_records(message: types.Message, state: FSMContext):
+    await state.clear()
+    user_id = message.from_user.id
+    user_bookings = []
+    for bid, b in bookings.items():
+        if b["user_id"] == user_id and b["status"] in ("pending", "confirmed"):
+            user_bookings.append((bid, b))
+    if not user_bookings:
+        await message.answer("У вас пока нет активных записей.", reply_markup=get_main_menu(user_id))
+        return
+    text_lines = ["📋 Ваши записи:\n"]
+    keyboard_buttons = []
+    for bid, b in user_bookings:
+        tutor = tutors.get(b["tutor_id"], {"name": "Неизвестный"})
+        date_str = b["date"]
+        time_str = b["time_slot"]
+        # Проверка возможности отмены (24 часа до начала занятия)
+        dt = datetime.strptime(date_str + " " + time_str.split("-")[0], "%d.%m.%Y %H:%M")
+        now = datetime.now()
+        can_cancel = (dt - now) > timedelta(hours=24)
+        status_text = ""
+        if b["status"] == "pending":
+            status_text = " (ожидает подтверждения)"
+        elif b["status"] == "confirmed":
+            status_text = " (подтверждено)"
+        cancel_note = ""
+        if can_cancel:
+            cancel_note = "✅ Можно отменить"
+        else:
+            cancel_note = "⚠️ Отмена менее чем за 24 часа невозможна (стоимость не возвращается)"
+        text_lines.append(
+            f"👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n📅 {date_str} (МСК) 🕒 {time_str}{status_text}\n{cancel_note}"
+        )
+        if can_cancel:
+            keyboard_buttons.append([InlineKeyboardButton(
+                text=f"❌ Отменить: {tutor['name']} {date_str} {time_str}",
+                callback_data=f"cancel_student_{bid}"
+            )])
+    keyboard_buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
+    await message.answer("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons))
+
+@dp.callback_query(F.data.startswith("cancel_student_"))
+async def cancel_student_booking(call: CallbackQuery):
+    await call.answer()
+    bid = int(call.data.split("_")[2])
+    booking = bookings.get(bid)
+    if not booking:
+        await call.message.edit_text("Запись не найдена.")
+        return
+    # Повторная проверка 24 часов (на случай, если запись устарела)
+    dt = datetime.strptime(booking["date"] + " " + booking["time_slot"].split("-")[0], "%d.%m.%Y %H:%M")
+    if (dt - datetime.now()) <= timedelta(hours=24):
+        await call.message.edit_text("Слишком поздно отменять. Стоимость не возвращается.")
+        return
+    del bookings[bid]
+    await save_bookings()
+    await call.message.edit_text("✅ Запись отменена.")
+    await call.message.answer("Запись успешно отменена.", reply_markup=get_main_menu(call.from_user.id))
+
 
 # ==================== ОПЛАТА ====================
 @dp.message(F.text.in_(["💳 Оплата"]))
@@ -1090,33 +1166,51 @@ async def tutor_panel(message: types.Message):
         [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
     ])
     await message.answer("Панель преподавателя:", reply_markup=keyboard)
+# --- Подсчет занятий ---
+
+def count_student_lessons(tutor_id: int, user_id: int) -> int:
+    count = 0
+    for b in bookings.values():
+        if b["tutor_id"] == tutor_id and b["user_id"] == user_id and b["status"] in ("confirmed", "completed"):
+            count += 1
+    return count
 
 # --- Мои ученики ---
+
 @dp.callback_query(F.data.startswith("tutor_students_"))
 async def show_students(call: CallbackQuery):
     tid = int(call.data.split("_")[-1])
-    active = [b for b in bookings.values() if b["tutor_id"] == tid and b["status"] == "active"]
-    if not active:
+    # Группируем по ученикам
+    students = {}
+    for b in bookings.values():
+        if b["tutor_id"] == tid and b["status"] in ("pending", "confirmed"):
+            uid = b["user_id"]
+            students.setdefault(uid, {"username": b["username"], "bookings": []})
+            students[uid]["bookings"].append(b)
+    if not students:
         await call.message.edit_text("У вас пока нет активных записей.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_tutor_panel_{tid}")]
         ]))
-    else:
-        text = "📋 Ваши ученики:\n\n"
-        for b in active:
-            text += f"📅 {b['date']} в {b['time_slot']}\n👤 {b['username']}\n📚 {b['subject']}\n\n"
-        await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_tutor_panel_{tid}")]
-        ]))
-
-@dp.callback_query(F.data.startswith("back_to_tutor_panel_"))
-async def back_to_tutor_panel(call: CallbackQuery):
-    tid = int(call.data.split("_")[-1])
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 Мои ученики", callback_data=f"tutor_students_{tid}")],
-        [InlineKeyboardButton(text="⚙️ Настроить расписание", callback_data=f"tutor_schedule_{tid}")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-    ])
-    await call.message.edit_text("Панель преподавателя:", reply_markup=keyboard)
+        return
+    text = "📋 Ваши ученики:\n\n"
+    for uid, sdata in students.items():
+        lessons_count = count_student_lessons(tid, uid)   # функция определена ниже
+        text += f"👤 {sdata['username']} (занятий: {lessons_count})\n"
+        for b in sdata["bookings"]:
+            status_emoji = "⏳" if b["status"] == "pending" else "✅"
+            text += f"  {status_emoji} {b['date']} (МСК) {b['time_slot']} – {b['subject']}\n"
+        text += "\n"
+    # Кнопки для подтверждения/отклонения (только для pending)
+    keyboard = []
+    for b in bookings.values():
+        if b["tutor_id"] == tid and b["status"] == "pending":
+            bid = list(bookings.keys())[list(bookings.values()).index(b)]
+            keyboard.append([
+                InlineKeyboardButton(text=f"✅ Подтвердить {b['username']} {b['date']} {b['time_slot']}", callback_data=f"tutor_confirm_{bid}"),
+                InlineKeyboardButton(text=f"❌ Отклонить", callback_data=f"tutor_reject_{bid}")
+            ])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_tutor_panel_{tid}")])
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 # --- Настройка расписания ---
 @dp.callback_query(F.data.startswith("tutor_schedule_"))
@@ -1293,6 +1387,51 @@ async def confirm_del_slot(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await state.set_state(TutorScheduleStates.manage_day_slots)
 
+@dp.callback_query(F.data.startswith("tutor_confirm_"))
+async def tutor_confirm_booking(call: CallbackQuery, bot: Bot):
+    await call.answer()
+    bid = int(call.data.split("_")[2])
+    booking = bookings.get(bid)
+    if not booking:
+        await call.message.edit_text("Запись не найдена.")
+        return
+    if booking["status"] != "pending":
+        await call.message.edit_text("Эта заявка уже обработана.")
+        return
+    booking["status"] = "confirmed"
+    await save_bookings()
+    # Уведомить ученика
+    user_id = booking["user_id"]
+    tutor = tutors.get(booking["tutor_id"])
+    tutor_name = tutor["name"] if tutor else "Неизвестный"
+    await bot.send_message(
+        user_id,
+        f"✅ Ваше занятие по предмету «{booking['subject']}» с преподавателем {tutor_name} "
+        f"на {booking['date']} (МСК) в {booking['time_slot']} (МСК) подтверждено!"
+    )
+    await call.message.edit_text("✅ Вы подтвердили занятие.")
+
+@dp.callback_query(F.data.startswith("tutor_reject_"))
+async def tutor_reject_booking(call: CallbackQuery, bot: Bot):
+    await call.answer()
+    bid = int(call.data.split("_")[2])
+    booking = bookings.get(bid)
+    if not booking:
+        await call.message.edit_text("Запись не найдена.")
+        return
+    if booking["status"] != "pending":
+        await call.message.edit_text("Эта заявка уже обработана.")
+        return
+    user_id = booking["user_id"]
+    del bookings[bid]
+    await save_bookings()
+    await bot.send_message(
+        user_id,
+        "❌ Ваша заявка на занятие была отклонена преподавателем. Вы можете записаться на другое время."
+    )
+    await call.message.edit_text("❌ Заявка отклонена.")
+
+
 # -------------------- ПОМОЩЬ --------------------
 @dp.message(F.text.in_(["❓ Помощь"]))
 async def help(message: types.Message):
@@ -1323,6 +1462,23 @@ async def help(message: types.Message):
         [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
     ])
     await message.answer(help_text, reply_markup=keyboard)
+# =====================Удаление проведенных занятий================================
+async def cleanup_old_bookings():
+    """Переводит прошедшие активные записи в статус completed."""
+    today = datetime.now().strftime("%d.%m.%Y")
+    changed = False
+    for b in bookings.values():
+        if b["status"] in ("pending", "confirmed") and b["date"] < today:
+            b["status"] = "completed"
+            changed = True
+    if changed:
+        await save_bookings()
+        logging.info("Старые записи переведены в completed.")
+
+async def periodic_cleanup():
+    while True:
+        await cleanup_old_bookings()
+        await asyncio.sleep(3600)  # раз в час
 
 # ==================== ЗАПУСК ====================
 async def main() -> None:
@@ -1330,6 +1486,7 @@ async def main() -> None:
     load_schedules()
     load_bookings()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    asyncio.create_task(periodic_cleanup())
     await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
