@@ -724,7 +724,12 @@ async def process_adding_subject_price(message: Message, state: FSMContext):
     if tid and tid in tutors:
         tutors[tid]["subjects"][name] = price
         save_tutors()
-    await message.answer(f"✅ Предмет «{name}» добавлен с ценой {price} руб.")
+     # Клавиатура "Назад к списку"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
+    ])
+    await message.answer(f"✅ Предмет «{name}» добавлен с ценой {price} руб.", reply_markup=keyboard)
+    
     await show_manage_subjects_menu(message, state, tid)
 
 @dp.callback_query(F.data.startswith("editsubj_"), StateFilter(AdminStates.managing_subjects))
@@ -766,7 +771,11 @@ async def process_new_subject_name(message: Message, state: FSMContext):
             return
         tutors[tid]["subjects"][new_name] = tutors[tid]["subjects"].pop(old_name)
         save_tutors()
-    await message.answer(f"✅ Название предмета изменено на «{new_name}».")
+    # Клавиатура "Назад к списку"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
+    ])
+    await message.answer(f"✅ Название предмета изменено на «{new_name}».", reply_markup=keyboard)
     await state.update_data(edit_subject_name=None)
     await show_manage_subjects_menu(message, state, tid)
 
@@ -789,7 +798,11 @@ async def process_new_subject_price(message: Message, state: FSMContext):
     if tid and subj in tutors[tid]["subjects"]:
         tutors[tid]["subjects"][subj] = new_price
         save_tutors()
-    await message.answer(f"✅ Цена для предмета «{subj}» изменена на {new_price} руб.")
+    # Клавиатура "Назад к списку"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
+    ])
+    await message.answer(f"✅ Цена для предмета «{subj}» изменена на {new_price} руб.", reply_markup=keyboard)
     await show_manage_subjects_menu(message, state, tid)
 
 @dp.callback_query(F.data == "editsubj_delete", StateFilter(AdminStates.editing_subject_choice))
@@ -813,7 +826,11 @@ async def confirm_delete_subject(call: CallbackQuery, state: FSMContext):
     if tid and subj in tutors[tid]["subjects"]:
         del tutors[tid]["subjects"][subj]
         save_tutors()
-    await call.message.edit_text(f"✅ Предмет «{subj}» удалён.")
+    # Клавиатура "Назад к списку"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
+    ])
+    await call.message.edit_text(f"✅ Предмет «{subj}» удалён.", reply_markup=keyboard)
     await show_manage_subjects_menu(call, state, tid)
 
 # --- УДАЛЕНИЕ РЕПЕТИТОРА ---
@@ -847,7 +864,11 @@ async def confirm_delete(call: CallbackQuery, state: FSMContext):
     name = tutors[tid]["name"]
     del tutors[tid]
     save_tutors()
-    await call.message.edit_text(f"✅ Репетитор «{name}» удалён.")
+    # Клавиатура "Назад к списку"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
+    ])
+    await call.message.edit_text(f"✅ Репетитор «{name}» удалён.", reply_markup=keyboard)
     await state.clear()
 
 # ==================== ЗАПУСК ====================
