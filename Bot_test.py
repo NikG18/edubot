@@ -89,7 +89,6 @@ class AdminStates(StatesGroup):
     waiting_edit_choice = State()
     waiting_new_value = State()
     waiting_delete_confirm = State()
-    # Новые состояния для управления предметами
     managing_subjects = State()
     adding_subject_name = State()
     adding_subject_price = State()
@@ -193,15 +192,29 @@ async def show_tutor_info(call: CallbackQuery):
     if not tutor:
         await call.answer("Репетитор не найден", show_alert=True)
         return
+
+    # Формируем текст с описанием и предметами
     text = tutor["description"] + "\n\nПредметы и цены:\n"
     for subj, price in tutor["subjects"].items():
         text += f"• {subj} — {price} руб.\n"
-    await call.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
-        ])
-    )
+
+    # Клавиатура "Назад к списку"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
+    ])
+
+    # Если есть фото – удаляем текущее сообщение и отправляем фото с подписью
+    if tutor["photo"]:
+        await call.message.delete()
+        await call.bot.send_photo(
+            chat_id=call.message.chat.id,
+            photo=tutor["photo"],
+            caption=text,
+            reply_markup=keyboard
+        )
+    else:
+        await call.message.edit_text(text, reply_markup=keyboard)
+
     await call.answer()
 
 # ==================== ИНФОРМАЦИЯ О ЗАНЯТИЯХ ====================
@@ -643,7 +656,7 @@ async def process_new_value(message: Message, state: FSMContext):
     keyboard = make_tutors_keyboard("edit_tutor", back_callback="back_to_menu")
     await message.answer("Выберите репетитора для редактирования:", reply_markup=keyboard)
 
-# --- УПРАВЛЕНИЕ ПРЕДМЕТАМИ (НОВОЕ) ---
+# --- УПРАВЛЕНИЕ ПРЕДМЕТАМИ ---
 @dp.callback_query(F.data == "manage_subjects", StateFilter("*"))
 async def manage_subjects(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -672,7 +685,6 @@ async def back_to_edit_tutor(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text(info, reply_markup=keyboard)
     await state.set_state(AdminStates.waiting_edit_choice)
 
-# Добавление предмета
 @dp.callback_query(F.data == "add_subject", StateFilter(AdminStates.managing_subjects))
 async def add_subject_start(call: CallbackQuery, state: FSMContext):
     await call.answer()
@@ -707,7 +719,6 @@ async def process_adding_subject_price(message: Message, state: FSMContext):
     await message.answer(f"✅ Предмет «{name}» добавлен с ценой {price} руб.")
     await show_manage_subjects_menu(message, state, tid)
 
-# Редактирование / удаление конкретного предмета
 @dp.callback_query(F.data.startswith("editsubj_"), StateFilter(AdminStates.managing_subjects))
 async def edit_subject_menu(call: CallbackQuery, state: FSMContext):
     await call.answer()
@@ -729,7 +740,6 @@ async def back_to_subjects_list(call: CallbackQuery, state: FSMContext):
     tid = data.get("edit_tutor_id")
     await show_manage_subjects_menu(call, state, tid)
 
-# Изменить название
 @dp.callback_query(F.data == "editsubj_name", StateFilter(AdminStates.editing_subject_choice))
 async def edit_subject_name_start(call: CallbackQuery, state: FSMContext):
     await call.answer()
@@ -752,7 +762,6 @@ async def process_new_subject_name(message: Message, state: FSMContext):
     await state.update_data(edit_subject_name=None)
     await show_manage_subjects_menu(message, state, tid)
 
-# Изменить цену
 @dp.callback_query(F.data == "editsubj_price", StateFilter(AdminStates.editing_subject_choice))
 async def edit_subject_price_start(call: CallbackQuery, state: FSMContext):
     await call.answer()
@@ -775,7 +784,6 @@ async def process_new_subject_price(message: Message, state: FSMContext):
     await message.answer(f"✅ Цена для предмета «{subj}» изменена на {new_price} руб.")
     await show_manage_subjects_menu(message, state, tid)
 
-# Удалить предмет
 @dp.callback_query(F.data == "editsubj_delete", StateFilter(AdminStates.editing_subject_choice))
 async def delete_subject_confirm(call: CallbackQuery, state: FSMContext):
     await call.answer()
