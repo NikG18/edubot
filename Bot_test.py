@@ -11,7 +11,7 @@ from aiogram.filters import Command, StateFilter
 from aiogram.enums import ParseMode
 from aiogram.types import (
     Message, ReplyKeyboardRemove, ReplyKeyboardMarkup,
-    KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
+    KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery)
 
 ADMING_ID = 846400165
 ADMINJ_ID = 5116346967
@@ -19,6 +19,8 @@ ADMINJ_ID = 5116346967
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан! Передайте его через export BOT_TOKEN=...")
+
+dp = Dispatcher()
 
 TUTORS_FILE = "tutors.json"
 
@@ -113,8 +115,6 @@ main_menu = ReplyKeyboardMarkup(
 )
 
 # -------------------- ДИСПЕТЧЕР --------------------
-dp = Dispatcher()
-
 # ==================== ВСПОМОГАТЕЛЬНЫЕ КНОПКИ ====================
 def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_to_menu"):
     """Создаёт клавиатуру с кнопками для всех репетиторов."""
