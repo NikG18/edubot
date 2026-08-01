@@ -326,6 +326,7 @@ async def lesson_info(message: types.Message):
         await message.answer("Пока нет доступных предметов.", reply_markup=get_main_menu(message.from_user.id))
         return
     buttons = [[InlineKeyboardButton(text=subj, callback_data=f"lesson_subject_{subj}")] for subj in sorted(subjects_set)]
+    buttons.append([InlineKeyboardButton(text="🎫 Перечень скидок на занятия", callback_data="discount_info")])
     buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
     await message.answer("Какой предмет Вас интересует?", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
@@ -335,8 +336,29 @@ async def back_to_lesson_subjects(call: CallbackQuery):
     for t in tutors.values():
         subjects_set.update(t["subjects"].keys())
     buttons = [[InlineKeyboardButton(text=subj, callback_data=f"lesson_subject_{subj}")] for subj in sorted(subjects_set)]
+    buttons.append([InlineKeyboardButton(text="🎫 Перечень скидок на занятия", callback_data="discount_info")])
     buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
-    await call.message.edit_text("Какой предмет Вас интересует?", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await call.message.edit_text("Какой предмет Вас интересует? Все цены указаны за 1 час индивидуального занятия", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+@dp.callback_query(F.data == "discount_info")
+async def show_discount_info(call: CallbackQuery):
+    # ⚠️ Вставьте сюда ваш текст о скидках
+    discount_text = (
+        "🎫 **Перечень скидок на занятия:**\n\n"
+        "• При если приводите друга — скидка 10% на все занятия на месяц\n"
+        "• При покупке абонемента на 12 занятий — скидка 10%\n"
+        "• При единовременной оплате 24 занятий — скидка 20%\n"
+        "• При единовременной оплате 36 занятий — скидка 30%\n"
+        "• Скидка для семей, у которых у нас занимаются более 1 ребенка — 20%\n\n"
+        "Уточняйте подробности у администратора. Скидки актуальны до 30.09.2026"
+    )
+    await call.message.edit_text(
+        discount_text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 К списку предметов", callback_data="back_to_lesson_subjects")]
+        ])
+    )
+    await call.answer()
 
 @dp.callback_query(F.data.startswith("lesson_subject_"))
 async def show_lesson_subject_info(call: CallbackQuery):
