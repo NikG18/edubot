@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+import json
 import os
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -8,9 +9,9 @@ from aiogram import Bot, Dispatcher, html, types, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command, StateFilter
 from aiogram.enums import ParseMode
-from aiogram.types import Message, ReplyKeyboardRemove
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.types import CallbackQuery
+from aiogram.types import (
+    Message, ReplyKeyboardRemove, ReplyKeyboardMarkup,
+    KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 
 ADMING_ID = 846400165
 ADMINJ_ID = 5116346967
@@ -19,9 +20,65 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан! Передайте его через export BOT_TOKEN=...")
 
+TUTORS_FILE = "tutors.json"
 
-# Инициализируем диспетчер
-dp = Dispatcher()
+# -------------------- Хранилище репетиторов --------------------
+# Структура: tutors[tutor_id] = {
+#     "name": str,
+#     "photo": str (file_id или ""),
+#     "description": str,
+#     "subjects": { "Химия": 2500, "Физика": 1500, ... }
+# }
+tutors = {}
+
+def load_tutors():
+    global tutors
+    if os.path.exists(TUTORS_FILE):
+        with open(TUTORS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # конвертируем ключи обратно в int
+            tutors = {int(k): v for k, v in data.items()}
+    else:
+        # Начальные репетиторы, как в старом коде
+        tutors = {
+            1: {
+                "name": "Никита Тимурович",
+                "photo": "",
+                "description": (
+                    "Приветствую, меня зовут Никита Тимурович Ганжа кратко расскажу о себе. "
+                    "Учусь в РНИМУ им. Пирогова на 4 курсе, в основном на отлично (на одной сессии была четверка). "
+                    "Опыт преподавания имеется, вел курсы по химии в школе. Химией занимаюсь с 8 класса, два раза был "
+                    "призером регионального этапа по химии, 99 баллов на ЕГЭ. Хорошо разбираюсь в физике, биологии, "
+                    "математике и истории. Работаю с учениками на фундаментальное понимание химии, а не «тут нужно "
+                    "просто выучить». Объясняю на примерах из жизни, из человеческого организма и природы. "
+                    "Если вам кажется, что вы совсем не знаете химию, то я изменю это уже к 4 занятию. "
+                    "Первое пробное занятие 30 минут, бесплатно."
+                ),
+                "subjects": {"Химия": 2500, "Физика": 1500}
+            },
+            2: {
+                "name": "Юлия Евгеньевна",
+                "photo": "",
+                "description": "Приветствую, меня зовут Юлия Евгеньевна Паймурзова...\n\nХотите записаться на пробное занятие?",
+                "subjects": {"Химия": 1500}
+            },
+            3: {
+                "name": "Никита Дмитриевич",
+                "photo": "",
+                "description": "Приветствую, меня зовут Никита Дмитриевич Колебаев...\n\nХотите записаться на пробное занятие?",
+                "subjects": {"Физика": 2500, "Математика": 2500, "Информатика": 2500}
+            }
+        }
+        save_tutors()
+
+def save_tutors():
+    with open(TUTORS_FILE, "w", encoding="utf-8") as f:
+        json.dump(tutors, f, ensure_ascii=False, indent=2)
+
+def get_next_tutor_id():
+    if not tutors:
+        return 1
+    return max(tutors.keys()) + 1
 
 # -------------------- FSM состояния --------------------
 class BookingStates(StatesGroup):
@@ -30,7 +87,17 @@ class BookingStates(StatesGroup):
     waiting_date_time = State()
     waiting_confirmation = State()
 
-# -------------------- ГЛАВНОЕ МЕНЮ (Reply) --------------------
+class AdminStates(StatesGroup):
+    waiting_name = State()
+    waiting_photo = State()
+    waiting_description = State()
+    waiting_subject_name = State()
+    waiting_subject_price = State()
+    waiting_edit_choice = State()
+    waiting_new_value = State()
+    waiting_delete_confirm = State()
+
+# -------------------- ГЛАВНОЕ МЕНЮ --------------------
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="ℹ️ Информация о репетиторах")],
@@ -39,13 +106,38 @@ main_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="💳 Оплата")],
         [KeyboardButton(text="📖 Учебные материалы")],
         [KeyboardButton(text="✉️ Связь с преподавателем")],
-        [KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="❓ Помощь")],
+        [KeyboardButton(text="👨‍🏫 Админ-панель")]  # видна всем, но проверка в хендлере
     ],
     resize_keyboard=True
 )
 
-# -------------------- ХЭНДЛЕРЫ --------------------
+# -------------------- ДИСПЕТЧЕР --------------------
+dp = Dispatcher()
 
+# ==================== ВСПОМОГАТЕЛЬНЫЕ КНОПКИ ====================
+def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_to_menu"):
+    """Создаёт клавиатуру с кнопками для всех репетиторов."""
+    buttons = []
+    for tid, tdata in tutors.items():
+        buttons.append([InlineKeyboardButton(text=tdata["name"], callback_data=f"{callback_prefix}_{tid}")])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data=back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def make_subjects_keyboard(tutor_id: int, back_callback: str = "back_to_menuz"):
+    """Создаёт клавиатуру с предметами конкретного репетитора."""
+    tutor = tutors.get(tutor_id)
+    if not tutor:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data=back_callback)]
+        ])
+    buttons = []
+    for subj in tutor["subjects"]:
+        buttons.append([InlineKeyboardButton(text=subj, callback_data=f"subject_{tutor_id}_{subj}")])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад к репетиторам", callback_data=back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# ==================== БАЗОВЫЕ ОБРАБОТЧИКИ ====================
 @dp.message(Command("start"))
 async def Start(message: Message) -> None:
     await message.answer(
@@ -53,7 +145,6 @@ async def Start(message: Message) -> None:
         reply_markup=main_menu
     )
 
-# Обработчик для кнопки "Назад" (если используется где-то)
 @dp.message(F.text.in_(["🔙 Назад"]))
 async def main_menu_buttons(message: Message) -> None:
     await message.answer(
@@ -61,291 +152,133 @@ async def main_menu_buttons(message: Message) -> None:
         reply_markup=main_menu
     )
 
-# -------------------- ИНФОРМАЦИЯ О РЕПЕТИТОРАХ --------------------
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await state.clear()
+    await call.message.delete()
+    await call.message.answer("Главное меню:", reply_markup=main_menu)
+
+# ==================== ИНФОРМАЦИЯ О РЕПЕТИТОРАХ (ДИНАМИЧЕСКАЯ) ====================
 @dp.message(F.text.in_(["ℹ️ Информация о репетиторах"]))
 async def repet(message: types.Message):
     await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👨‍🏫 Никита Тимурович", callback_data="tutor_nikita")],
-        [InlineKeyboardButton(text="👩‍🏫 Юлия Евгеньевна", callback_data="tutor_julia")],
-        [InlineKeyboardButton(text="👨‍🏫 Никита Дмитриевич", callback_data="tutor_nikitak")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-    ])
+    keyboard = make_tutors_keyboard("tutor_info")
     await message.answer("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
 
 @dp.callback_query(F.data == "back_to_tutors")
 async def back_to_tutors(call: CallbackQuery):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👨‍🏫 Никита Тимурович", callback_data="tutor_nikita")],
-        [InlineKeyboardButton(text="👩‍🏫 Юлия Евгеньевна", callback_data="tutor_julia")],
-        [InlineKeyboardButton(text="👨‍🏫 Никита Дмитриевич", callback_data="tutor_nikitak")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-    ])
+    keyboard = make_tutors_keyboard("tutor_info")
     await call.message.edit_text("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
     await call.answer()
 
-@dp.callback_query(F.data == "tutor_nikita")
-async def show_nikita_info(call: CallbackQuery):
+@dp.callback_query(F.data.startswith("tutor_info_"))
+async def show_tutor_info(call: CallbackQuery):
+    tid = int(call.data.split("_")[-1])
+    tutor = tutors.get(tid)
+    if not tutor:
+        await call.answer("Репетитор не найден", show_alert=True)
+        return
+    text = tutor["description"] + "\n\nПредметы и цены:\n"
+    for subj, price in tutor["subjects"].items():
+        text += f"• {subj} — {price} руб.\n"
     await call.message.edit_text(
-        "Приветствую, меня зовут Никита Тимурович Ганжа кратко расскажу о себе. Учусь в РНИМУ им. Пирогова на 4 курсе, в основном на отлично (на одной сессии была четверка). Опыт преподавания имеется, вел курсы по химии в школе. Химией занимаюсь с 8 класса, два раза был призером регионального этапа по химии, 99 баллов на ЕГЭ. Хорошо разбираюсь в физике, биологии, математике и истории. "
-        "Работаю с учениками на фундаментальное понимание химии, а не «тут нужно просто выучить». Объясняю на примерах из жизни, из человеческого организма и природы."
-        "Если вам кажется, что вы совсем не знаете химию, то я изменю это уже к 4 занятию. Первое пробное занятие 30 минут, бесплатно.",
+        text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
         ])
     )
     await call.answer()
 
-@dp.callback_query(F.data == "tutor_julia")
-async def show_julia_info(call: CallbackQuery):
-    await call.message.edit_text(
-        "Приветствую, меня зовут Юлия Евгеньевна Паймурзова...\n\n"
-        "Хотите записаться на пробное занятие?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
-        ])
-    )
-    await call.answer()
-
-@dp.callback_query(F.data == "tutor_nikitak")
-async def show_kolebaev_info(call: CallbackQuery):
-    await call.message.edit_text(
-        "Приветствую! Меня зовут Колебаев Никита Дмитриевич, я студент 4-ого курса МФТИ. Обучаюсь на бюджете по программе «Геокосмические науки и технологии». 
-        "Имею опыт преподавания физики и математики для школьников: личное репетиторство и ЗФТШ (заочная физико-техническая школа при МФТИ). 
-        "Окончил школу с золотой медалью, имею фундаментальные знания в области математики, физики и информатики (в том числе программирование на языках Python/C++). 
-        "ЕГЭ сдал в 2023 году на следующие баллы: физика – 95, информатика – 90. Со средней школы увлекаюсь робототехникой и ракетостроением. 
-        "По этим направлениям участвовал в соревнованиях всероссийского масштаба, в которых занимал в том числе призерские места. В институте продолжаю развиваться в данных направлениях и побеждать в вузовских состязаниях. 
-        "Умею доступно спокойно и основательно объяснить материал любой сложности. Если испытываете трудности в понимании физики, математики и информатики или у Вас есть желание лучше прокачаться в этих дисциплинах, с радостью готов помочь Вам! 
-        "Первое пробное занятие 30 минут бесплатно."
-        "Хотите записаться на пробное занятие?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
-        ])
-    )
-    await call.answer()
-
-# -------------------- ИНФОРМАЦИЯ О ЗАНЯТИЯХ --------------------
+# ==================== ИНФОРМАЦИЯ О ЗАНЯТИЯХ (ДИНАМИЧЕСКАЯ) ====================
 @dp.message(F.text.in_(["📚 Информация о занятиях"]))
 async def lesson_info(message: types.Message):
     await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🧪 Химия", callback_data="himiy")],
-        [InlineKeyboardButton(text="⚛️ Физика", callback_data="fizika")],
-        [InlineKeyboardButton(text="➗ Математика", callback_data="matem")],
-        [InlineKeyboardButton(text="💻 Информатика", callback_data="inform")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-    ])
+    subjects_set = set()
+    for t in tutors.values():
+        subjects_set.update(t["subjects"].keys())
+    if not subjects_set:
+        await message.answer("Пока нет доступных предметов.", reply_markup=main_menu)
+        return
+    buttons = []
+    for subj in sorted(subjects_set):
+        buttons.append([InlineKeyboardButton(text=subj, callback_data=f"lesson_subject_{subj}")])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await message.answer("Какой предмет Вас интересует?", reply_markup=keyboard)
 
-@dp.callback_query(F.data == "back_to_sj")
-async def back_to_sj(call: CallbackQuery):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🧪 Химия", callback_data="himiy")],
-        [InlineKeyboardButton(text="⚛️ Физика", callback_data="fizika")],
-        [InlineKeyboardButton(text="➗ Математика", callback_data="matem")],
-        [InlineKeyboardButton(text="💻 Информатика", callback_data="inform")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-    ])
+@dp.callback_query(F.data == "back_to_lesson_subjects")
+async def back_to_lesson_subjects(call: CallbackQuery):
+    subjects_set = set()
+    for t in tutors.values():
+        subjects_set.update(t["subjects"].keys())
+    buttons = []
+    for subj in sorted(subjects_set):
+        buttons.append([InlineKeyboardButton(text=subj, callback_data=f"lesson_subject_{subj}")])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await call.message.edit_text("Какой предмет Вас интересует?", reply_markup=keyboard)
     await call.answer()
 
-@dp.callback_query(F.data == "himiy")
-async def himiy(call: CallbackQuery):
+@dp.callback_query(F.data.startswith("lesson_subject_"))
+async def show_lesson_subject_info(call: CallbackQuery):
+    subject = call.data.split("lesson_subject_", 1)[1]
+    lines = [f"Предмет: {subject}", ""]
+    found = False
+    for t in tutors.values():
+        if subject in t["subjects"]:
+            lines.append(f"👨‍🏫 {t['name']} — {t['subjects'][subject]} руб.")
+            found = True
+    if not found:
+        lines.append("Нет репетиторов по этому предмету.")
+    text = "\n".join(lines)
     await call.message.edit_text(
-        "🧪 Химию преподает Никита Тимурович и Юлия Евгеньевна, хотели бы узнать цену?",
+        text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💰 Цена занятий", callback_data="priceh")],
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_sj")]
+            [InlineKeyboardButton(text="🔙 К списку предметов", callback_data="back_to_lesson_subjects")]
         ])
     )
     await call.answer()
 
-@dp.callback_query(F.data == "fizika")
-async def fizika(call: CallbackQuery):
-    await call.message.edit_text(
-        "⚛️ Физику преподает Никита Дмитриевич и Никита Тимурович, хотели бы узнать цену?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💰 Цена занятий", callback_data="pricef")],
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_sj")]
-        ])
-    )
-    await call.answer()
-
-@dp.callback_query(F.data == "matem")
-async def matem(call: CallbackQuery):
-    await call.message.edit_text(
-        "➗ Математику преподает пока только Никита Дмитриевич, хотели бы узнать цену?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💰 Цена занятий", callback_data="pricem")],
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_sj")]
-        ])
-    )
-    await call.answer()
-
-@dp.callback_query(F.data == "inform")
-async def inform(call: CallbackQuery):
-    await call.message.edit_text(
-        "💻 Информатику преподает пока только Никита Дмитриевич, хотели бы узнать цену?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💰 Цена занятий", callback_data="pricei")],
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_sj")]
-        ])
-    )
-    await call.answer()
-
-@dp.callback_query(F.data == "priceh")
-async def priceh(call: CallbackQuery):
-    await call.message.edit_text(
-        "💰 Цена за 1 час индивидуального занятия:\n"
-        "Никита Тимурович → 2500 руб.\n"
-        "Юлия Евгеньевна → 1500 руб.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_sj")]
-        ])
-    )
-    await call.answer()
-
-@dp.callback_query(F.data == "pricef")
-async def pricef(call: CallbackQuery):
-    await call.message.edit_text(
-        "💰 Цена за 1 час индивидуального занятия:\n"
-        "Никита Тимурович → 1500 руб.\n"
-        "Никита Дмитриевич → 2500 руб.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_sj")]
-        ])
-    )
-    await call.answer()
-
-@dp.callback_query(F.data == "pricem")
-async def pricem(call: CallbackQuery):
-    await call.message.edit_text(
-        "💰 Цена за 1 час индивидуального занятия:\n"
-        "Никита Дмитриевич → 2500 руб.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_sj")]
-        ])
-    )
-    await call.answer()
-
-@dp.callback_query(F.data == "pricei")
-async def pricei(call: CallbackQuery):
-    await call.message.edit_text(
-        "💰 Цена за 1 час индивидуального занятия:\n"
-        "Никита Дмитриевич → 2500 руб.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_sj")]
-        ])
-    )
-    await call.answer()
-
-# -------------------- ЗАПИСЬ НА ЗАНЯТИЕ --------------------
+# ==================== ЗАПИСЬ НА ЗАНЯТИЕ (ДИНАМИЧЕСКАЯ) ====================
 @dp.message(F.text.in_(["📝 Запись на занятие"]))
 async def zapis(message: types.Message, state: FSMContext):
     await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👨‍🏫 Никита Тимурович", callback_data="tutor_nikitaz")],
-        [InlineKeyboardButton(text="👩‍🏫 Юлия Евгеньевна", callback_data="tutor_juliaz")],
-        [InlineKeyboardButton(text="👨‍🏫 Никита Дмитриевич", callback_data="tutor_nikitakz")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-    ])
+    keyboard = make_tutors_keyboard("tutor_booking", back_callback="back_to_menu")
     await message.answer("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
     await state.clear()
 
-@dp.callback_query(F.data.startswith("tutor_"))
-async def choose_tutor(call: CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data.startswith("tutor_booking_"))
+async def choose_tutor_booking(call: CallbackQuery, state: FSMContext):
     await call.answer()
-    tutor_map = {
-        "tutor_nikitaz": "Никита Тимурович",
-        "tutor_juliaz": "Юлия Евгеньевна",
-        "tutor_nikitakz": "Никита Дмитриевич"
-    }
-    tutor_name = tutor_map.get(call.data)
-    if not tutor_name:
+    tid = int(call.data.split("_")[-1])
+    tutor = tutors.get(tid)
+    if not tutor:
         await call.message.edit_text("Ошибка выбора репетитора.")
         return
-    await state.update_data(tutor=tutor_name)
-
-    if call.data == "tutor_nikitaz":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🧪 Химия", callback_data="himiyz")],
-            [InlineKeyboardButton(text="⚛️ Физика", callback_data="fizikaz")],
-            [InlineKeyboardButton(text="🔙 Назад к репетиторам", callback_data="back_to_menuz")]
-        ])
-    elif call.data == "tutor_juliaz":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🧪 Химия", callback_data="himiyz")],
-            [InlineKeyboardButton(text="🔙 Назад к репетиторам", callback_data="back_to_menuz")]
-        ])
-    elif call.data == "tutor_nikitakz":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🧪 Химия", callback_data="himiyz")],
-            [InlineKeyboardButton(text="⚛️ Физика", callback_data="fizikaz")],
-            [InlineKeyboardButton(text="➗ Математика", callback_data="matemz")],
-            [InlineKeyboardButton(text="💻 Информатика", callback_data="informz")],
-            [InlineKeyboardButton(text="🔙 Назад к репетиторам", callback_data="back_to_menuz")]
-        ])
-    else:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад к репетиторам", callback_data="back_to_menuz")]
-        ])
-
+    await state.update_data(tutor_id=tid, tutor_name=tutor["name"])
+    keyboard = make_subjects_keyboard(tid, back_callback="back_to_tutors_booking")
     await call.message.edit_text("На занятие по какому предмету вы хотите записаться?", reply_markup=keyboard)
 
-@dp.callback_query(F.data == "back_to_menuz")
-async def back_to_menuz(call: CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "back_to_tutors_booking")
+async def back_to_tutors_booking(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await state.clear()
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👨‍🏫 Никита Тимурович", callback_data="tutor_nikitaz")],
-        [InlineKeyboardButton(text="👩‍🏫 Юлия Евгеньевна", callback_data="tutor_juliaz")],
-        [InlineKeyboardButton(text="👨‍🏫 Никита Дмитриевич", callback_data="tutor_nikitakz")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-    ])
+    keyboard = make_tutors_keyboard("tutor_booking", back_callback="back_to_menu")
     await call.message.edit_text("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
 
-@dp.callback_query(F.data == "himiyz")
-async def subject_himiyz(call: CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data.startswith("subject_"))
+async def subject_chosen(call: CallbackQuery, state: FSMContext):
     await call.answer()
-    await state.update_data(subject="Химия")
+    parts = call.data.split("_", 2)
+    # формат: subject_{tid}_{subject_name}
+    if len(parts) < 3:
+        return
+    tid = int(parts[1])
+    subject = parts[2]
+    await state.update_data(subject=subject, tutor_id=tid)
     await call.message.edit_text(
-        "Вы выбрали предмет: 🧪 Химия.\n"
-        "Теперь введите желаемую дату и время занятия в формате:\n"
-        "ДД.ММ.ГГГГ ЧЧ:MM\n"
-        "Например: 15.08.2026 14:30"
-    )
-    await state.set_state(BookingStates.waiting_date_time)
-
-@dp.callback_query(F.data == "fizikaz")
-async def subject_fizikaz(call: CallbackQuery, state: FSMContext):
-    await call.answer()
-    await state.update_data(subject="Физика")
-    await call.message.edit_text(
-        "Вы выбрали предмет: ⚛️ Физика.\n"
-        "Теперь введите желаемую дату и время занятия в формате:\n"
-        "ДД.ММ.ГГГГ ЧЧ:MM\n"
-        "Например: 15.08.2026 14:30"
-    )
-    await state.set_state(BookingStates.waiting_date_time)
-
-@dp.callback_query(F.data == "matemz")
-async def subject_matemz(call: CallbackQuery, state: FSMContext):
-    await call.answer()
-    await state.update_data(subject="Математика")
-    await call.message.edit_text(
-        "Вы выбрали предмет: ➗ Математика.\n"
-        "Теперь введите желаемую дату и время занятия в формате:\n"
-        "ДД.ММ.ГГГГ ЧЧ:MM\n"
-        "Например: 15.08.2026 14:30"
-    )
-    await state.set_state(BookingStates.waiting_date_time)
-
-@dp.callback_query(F.data == "informz")
-async def subject_informz(call: CallbackQuery, state: FSMContext):
-    await call.answer()
-    await state.update_data(subject="Информатика")
-    await call.message.edit_text(
-        "Вы выбрали предмет: 💻 Информатика.\n"
+        f"Вы выбрали предмет: {subject}.\n"
         "Теперь введите желаемую дату и время занятия в формате:\n"
         "ДД.ММ.ГГГГ ЧЧ:MM\n"
         "Например: 15.08.2026 14:30"
@@ -360,8 +293,6 @@ async def process_date_time(message: types.Message, state: FSMContext):
         return
     await state.update_data(date_time=date_time_text)
     data = await state.get_data()
-    tutor = data.get("tutor")
-    subject = data.get("subject")
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить запись", callback_data="confirm_booking")],
         [InlineKeyboardButton(text="✏️ Изменить дату/время", callback_data="change_datetime")],
@@ -369,8 +300,8 @@ async def process_date_time(message: types.Message, state: FSMContext):
     ])
     await message.answer(
         f"Проверьте данные:\n"
-        f"👨‍🏫 Репетитор: {tutor}\n"
-        f"📚 Предмет: {subject}\n"
+        f"👨‍🏫 Репетитор: {data.get('tutor_name')}\n"
+        f"📚 Предмет: {data.get('subject')}\n"
         f"📅 Дата и время: {date_time_text}\n\n"
         "Всё верно?",
         reply_markup=keyboard
@@ -381,7 +312,7 @@ async def process_date_time(message: types.Message, state: FSMContext):
 async def confirm_booking(call: CallbackQuery, state: FSMContext, bot: Bot):
     await call.answer()
     data = await state.get_data()
-    tutor = data.get("tutor")
+    tutor_name = data.get("tutor_name")
     subject = data.get("subject")
     date_time = data.get("date_time")
     user = call.from_user
@@ -391,7 +322,7 @@ async def confirm_booking(call: CallbackQuery, state: FSMContext, bot: Bot):
     booking_message = (
         f"📝 Новая запись на занятие!\n\n"
         f"👤 Ученик: {username} (ID: {user_id})\n"
-        f"👨‍🏫 Репетитор: {tutor}\n"
+        f"👨‍🏫 Репетитор: {tutor_name}\n"
         f"📚 Предмет: {subject}\n"
         f"📅 Дата и время: {date_time}\n"
         f"📞 Связаться с учеником: @{username}" if username else f"ID: {user_id}"
@@ -409,9 +340,7 @@ async def confirm_booking(call: CallbackQuery, state: FSMContext, bot: Bot):
 @dp.callback_query(F.data == "change_datetime", StateFilter(BookingStates.waiting_confirmation))
 async def change_datetime(call: CallbackQuery, state: FSMContext):
     await call.answer()
-    await call.message.edit_text(
-        "Введите новую дату и время в формате ДД.ММ.ГГГГ ЧЧ:MM"
-    )
+    await call.message.edit_text("Введите новую дату и время в формате ДД.ММ.ГГГГ ЧЧ:MM")
     await state.set_state(BookingStates.waiting_date_time)
 
 @dp.callback_query(F.data == "cancel_booking", StateFilter(BookingStates.waiting_confirmation))
@@ -421,7 +350,7 @@ async def cancel_booking(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.answer("Главное меню:", reply_markup=main_menu)
 
-# -------------------- ОПЛАТА --------------------
+# ==================== ОПЛАТА (без изменений) ====================
 @dp.message(F.text.in_(["💳 Оплата"]))
 async def oplata(message: types.Message):
     await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
@@ -474,7 +403,7 @@ async def sbp(call: CallbackQuery):
     )
     await call.answer()
 
-# -------------------- УЧЕБНЫЕ МАТЕРИАЛЫ --------------------
+# ==================== УЧЕБНЫЕ МАТЕРИАЛЫ (без изменений) ====================
 @dp.message(F.text.in_(["📖 Учебные материалы"]))
 async def material(message: types.Message):
     await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
@@ -519,9 +448,7 @@ async def vid(call: CallbackQuery):
     )
     await call.answer()
 
-# (Обработчики для bookh, bookf, videh, videf не добавлены – при необходимости допишите аналогично)
-
-# -------------------- СВЯЗЬ С ПРЕПОДАВАТЕЛЕМ --------------------
+# ==================== СВЯЗЬ С ПРЕПОДАВАТЕЛЕМ ====================
 @dp.message(F.text.in_(["✉️ Связь с преподавателем"]))
 async def svyaz(message: types.Message):
     await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
@@ -536,7 +463,7 @@ async def svyaz(message: types.Message):
         reply_markup=keyboard
     )
 
-# -------------------- ПОМОЩЬ --------------------
+# ==================== ПОМОЩЬ ====================
 @dp.message(F.text.in_(["❓ Помощь"]))
 async def help(message: types.Message):
     await message.answer("Сообщаю Вам информацию о каждом разделе...", reply_markup=ReplyKeyboardRemove())
@@ -551,19 +478,203 @@ async def help(message: types.Message):
         reply_markup=keyboard
     )
 
-# -------------------- ГЛОБАЛЬНАЯ КНОПКА НАЗАД В МЕНЮ --------------------
-@dp.callback_query(F.data == "back_to_menu")
-async def back_to_menu(call: CallbackQuery, state: FSMContext):
-    await call.answer()
-    await state.clear()
-    await call.message.delete()
-    await call.message.answer("Главное меню:", reply_markup=main_menu)
+# ==================== АДМИН-ПАНЕЛЬ ====================
+@dp.message(F.text.in_(["👨‍🏫 Админ-панель"]))
+async def admin_panel(message: types.Message):
+    if message.from_user.id != ADMING_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
+    await message.answer("Админ-панель управления репетиторами", reply_markup=ReplyKeyboardRemove())
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить репетитора", callback_data="admin_add")],
+        [InlineKeyboardButton(text="✏️ Редактировать репетитора", callback_data="admin_edit_list")],
+        [InlineKeyboardButton(text="❌ Удалить репетитора", callback_data="admin_delete_list")],
+        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+    ])
+    await message.answer("Выберите действие:", reply_markup=keyboard)
 
-# -------------------- ЗАПУСК --------------------
+# --- ДОБАВЛЕНИЕ ---
+@dp.callback_query(F.data == "admin_add")
+async def admin_add_start(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await call.message.edit_text("Введите имя репетитора:")
+    await state.set_state(AdminStates.waiting_name)
+
+@dp.message(AdminStates.waiting_name)
+async def admin_add_name(message: Message, state: FSMContext):
+    await state.update_data(name=message.text.strip())
+    await message.answer("Отправьте фото репетитора (или напишите 'нет', чтобы пропустить):")
+    await state.set_state(AdminStates.waiting_photo)
+
+@dp.message(AdminStates.waiting_photo)
+async def admin_add_photo(message: Message, state: FSMContext):
+    if message.photo:
+        # берём file_id самого большого размера
+        file_id = message.photo[-1].file_id
+        await state.update_data(photo=file_id)
+    else:
+        await state.update_data(photo="")
+    await message.answer("Введите описание репетитора:")
+    await state.set_state(AdminStates.waiting_description)
+
+@dp.message(AdminStates.waiting_description)
+async def admin_add_description(message: Message, state: FSMContext):
+    await state.update_data(description=message.text.strip())
+    await state.update_data(subjects={})  # инициализируем пустой словарь предметов
+    await message.answer("Введите название первого предмета, который ведёт репетитор:")
+    await state.set_state(AdminStates.waiting_subject_name)
+
+@dp.message(AdminStates.waiting_subject_name)
+async def admin_add_subject_name(message: Message, state: FSMContext):
+    subject = message.text.strip()
+    await state.update_data(temp_subject=subject)
+    await message.answer(f"Введите цену за занятие для предмета «{subject}» (целое число рублей):")
+    await state.set_state(AdminStates.waiting_subject_price)
+
+@dp.message(AdminStates.waiting_subject_price)
+async def admin_add_subject_price(message: Message, state: FSMContext):
+    try:
+        price = int(message.text.strip())
+    except ValueError:
+        await message.answer("Пожалуйста, введите целое число.")
+        return
+    data = await state.get_data()
+    subjects = data.get("subjects", {})
+    temp_subject = data.get("temp_subject")
+    subjects[temp_subject] = price
+    await state.update_data(subjects=subjects)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, добавить ещё", callback_data="add_another_subject")],
+        [InlineKeyboardButton(text="❌ Нет, закончить", callback_data="finish_adding_subjects")]
+    ])
+    await message.answer(f"Предмет «{temp_subject}» с ценой {price} руб. добавлен. Добавить ещё предмет?", reply_markup=keyboard)
+    await state.set_state(AdminStates.waiting_subject_name)  # временно переключаем для обработки колбэков
+
+@dp.callback_query(F.data == "add_another_subject", StateFilter(AdminStates.waiting_subject_name))
+async def add_another_subject(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await call.message.edit_text("Введите название следующего предмета:")
+    # остаёмся в том же состоянии
+    await state.set_state(AdminStates.waiting_subject_name)
+
+@dp.callback_query(F.data == "finish_adding_subjects", StateFilter(AdminStates.waiting_subject_name))
+async def finish_adding_subjects(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    data = await state.get_data()
+    new_id = get_next_tutor_id()
+    tutors[new_id] = {
+        "name": data["name"],
+        "photo": data.get("photo", ""),
+        "description": data["description"],
+        "subjects": data["subjects"]
+    }
+    save_tutors()
+    await call.message.edit_text(f"✅ Репетитор «{data['name']}» успешно добавлен (ID {new_id}).")
+    await state.clear()
+
+# --- РЕДАКТИРОВАНИЕ (СПИСОК) ---
+@dp.callback_query(F.data == "admin_edit_list")
+async def admin_edit_list(call: CallbackQuery):
+    await call.answer()
+    if not tutors:
+        await call.message.edit_text("Нет репетиторов для редактирования.")
+        return
+    keyboard = make_tutors_keyboard("edit_tutor", back_callback="back_to_menu")
+    await call.message.edit_text("Выберите репетитора для редактирования:", reply_markup=keyboard)
+
+@dp.callback_query(F.data.startswith("edit_tutor_"))
+async def edit_tutor_choice(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    tid = int(call.data.split("_")[-1])
+    await state.update_data(edit_tutor_id=tid)
+    tutor = tutors[tid]
+    info = f"Редактирование: {tutor['name']}\n\nЧто хотите изменить?"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Изменить имя", callback_data="edit_name")],
+        [InlineKeyboardButton(text="Изменить описание", callback_data="edit_desc")],
+        [InlineKeyboardButton(text="Изменить фото", callback_data="edit_photo")],
+        [InlineKeyboardButton(text="🔙 К списку", callback_data="admin_edit_list")]
+    ])
+    await call.message.edit_text(info, reply_markup=keyboard)
+
+@dp.callback_query(F.data.startswith("edit_"), StateFilter("*"))
+async def edit_field_choice(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    field = call.data.split("_", 1)[1]  # name, desc, photo
+    await state.update_data(edit_field=field)
+    prompts = {
+        "name": "Введите новое имя:",
+        "desc": "Введите новое описание:",
+        "photo": "Отправьте новое фото (или 'нет', чтобы пропустить):"
+    }
+    await call.message.edit_text(prompts.get(field, "Введите новое значение:"))
+    await state.set_state(AdminStates.waiting_new_value)
+
+@dp.message(AdminStates.waiting_new_value)
+async def process_new_value(message: Message, state: FSMContext):
+    data = await state.get_data()
+    tid = data["edit_tutor_id"]
+    field = data["edit_field"]
+    if field == "photo":
+        if message.photo:
+            file_id = message.photo[-1].file_id
+            tutors[tid]["photo"] = file_id
+        else:
+            tutors[tid]["photo"] = ""
+    elif field == "name":
+        tutors[tid]["name"] = message.text.strip()
+    elif field == "desc":
+        tutors[tid]["description"] = message.text.strip()
+    save_tutors()
+    await message.answer("✅ Изменения сохранены.")
+    await state.clear()
+    # возвращаемся к списку
+    keyboard = make_tutors_keyboard("edit_tutor", back_callback="back_to_menu")
+    await message.answer("Выберите репетитора для редактирования:", reply_markup=keyboard)
+
+# --- УДАЛЕНИЕ ---
+@dp.callback_query(F.data == "admin_delete_list")
+async def admin_delete_list(call: CallbackQuery):
+    await call.answer()
+    if not tutors:
+        await call.message.edit_text("Нет репетиторов для удаления.")
+        return
+    keyboard = make_tutors_keyboard("del_tutor", back_callback="back_to_menu")
+    await call.message.edit_text("Выберите репетитора для удаления:", reply_markup=keyboard)
+
+@dp.callback_query(F.data.startswith("del_tutor_"))
+async def delete_tutor_confirm(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    tid = int(call.data.split("_")[-1])
+    await state.update_data(del_tutor_id=tid)
+    tutor = tutors[tid]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, удалить", callback_data="confirm_delete")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_delete_list")]
+    ])
+    await call.message.edit_text(f"Удалить репетитора «{tutor['name']}»?", reply_markup=keyboard)
+    await state.set_state(AdminStates.waiting_delete_confirm)
+
+@dp.callback_query(F.data == "confirm_delete", StateFilter(AdminStates.waiting_delete_confirm))
+async def confirm_delete(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    data = await state.get_data()
+    tid = data["del_tutor_id"]
+    name = tutors[tid]["name"]
+    del tutors[tid]
+    save_tutors()
+    await call.message.edit_text(f"✅ Репетитор «{name}» удалён.")
+    await state.clear()
+
+# ==================== ЗАПУСК ====================
 async def main() -> None:
+    load_tutors()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     await dp.start_polling(bot, drop_pending_updates=True)
 
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    asyncio.run(main())
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
