@@ -858,7 +858,157 @@ async def process_new_value(message: Message, state: FSMContext):
     await state.clear()
 
 # --- Управление предметами (без изменений, возврат к списку уже есть) ---
-# ... весь код управления предметами остаётся прежним ...
+@dp.callback_query(F.data == "manage_subjects", StateFilter("*"))
+async def manage_subjects(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    tid = data.get("edit_tutor_id")
+    if not tid or tid not in tutors:
+        await call.answer("Ошибка", show_alert=True)
+        return
+    await show_manage_subjects_menu(call, state, tid)
+
+@dp.callback_query(F.data == "back_to_edit_tutor", StateFilter(AdminStates.managing_subjects))
+async def back_to_edit_tutor(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    tid = data.get("edit_tutor_id")
+    if not tid or tid not in tutors:
+        await call.answer("Ошибка", show_alert=True)
+        return
+    tutor = tutors[tid]
+    info = f"Редактирование: {tutor['name']}\n\nЧто хотите изменить?"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Изменить имя", callback_data="edit_name")],
+        [InlineKeyboardButton(text="Изменить описание", callback_data="edit_desc")],
+        [InlineKeyboardButton(text="Изменить фото", callback_data="edit_photo")],
+        [InlineKeyboardButton(text="Изменить Telegram ID", callback_data="edit_telegram_id")],
+        [InlineKeyboardButton(text="📚 Управление предметами", callback_data="manage_subjects")],
+        [InlineKeyboardButton(text="🔙 К списку", callback_data="admin_edit_list")]
+    ])
+    await call.message.edit_text(info, reply_markup=keyboard)
+    await state.set_state(AdminStates.waiting_edit_choice)
+
+@dp.callback_query(F.data == "add_subject", StateFilter(AdminStates.managing_subjects))
+async def add_subject_start(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await call.message.edit_text("Введите название нового предмета:")
+    await state.set_state(AdminStates.adding_subject_name)
+
+@dp.message(AdminStates.adding_subject_name)
+async def process_adding_subject_name(message: Message, state: FSMContext):
+    name = message.text.strip()
+    data = await state.get_data()
+    tid = data.get("edit_tutor_id")
+    if tid and name in tutors[tid]["subjects"]:
+        await message.answer("Такой предмет уже существует. Введите другое название.")
+        return
+    await state.update_data(temp_new_subject=name)
+    await message.answer(f"Введите цену за занятие для предмета «{name}» (целое число рублей):")
+    await state.set_state(AdminStates.adding_subject_price)
+
+@dp.message(AdminStates.adding_subject_price)
+async def process_adding_subject_price(message: Message, state: FSMContext):
+    try:
+        price = int(message.text.strip())
+    except ValueError:
+        await message.answer("Введите целое число.")
+        return
+    data = await state.get_data()
+    tid = data.get("edit_tutor_id")
+    name = data.get("temp_new_subject")
+    if tid and tid in tutors:
+        tutors[tid]["subjects"][name] = price
+        save_tutors()
+    await message.answer(f"✅ Предмет «{name}» добавлен с ценой {price} руб.")
+    await show_manage_subjects_menu(message, state, tid)
+
+@dp.callback_query(F.data.startswith("editsubj_"), StateFilter(AdminStates.managing_subjects))
+async def edit_subject_menu(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    subj_name = call.data.split("_", 1)[1]
+    await state.update_data(edit_subject_name=subj_name)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Изменить название", callback_data="editsubj_name")],
+        [InlineKeyboardButton(text="💰 Изменить цену", callback_data="editsubj_price")],
+        [InlineKeyboardButton(text="❌ Удалить предмет", callback_data="editsubj_delete")],
+        [InlineKeyboardButton(text="🔙 Назад к списку предметов", callback_data="back_to_subjects_list")],
+    ])
+    await call.message.edit_text(f"Предмет: {subj_name}\nВыберите действие:", reply_markup=keyboard)
+    await state.set_state(AdminStates.editing_subject_choice)
+
+@dp.callback_query(F.data == "back_to_subjects_list", StateFilter(AdminStates.editing_subject_choice))
+async def back_to_subjects_list(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    data = await state.get_data()
+    tid = data.get("edit_tutor_id")
+    await show_manage_subjects_menu(call, state, tid)
+
+@dp.callback_query(F.data == "editsubj_name", StateFilter(AdminStates.editing_subject_choice))
+async def edit_subject_name_start(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await call.message.edit_text("Введите новое название предмета:")
+    await state.set_state(AdminStates.editing_subject_name_state)
+
+@dp.message(AdminStates.editing_subject_name_state)
+async def process_new_subject_name(message: Message, state: FSMContext):
+    new_name = message.text.strip()
+    data = await state.get_data()
+    tid = data.get("edit_tutor_id")
+    old_name = data.get("edit_subject_name")
+    if tid and old_name in tutors[tid]["subjects"]:
+        if new_name != old_name and new_name in tutors[tid]["subjects"]:
+            await message.answer("Предмет с таким названием уже существует. Введите другое.")
+            return
+        tutors[tid]["subjects"][new_name] = tutors[tid]["subjects"].pop(old_name)
+        save_tutors()
+    await message.answer(f"✅ Название предмета изменено на «{new_name}».")
+    await state.update_data(edit_subject_name=None)
+    await show_manage_subjects_menu(message, state, tid)
+
+@dp.callback_query(F.data == "editsubj_price", StateFilter(AdminStates.editing_subject_choice))
+async def edit_subject_price_start(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    await call.message.edit_text("Введите новую цену (целое число):")
+    await state.set_state(AdminStates.editing_subject_price_state)
+
+@dp.message(AdminStates.editing_subject_price_state)
+async def process_new_subject_price(message: Message, state: FSMContext):
+    try:
+        new_price = int(message.text.strip())
+    except ValueError:
+        await message.answer("Введите целое число.")
+        return
+    data = await state.get_data()
+    tid = data.get("edit_tutor_id")
+    subj = data.get("edit_subject_name")
+    if tid and subj in tutors[tid]["subjects"]:
+        tutors[tid]["subjects"][subj] = new_price
+        save_tutors()
+    await message.answer(f"✅ Цена для предмета «{subj}» изменена на {new_price} руб.")
+    await show_manage_subjects_menu(message, state, tid)
+
+@dp.callback_query(F.data == "editsubj_delete", StateFilter(AdminStates.editing_subject_choice))
+async def delete_subject_confirm(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    data = await state.get_data()
+    subj = data.get("edit_subject_name")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, удалить", callback_data="confirm_delete_subject")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_subjects_list")],
+    ])
+    await call.message.edit_text(f"Удалить предмет «{subj}»?", reply_markup=keyboard)
+    await state.set_state(AdminStates.deleting_subject_confirm)
+
+@dp.callback_query(F.data == "confirm_delete_subject", StateFilter(AdminStates.deleting_subject_confirm))
+async def confirm_delete_subject(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    data = await state.get_data()
+    tid = data.get("edit_tutor_id")
+    subj = data.get("edit_subject_name")
+    if tid and subj in tutors[tid]["subjects"]:
+        del tutors[tid]["subjects"][subj]
+        save_tutors()
+    await call.message.edit_text(f"✅ Предмет «{subj}» удалён.")
+    await show_manage_subjects_menu(call, state, tid)
 
 # --- УДАЛЕНИЕ РЕПЕТИТОРА ---
 @dp.callback_query(F.data == "admin_delete_list")
