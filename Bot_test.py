@@ -1186,7 +1186,7 @@ async def tutor_panel(message: types.Message):
             
             await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())###############################################################################################################
             break
-        else user_id == ADMING_ID:
+        if user_id == ADMING_ID:
 
             ADMING_ID = tid
             await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())###############################################################################################################
