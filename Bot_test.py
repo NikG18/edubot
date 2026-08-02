@@ -159,13 +159,23 @@ class TutorScheduleStates(StatesGroup):
     add_range = State()
     delete_slot = State()
 
+class TutorContactStudentStates(StatesGroup):
+    choosing_student = State()
+    waiting_message = State()
+
+class SupportUserStates(StatesGroup):
+    waiting_message = State()
+
+class SupportAdminReplyStates(StatesGroup):
+    waiting_reply = State()
+    
 # -------------------- ГЛАВНОЕ МЕНЮ (динамическое) --------------------
 def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
     # Проверяем, является ли пользователь преподавателем
     is_tutor = any(t.get("telegram_id") == user_id for t in tutors.values())
     is_admin = (user_id == ADMING_ID)
 
-    # Администратор видит всё (полное меню)
+    # Администратор видит всё (полное меню, без "Поддержка")
     if is_admin:
         buttons = [
             [KeyboardButton(text="ℹ️ Информация о репетиторах")],
@@ -181,18 +191,19 @@ def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
         buttons.append([KeyboardButton(text="👨‍🏫 Админ-панель")])
         return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-    # Меню для преподавателей – без ученических разделов
+    # Меню для преподавателей – без ученических разделов, но с "Поддержкой"
     if is_tutor:
         buttons = [
             [KeyboardButton(text="ℹ️ Информация о репетиторах")],
             [KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
-            [KeyboardButton(text="✉️ Связь с преподавателем")],
+            [KeyboardButton(text="✉️ Связь с учеником")],
+            [KeyboardButton(text="🆘 Поддержка")],
             [KeyboardButton(text="❓ Помощь")],
             [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
         ]
         return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-    # Обычный ученик – полное меню
+    # Обычный ученик – полное меню с "Поддержкой"
     buttons = [
         [KeyboardButton(text="ℹ️ Информация о репетиторах")],
         [KeyboardButton(text="📚 Информация о занятиях")],
@@ -201,8 +212,9 @@ def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="💳 Оплата")],
         [KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
         [KeyboardButton(text="✉️ Связь с преподавателем")],
+        [KeyboardButton(text="🆘 Поддержка")],
         [KeyboardButton(text="❓ Помощь")],
-    #    [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
+        # кнопка "Панель преподавателя" скрыта
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -794,6 +806,135 @@ async def send_reply_to_student(message: Message, state: FSMContext, bot: Bot):
         await message.answer("⚠️ Не удалось отправить ответ (возможно, ученик заблокировал бота).", reply_markup=get_main_menu(message.from_user.id))
     await state.clear()
 
+
+
+
+# ==================== СВЯЗЬ ПРЕПОДАВАТЕЛЯ С УЧЕНИКОМ ====================
+@dp.message(F.text.in_(["✉️ Связь с учеником"]))
+async def tutor_contact_student_start(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    tutor_id = None
+    for tid, t in tutors.items():
+        if t.get("telegram_id") == user_id:
+            tutor_id = tid
+            break
+    if not tutor_id:
+        await message.answer("Вы не зарегистрированы как преподаватель.")
+        return
+
+    # Собираем уникальных учеников по бронированиям
+    students = {}
+    for b in bookings.values():
+        if b["tutor_id"] == tutor_id and b["status"] in ("pending", "confirmed"):
+            uid = b["user_id"]
+            if uid not in students:
+                students[uid] = b["username"]
+    if not students:
+        await message.answer("У вас пока нет учеников для связи.")
+        return
+
+    buttons = []
+    for uid, name in students.items():
+        buttons.append([InlineKeyboardButton(text=name, callback_data=f"tutorcontactstudent_{uid}")])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
+    await message.answer("Выберите ученика:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await state.set_state(TutorContactStudentStates.choosing_student)
+
+@dp.callback_query(F.data.startswith("tutorcontactstudent_"), StateFilter(TutorContactStudentStates.choosing_student))
+async def tutor_contact_student_chosen(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    student_id = int(call.data.split("_")[-1])
+    await state.update_data(tutor_contact_student_id=student_id)
+    student_username = "Неизвестный"
+    for b in bookings.values():
+        if b["user_id"] == student_id:
+            student_username = b["username"]
+            break
+    await call.message.edit_text(f"Вы пишете ученику {student_username}. Введите сообщение:")
+    await state.set_state(TutorContactStudentStates.waiting_message)
+
+@dp.message(TutorContactStudentStates.waiting_message)
+async def tutor_send_message_to_student(message: Message, state: FSMContext, bot: Bot):
+    user = message.from_user
+    data = await state.get_data()
+    student_id = data["tutor_contact_student_id"]
+
+    # Ищем данные преподавателя
+    tutor_id = None
+    tutor_name = "Преподаватель"
+    for tid, t in tutors.items():
+        if t.get("telegram_id") == user.id:
+            tutor_id = tid
+            tutor_name = t["name"]
+            break
+    if not tutor_id:
+        await message.answer("Ошибка идентификации преподавателя.")
+        return
+
+    forward_msg = (
+        f"📨 Сообщение от преподавателя {tutor_name}:\n\n"
+        f"{message.text}"
+    )
+    try:
+        await bot.send_message(student_id, forward_msg)
+        await message.answer("✅ Сообщение отправлено ученику.", reply_markup=get_main_menu(user.id))
+    except Exception:
+        await message.answer("⚠️ Не удалось отправить сообщение (возможно, ученик заблокировал бота).",
+                             reply_markup=get_main_menu(user.id))
+    await state.clear()
+
+# ==================== ПОДДЕРЖКА (для всех, кроме админа) ====================
+@dp.message(F.text.in_(["🆘 Поддержка"]))
+async def support_start(message: types.Message, state: FSMContext):
+    await message.answer("Опишите вашу проблему или вопрос. Администратор свяжется с вами.",
+                         reply_markup=ReplyKeyboardRemove())
+    await state.set_state(SupportUserStates.waiting_message)
+
+@dp.message(SupportUserStates.waiting_message)
+async def support_message_to_admin(message: Message, state: FSMContext, bot: Bot):
+    user = message.from_user
+    username = user.username or user.full_name
+    uid = user.id
+    text = message.text.strip()
+
+    forward_msg = (
+        f"🆘 Сообщение в поддержку от {username} (ID: {uid}):\n\n"
+        f"{text}"
+    )
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="↩️ Ответить", callback_data=f"support_reply_{uid}")]
+    ])
+    await bot.send_message(ADMING_ID, forward_msg, reply_markup=reply_markup)
+    await message.answer("✅ Ваше сообщение отправлено администратору. Ожидайте ответа.",
+                         reply_markup=get_main_menu(uid))
+    await state.clear()
+
+# Обработчик кнопки ответа от администратора
+@dp.callback_query(F.data.startswith("support_reply_"))
+async def support_reply_start(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    if call.from_user.id != ADMING_ID:
+        await call.answer("⛔ Только администратор может отвечать на обращения.", show_alert=True)
+        return
+    student_id = int(call.data.split("_")[-1])
+    await state.update_data(support_reply_student_id=student_id)
+    await call.message.answer("Введите ответ пользователю:")
+    await state.set_state(SupportAdminReplyStates.waiting_reply)
+
+@dp.message(SupportAdminReplyStates.waiting_reply)
+async def support_send_reply(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    student_id = data["support_reply_student_id"]
+    reply_text = f"📬 Ответ от администратора:\n{message.text}"
+    try:
+        await bot.send_message(student_id, reply_text)
+        await message.answer("✅ Ответ отправлен пользователю.", reply_markup=get_main_menu(message.from_user.id))
+    except Exception:
+        await message.answer("⚠️ Не удалось отправить ответ (возможно, пользователь заблокировал бота).",
+                             reply_markup=get_main_menu(message.from_user.id))
+    await state.clear()
+
+
 # ==================== АДМИН-ПАНЕЛЬ ====================
 def admin_actions_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1179,20 +1320,11 @@ async def confirm_delete(call: CallbackQuery, state: FSMContext):
 async def tutor_panel(message: types.Message):
     user_id = message.from_user.id
     tutor_id = None
-    
     for tid, t in tutors.items():
         if t.get("telegram_id") == user_id:
             tutor_id = tid
-            
             await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())###############################################################################################################
-            break
-        if user_id == ADMING_ID:
-
-            ADMING_ID = tid
-            await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())###############################################################################################################
-            break
-        
-            
+            break     
     if not tutor_id:
         await message.answer("⛔ Вы не зарегистрированы как преподаватель.")
         return
