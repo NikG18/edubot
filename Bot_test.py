@@ -161,6 +161,38 @@ class TutorScheduleStates(StatesGroup):
 
 # -------------------- ГЛАВНОЕ МЕНЮ (динамическое) --------------------
 def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
+    # Проверяем, является ли пользователь преподавателем
+    is_tutor = any(t.get("telegram_id") == user_id for t in tutors.values())
+    is_admin = (user_id == ADMING_ID)
+
+    # Администратор видит всё (полное меню)
+    if is_admin:
+        buttons = [
+            [KeyboardButton(text="ℹ️ Информация о репетиторах")],
+            [KeyboardButton(text="📚 Информация о занятиях")],
+            [KeyboardButton(text="📝 Запись на занятие")],
+            [KeyboardButton(text="📋 Мои записи")],
+            [KeyboardButton(text="💳 Оплата")],
+            [KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
+            [KeyboardButton(text="✉️ Связь с преподавателем")],
+            [KeyboardButton(text="❓ Помощь")],
+            [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
+        ]
+        buttons.append([KeyboardButton(text="👨‍🏫 Админ-панель")])
+        return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+    # Меню для преподавателей – без ученических разделов
+    if is_tutor:
+        buttons = [
+            [KeyboardButton(text="ℹ️ Информация о репетиторах")],
+            [KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
+            [KeyboardButton(text="✉️ Связь с преподавателем")],
+            [KeyboardButton(text="❓ Помощь")],
+            [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
+        ]
+        return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+    # Обычный ученик – полное меню
     buttons = [
         [KeyboardButton(text="ℹ️ Информация о репетиторах")],
         [KeyboardButton(text="📚 Информация о занятиях")],
@@ -170,11 +202,11 @@ def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
         [KeyboardButton(text="✉️ Связь с преподавателем")],
         [KeyboardButton(text="❓ Помощь")],
-        [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
+    #    [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
     ]
-    if user_id == ADMING_ID:
-        buttons.append([KeyboardButton(text="👨‍🏫 Админ-панель")])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+
 
 # -------------------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ --------------------
 def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_to_menu"):
@@ -1147,11 +1179,20 @@ async def confirm_delete(call: CallbackQuery, state: FSMContext):
 async def tutor_panel(message: types.Message):
     user_id = message.from_user.id
     tutor_id = None
+    
     for tid, t in tutors.items():
         if t.get("telegram_id") == user_id:
             tutor_id = tid
+            
             await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())###############################################################################################################
             break
+        else user_id == ADMING_ID:
+
+            ADMING_ID = tid
+            await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())###############################################################################################################
+            break
+        
+            
     if not tutor_id:
         await message.answer("⛔ Вы не зарегистрированы как преподаватель.")
         return
