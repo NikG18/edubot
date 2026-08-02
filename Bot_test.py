@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sys
 import json
+import re
 import os
 from datetime import datetime, timedelta
 from aiogram.fsm.context import FSMContext
@@ -241,6 +242,17 @@ def get_available_dates(tutor_id: int, days_ahead=30) -> list:
             available.append(date_str)
     return available
 
+def clean_time_input(user_input: str) -> str:
+    """Приводит ввод пользователя к формату HH:MM, заменяя любые разделители на ':'."""
+    cleaned = user_input.strip()
+    # Всё, кроме цифр и двоеточия, заменяем на ':'
+    cleaned = re.sub(r'[^\d:]', ':', cleaned)
+    # Схлопываем несколько ':' подряд в одно
+    cleaned = re.sub(r':{2,}', ':', cleaned)
+    # Удаляем ':' по краям
+    cleaned = cleaned.strip(':')
+    return cleaned
+
 def split_into_slots(start_time: str, end_time: str, duration_min=90):
     fmt = "%H:%M"
     start = datetime.strptime(start_time, fmt)
@@ -328,7 +340,7 @@ async def lesson_info(message: types.Message):
         await message.answer("Пока нет доступных предметов.", reply_markup=get_main_menu(message.from_user.id))
         return
     buttons = [[InlineKeyboardButton(text=subj, callback_data=f"lesson_subject_{subj}")] for subj in sorted(subjects_set)]
-    #buttons.append([InlineKeyboardButton(text="🎫 Перечень скидок на занятия", callback_data="discount_info")])
+    buttons.append([InlineKeyboardButton(text="🎫 Перечень скидок на занятия", callback_data="discount_info")])
     buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
     await message.answer("Какой предмет Вас интересует?", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
@@ -338,11 +350,11 @@ async def back_to_lesson_subjects(call: CallbackQuery):
     for t in tutors.values():
         subjects_set.update(t["subjects"].keys())
     buttons = [[InlineKeyboardButton(text=subj, callback_data=f"lesson_subject_{subj}")] for subj in sorted(subjects_set)]
-    #buttons.append([InlineKeyboardButton(text="🎫 Перечень скидок на занятия", callback_data="discount_info")])
+    buttons.append([InlineKeyboardButton(text="🎫 Перечень скидок на занятия", callback_data="discount_info")])
     buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
     await call.message.edit_text("Какой предмет Вас интересует? Все цены указаны за 1 час индивидуального занятия", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
-#@dp.callback_query(F.data == "discount_info")
+@dp.callback_query(F.data == "discount_info")
 async def show_discount_info(call: CallbackQuery):
     discount_text = (
         "🎫 **Перечень скидок на занятия:**\n\n"
@@ -1256,13 +1268,34 @@ async def add_slot_start(call: CallbackQuery, state: FSMContext):
 
 @dp.message(TutorScheduleStates.add_slot)
 async def process_add_slot(message: Message, state: FSMContext):
-    slot = message.text.strip()
-    if len(slot.split("-")) != 2:
+    raw_slot = message.text.strip()
+    if "-" not in raw_slot:
         await message.answer("Неверный формат. Используйте ЧЧ:ММ-ЧЧ:ММ")
         return
+    parts = raw_slot.split("-")
+    if len(parts) != 2:
+        await message.answer("Неверный формат.")
+        return
+
+    start = clean_time_input(parts[0])
+    end = clean_time_input(parts[1])
+
+    # Валидация времени
+    for t in (start, end):
+        try:
+            datetime.strptime(t, "%H:%M")
+        except ValueError:
+            await message.answer(
+                f"Некорректное время «{t}». Пожалуйста, введите слот в формате ЧЧ:ММ-ЧЧ:ММ."
+            )
+            return
+
+    slot = f"{start}-{end}"
+
     data = await state.get_data()
     tid = data["tid"]
     day = data["current_day"]
+    # ... остальной код без изменений
     if tid not in schedules:
         schedules[tid] = {}
     if day not in schedules[tid]:
@@ -1304,8 +1337,23 @@ async def process_add_range(message: Message, state: FSMContext):
     if len(parts) != 2:
         await message.answer("Неверный формат.")
         return
-    start_time, end_time = parts[0].strip(), parts[1].strip()
+
+    # Нормализуем время: 9.00 → 9:00, 9-00 → 9:00 и т.д.
+    start_time = clean_time_input(parts[0])
+    end_time = clean_time_input(parts[1])
+
+    # Проверяем, что после очистки получился валидный формат
+    for t in (start_time, end_time):
+        try:
+            datetime.strptime(t, "%H:%M")
+        except ValueError:
+            await message.answer(
+                f"Некорректное время «{t}». Пожалуйста, используйте формат ЧЧ:ММ (например, 09:00)."
+            )
+            return
+
     slots = split_into_slots(start_time, end_time, duration_min=90)
+    # ... остальной код без изменений
     if not slots:
         await message.answer("Не удалось создать ни одного слота. Проверьте время.")
         return
