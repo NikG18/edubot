@@ -123,10 +123,10 @@ async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
         buttons = [
             [KeyboardButton(text="ℹ️ Информация о репетиторах")],
             [KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
+            [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
             [KeyboardButton(text="✉️ Связь с учеником")],
             [KeyboardButton(text="🆘 Поддержка")],
-            [KeyboardButton(text="❓ Помощь")],
-            [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
+            [KeyboardButton(text="❓ Помощь")]
         ]
         return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
