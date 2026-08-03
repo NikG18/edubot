@@ -1,10 +1,20 @@
 import json
 import asyncio
 import aiosqlite
+import sys
+import os
+
+# Добавляем путь к текущей папке для импорта database (если нужно)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from database import init_db   # импортируем инициализацию
 
 DB_PATH = "bot.db"
 
 async def migrate():
+    # Сначала создаём таблицы
+    await init_db()
+
     # Загружаем старые данные
     with open("tutors.json", encoding="utf-8") as f:
         tutors = json.load(f)
@@ -53,4 +63,5 @@ async def migrate():
         await db.commit()
         print("Миграция успешно завершена!")
 
-asyncio.run(migrate())
+if __name__ == "__main__":
+    asyncio.run(migrate())
