@@ -1320,7 +1320,7 @@ async def edit_commission_start(call: CallbackQuery, state: FSMContext):
     await state.update_data(edit_field="commission")
     await call.message.edit_text("Введите новый процент комиссии (целое число):")
     await state.set_state(AdminStates.waiting_new_value)
-    elif field == "commission":
+    if field == "commission":
         try:
             comm = int(message.text.strip())
             kwargs["commission_percent"] = comm
