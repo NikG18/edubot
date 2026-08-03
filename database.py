@@ -62,7 +62,33 @@ async def init_db():
 
         """)
         await db.commit()
+        
+async def migrate_database():
+    """Добавляет столбец commission_percent и таблицу subscriptions, если их нет."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Получаем список столбцов таблицы tutors
+        cursor = await db.execute("PRAGMA table_info(tutors)")
+        columns = [row[1] for row in await cursor.fetchall()]
 
+        if "commission_percent" not in columns:
+            await db.execute("ALTER TABLE tutors ADD COLUMN commission_percent INTEGER DEFAULT 15")
+            print("Добавлен столбец commission_percent в tutors.")
+
+        # Создаём таблицу subscriptions, если её ещё нет
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                tutor_id INTEGER NOT NULL,
+                subject TEXT NOT NULL,
+                total_lessons INTEGER NOT NULL DEFAULT 0,
+                remaining_lessons INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY (tutor_id) REFERENCES tutors(id) ON DELETE CASCADE
+            )
+        """)
+        await db.commit()
+        print("Миграция базы данных завершена.")
 # ------------------------------------------------------------
 # TUTORS
 # ------------------------------------------------------------
@@ -344,6 +370,7 @@ async def get_students_stats_by_month(year, month):
                 "remaining_subscription_lessons": remaining
             })
         return result
+
 
 
 # ------------------------------------------------------------
