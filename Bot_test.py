@@ -1321,12 +1321,12 @@ async def edit_commission_start(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text("Введите новый процент комиссии (целое число):")
     await state.set_state(AdminStates.waiting_new_value)
     elif field == "commission":
-    try:
-        comm = int(message.text.strip())
-        kwargs["commission_percent"] = comm
-    except ValueError:
-        await message.answer("Введите целое число.")
-        return
+        try:
+            comm = int(message.text.strip())
+            kwargs["commission_percent"] = comm
+        except ValueError:
+            await message.answer("Введите целое число.")
+            return
 
 @dp.callback_query(F.data.startswith("edit_"), StateFilter("*"))
 async def edit_field_choice(call: CallbackQuery, state: FSMContext):
