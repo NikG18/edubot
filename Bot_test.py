@@ -25,7 +25,8 @@ from database import (
 )
 
 
-ADMING_ID = 846400165
+ADMING_ID = os.environ.get("ADMING_ID")
+RECORDS_CHANNEL_ID = os.environ.get("RECORDS_CHANNEL_ID")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан! Передайте его через export BOT_TOKEN=...")
@@ -487,7 +488,7 @@ async def confirm_booking(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"📅 Дата: {date} (МСК)\n"
         f"🕒 Время: {slot} (МСК)"
     )
-    await bot.send_message(ADMING_ID, booking_msg)
+    #await bot.send_message(ADMING_ID, booking_msg)
 
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
@@ -2024,6 +2025,22 @@ async def tutor_confirm_booking(call: CallbackQuery, bot: Bot):
         await call.message.edit_text("Заявка уже обработана.")
         return
     await update_booking(bid, status="confirmed", reminded=0)
+    if RECORDS_CHANNEL_ID:
+        tutors = await get_all_tutors()
+        tutor = tutors.get(booking["tutor_id"])
+        tutor_name = tutor["name"] if tutor else "Неизвестный"
+        record_msg = (
+            f"✅ Подтверждена запись на занятие\n"
+            f"👤 Ученик: {booking['username']} (ID: {booking['user_id']})\n"
+            f"👨‍🏫 Преподаватель: {tutor_name}\n"
+            f"📚 Предмет: {booking['subject']}\n"
+            f"📅 Дата: {booking['date']} (МСК)\n"
+            f"🕒 Время: {booking['time_slot']} (МСК)"
+        )
+        try:
+            await bot.send_message(chat_id=RECORDS_CHANNEL_ID, text=record_msg)
+        except Exception as e:
+            logging.error(f"Не удалось отправить сообщение в канал записей: {e}")
     user_id = booking["user_id"]
     tutors = await get_all_tutors()
     tutor = tutors.get(booking["tutor_id"])
