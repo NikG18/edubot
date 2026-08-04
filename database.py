@@ -70,7 +70,6 @@ async def migrate_database():
         if "channel_msg_id" not in columns:
             await db.execute("ALTER TABLE bookings ADD COLUMN channel_msg_id INTEGER DEFAULT NULL")
             await db.commit()
-            logging.info("Добавлен столбец channel_msg_id в bookings")
         print("Миграция базы данных завершена.")
 # ------------------------------------------------------------
 # TUTORS
