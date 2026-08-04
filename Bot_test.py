@@ -578,6 +578,13 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
     if not booking:
         await call.message.edit_text("Запись не найдена.")
         return
+
+    if booking.get("channel_msg_id") and RECORDS_CHANNEL_ID:
+        try:
+            await bot.delete_message(chat_id=RECORDS_CHANNEL_ID, message_id=booking["channel_msg_id"])
+        except Exception as e:
+            logging.warning(f"Не удалось удалить сообщение из канала: {e}")
+            
     dt = datetime.strptime(booking["date"] + " " + booking["time_slot"].split("-")[0], "%d.%m.%Y %H:%M")
     if (dt - datetime.now()) <= timedelta(hours=24):
         await call.message.edit_text("Слишком поздно отменять. Стоимость не возвращается.")
@@ -736,17 +743,26 @@ async def confirm_student_reschedule(call: CallbackQuery, state: FSMContext, bot
     student_id = data["student_id"]
     student_username = data["student_username"]
 
-    # Отменяем старую запись
+    # --- 1. Удаляем старое сообщение из канала ---
+    old_booking = (await get_all_bookings()).get(old_bid)
+    if old_booking and old_booking.get("channel_msg_id") and RECORDS_CHANNEL_ID:
+        try:
+            await bot.delete_message(chat_id=RECORDS_CHANNEL_ID, message_id=old_booking["channel_msg_id"])
+        except Exception as e:
+            logging.warning(f"Не удалось удалить старое сообщение: {e}")
+
+    # --- 2. Отменяем старую запись ---
     await update_booking(old_bid, status="cancelled")
-    # Создаём новую (pending)
+
+    # --- 3. Создаём новую (pending) ---
     new_id = await add_booking(tid, student_id, student_username, subject, new_date, new_time)
 
+    # --- 4. Уведомляем преподавателя (с кнопками) ---
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
     tutor_name = tutor["name"] if tutor else "Неизвестный"
     tutor_tg = tutor.get("telegram_id") if tutor else None
 
-    # Уведомление преподавателю
     notify_tutor = (
         f"🔄 Ученик {student_username} перенёс занятие.\n"
         f"Предмет: {subject}\n"
@@ -755,14 +771,18 @@ async def confirm_student_reschedule(call: CallbackQuery, state: FSMContext, bot
     )
     if tutor_tg:
         try:
-            await bot.send_message(tutor_tg, notify_tutor)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"tutor_confirm_{new_id}")],
+                [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"tutor_reject_{new_id}")]
+            ])
+            await bot.send_message(tutor_tg, notify_tutor, reply_markup=keyboard)
         except:
             pass
-    await bot.send_message(ADMING_ID, notify_tutor)
 
-    # Уведомление ученику
-    await bot.send_message(student_id, 
-        f"✅ Занятие перенесено. Новая заявка на {new_date} {new_time} отправлена преподавателю.")
+    # --- 5. Уведомляем ученика ---
+    await bot.send_message(student_id,
+        f"✅ Заявка на перенос отправлена преподавателю. Новое время: {new_date} {new_time}.")
+
     await call.message.edit_text("Перенос выполнен. Ожидайте подтверждения нового времени.")
     await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
     await state.clear()
@@ -1650,6 +1670,13 @@ async def tutor_cancel_booking(call: CallbackQuery, bot: Bot):
     if not booking or booking["status"] != "confirmed":
         await call.message.edit_text("Невозможно отменить.")
         return
+
+    if booking.get("channel_msg_id") and RECORDS_CHANNEL_ID:
+        try:
+            await bot.delete_message(chat_id=RECORDS_CHANNEL_ID, message_id=booking["channel_msg_id"])
+        except Exception as e:
+            logging.warning(f"Не удалось удалить сообщение из канала: {e}")
+
     dt = datetime.strptime(booking["date"] + " " + booking["time_slot"].split("-")[0], "%d.%m.%Y %H:%M")
     if (dt - datetime.now()) <= timedelta(hours=24):
         await call.message.edit_text("Отмена менее чем за 24 часа невозможна.")
@@ -1759,29 +1786,54 @@ async def confirm_tutor_reschedule(call: CallbackQuery, state: FSMContext, bot: 
     student_id = data["student_id"]
     student_username = data["student_username"]
 
-    # Отменяем старую
+    # --- 1. Удаляем старое сообщение ---
+    old_booking = (await get_all_bookings()).get(old_bid)
+    if old_booking and old_booking.get("channel_msg_id") and RECORDS_CHANNEL_ID:
+        try:
+            await bot.delete_message(chat_id=RECORDS_CHANNEL_ID, message_id=old_booking["channel_msg_id"])
+        except Exception as e:
+            logging.warning(f"Не удалось удалить старое сообщение: {e}")
+
+    # --- 2. Отменяем старую запись ---
     await update_booking(old_bid, status="cancelled")
-    # Создаём новую (сразу подтверждённую)
+
+    # --- 3. Создаём новую запись и сразу подтверждаем ---
     new_id = await add_booking(tid, student_id, student_username, subject, new_date, new_time)
     await update_booking(new_id, status="confirmed", reminded=0)
 
-    tutors = await get_all_tutors()
-    tutor_name = tutors.get(tid, {}).get("name", "Преподаватель")
+    # --- 4. Отправляем новое сообщение в канал и сохраняем ID ---
+    if RECORDS_CHANNEL_ID:
+        tutors = await get_all_tutors()
+        tutor = tutors.get(tid)
+        tutor_name = tutor["name"] if tutor else "Неизвестный"
+        record_msg = (
+            f"✅ Подтверждена запись на занятие (перенос преподавателем)\n"
+            f"👤 Ученик: {student_username} (ID: {student_id})\n"
+            f"👨‍🏫 Преподаватель: {tutor_name}\n"
+            f"📚 Предмет: {subject}\n"
+            f"📅 Дата: {new_date} (МСК)\n"
+            f"🕒 Время: {new_time} (МСК)"
+        )
+        try:
+            sent_msg = await bot.send_message(chat_id=RECORDS_CHANNEL_ID, text=record_msg)
+            await update_booking(new_id, channel_msg_id=sent_msg.message_id)
+        except Exception as e:
+            logging.error(f"Не удалось отправить сообщение в канал: {e}")
 
-    # Уведомления
+    # --- 5. Уведомления ---
     student_msg = (
-        f"🔄 Преподаватель {tutor_name} перенёс занятие.\n"
+        f"🔄 Преподаватель перенёс занятие.\n"
         f"Предмет: {subject}\n"
         f"Новое время: {new_date} {new_time} (МСК)"
     )
     await bot.send_message(student_id, student_msg)
+
     tutor_msg = f"✅ Вы перенесли занятие с {student_username} на {new_date} {new_time}."
     await bot.send_message(call.from_user.id, tutor_msg)
 
     await call.message.edit_text("Перенос выполнен.")
     await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
     await state.clear()
-
 
 
 # ==================== СТАТИСТИКА ПРЕПОДАВАТЕЛЯ ====================
@@ -2038,9 +2090,11 @@ async def tutor_confirm_booking(call: CallbackQuery, bot: Bot):
             f"🕒 Время: {booking['time_slot']} (МСК)"
         )
         try:
-            await bot.send_message(chat_id=RECORDS_CHANNEL_ID, text=record_msg)
+            sent_msg = await bot.send_message(chat_id=RECORDS_CHANNEL_ID, text=record_msg)
+            # Сохраняем ID сообщения в БД
+            await update_booking(bid, channel_msg_id=sent_msg.message_id)
         except Exception as e:
-            logging.error(f"Не удалось отправить сообщение в канал записей: {e}")
+            logging.error(f"Не удалось отправить сообщение в канал: {e}")
     user_id = booking["user_id"]
     tutors = await get_all_tutors()
     tutor = tutors.get(booking["tutor_id"])
