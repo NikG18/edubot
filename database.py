@@ -64,30 +64,13 @@ async def init_db():
         await db.commit()
         
 async def migrate_database():
-    """Добавляет столбец commission_percent и таблицу subscriptions, если их нет."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        # Получаем список столбцов таблицы tutors
-        cursor = await db.execute("PRAGMA table_info(tutors)")
+    async with aiosqlite.connect("bot.db") as db:
+        cursor = await db.execute("PRAGMA table_info(bookings)")
         columns = [row[1] for row in await cursor.fetchall()]
-
-        if "commission_percent" not in columns:
-            await db.execute("ALTER TABLE tutors ADD COLUMN commission_percent INTEGER DEFAULT 15")
-            print("Добавлен столбец commission_percent в tutors.")
-
-        # Создаём таблицу subscriptions, если её ещё нет
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS subscriptions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                tutor_id INTEGER NOT NULL,
-                subject TEXT NOT NULL,
-                total_lessons INTEGER NOT NULL DEFAULT 0,
-                remaining_lessons INTEGER NOT NULL DEFAULT 0,
-                active INTEGER NOT NULL DEFAULT 1,
-                FOREIGN KEY (tutor_id) REFERENCES tutors(id) ON DELETE CASCADE
-            )
-        """)
-        await db.commit()
+        if "channel_msg_id" not in columns:
+            await db.execute("ALTER TABLE bookings ADD COLUMN channel_msg_id INTEGER DEFAULT NULL")
+            await db.commit()
+            logging.info("Добавлен столбец channel_msg_id в bookings")
         print("Миграция базы данных завершена.")
 # ------------------------------------------------------------
 # TUTORS
@@ -237,23 +220,25 @@ async def get_all_bookings() -> Dict[int, dict]:
             }
     return bookings
 
-async def add_booking(tutor_id, user_id, username, subject, date, time_slot) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "INSERT INTO bookings (tutor_id, user_id, username, subject, date, time_slot) VALUES (?,?,?,?,?,?)",
-            (tutor_id, user_id, username, subject, date, time_slot))
+async def add_booking(tutor_id, user_id, username, subject, date, time_slot, channel_msg_id=None):
+    async with aiosqlite.connect("bot.db") as db:
+        cursor = await db.execute(
+            "INSERT INTO bookings (tutor_id, user_id, username, subject, date, time_slot, status, reminded, channel_msg_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?)",
+            (tutor_id, user_id, username, subject, date, time_slot, channel_msg_id)
+        )
         await db.commit()
-        return cur.lastrowid
+        return cursor.lastrowid
 
-async def update_booking(booking_id: int, **kwargs):
-    """kwargs: status, reminded (int 0/1)"""
-    fields = {k: v for k, v in kwargs.items() if v is not None}
-    if not fields:
-        return
-    set_clause = ", ".join(f"{k} = ?" for k in fields)
-    values = list(fields.values()) + [booking_id]
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(f"UPDATE bookings SET {set_clause} WHERE id = ?", values)
+async def update_booking(booking_id, **kwargs):
+    async with aiosqlite.connect("bot.db") as db:
+        fields = [f"{key}=?" for key in kwargs]
+        values = list(kwargs.values())
+        values.append(booking_id)
+        await db.execute(
+            f"UPDATE bookings SET {', '.join(fields)} WHERE id=?",
+            values
+        )
         await db.commit()
 
 async def delete_booking(booking_id: int):
