@@ -37,6 +37,15 @@ async def safe_answer(call: CallbackQuery, text: str = None, show_alert: bool = 
         else:
             logging.error(f"Unexpected error in safe_answer: {e}")
 
+def parse_booking_time(booking: dict) -> datetime:
+    """
+    Безопасно парсит дату и время начала занятия из бронирования.
+    Заменяет точки на двоеточие в строке времени.
+    """
+    date_str = booking["date"]
+    time_part = booking["time_slot"].split("-")[0].replace(".", ":")
+    return datetime.strptime(f"{date_str} {time_part}", "%d.%m.%Y %H:%M")
+
 ADMING_ID = os.environ.get("ADMING_ID")
 RECORDS_CHANNEL_ID = os.environ.get("RECORDS_CHANNEL_ID")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -549,7 +558,7 @@ async def my_records(message: types.Message, state: FSMContext):
             tutor = tutors.get(b["tutor_id"], {"name": "Неизвестный"})
             date_str = b["date"]
             time_str = b["time_slot"]
-            dt = datetime.strptime(date_str + " " + time_str.split("-")[0], "%d.%m.%Y %H:%M")
+            dt = parse_booking_time(b)
             now = datetime.now()
             can_act = (dt - now) > timedelta(hours=24)
             status_text = ""
@@ -597,7 +606,7 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
         except Exception as e:
             logging.warning(f"Не удалось удалить сообщение из канала: {e}")
             
-    dt = datetime.strptime(booking["date"] + " " + booking["time_slot"].split("-")[0], "%d.%m.%Y %H:%M")
+    dt = parse_booking_time(booking)
     if (dt - datetime.now()) <= timedelta(hours=24):
         await call.message.edit_text("Слишком поздно отменять. Стоимость не возвращается.")
         return
@@ -663,7 +672,7 @@ async def student_reschedule_start(call: CallbackQuery, state: FSMContext):
     if not booking or booking["status"] != "confirmed":
         await call.message.edit_text("Запись недоступна для переноса.")
         return
-    dt = datetime.strptime(booking["date"] + " " + booking["time_slot"].split("-")[0], "%d.%m.%Y %H:%M")
+    dt = parse_booking_time(booking)
     if (dt - datetime.now()) <= timedelta(hours=24):
         await call.message.edit_text("Перенос возможен не позднее чем за 24 часа.")
         return
@@ -1683,7 +1692,7 @@ async def tutor_cancel_booking(call: CallbackQuery, bot: Bot):
         except Exception as e:
             logging.warning(f"Не удалось удалить сообщение из канала: {e}")
 
-    dt = datetime.strptime(booking["date"] + " " + booking["time_slot"].split("-")[0], "%d.%m.%Y %H:%M")
+    dt = parse_booking_time(booking)
     if (dt - datetime.now()) <= timedelta(hours=24):
         await call.message.edit_text("Отмена менее чем за 24 часа невозможна.")
         return
@@ -1705,7 +1714,7 @@ async def tutor_reschedule_start(call: CallbackQuery, state: FSMContext):
     if not booking or booking["status"] != "confirmed":
         await call.message.edit_text("Невозможно перенести.")
         return
-    dt = datetime.strptime(booking["date"] + " " + booking["time_slot"].split("-")[0], "%d.%m.%Y %H:%M")
+    dt = parse_booking_time(booking)
     if (dt - datetime.now()) <= timedelta(hours=24):
         await call.message.edit_text("Перенос менее чем за 24 часа невозможен.")
         return
@@ -2216,10 +2225,15 @@ async def reminder_loop(bot: Bot):
     while True:
         await send_reminders(bot)
         await asyncio.sleep(60)
-
+async def fix_time_format_in_db():
+    async with aiosqlite.connect("bot.db") as db:
+        await db.execute("UPDATE bookings SET time_slot = REPLACE(time_slot, '.', ':')")
+        await db.commit()
+        logging.info("Исправлен формат времени в БД (точки заменены на двоеточия)")
 # ==================== ЗАПУСК ====================
 async def main() -> None:
     await init_db()
+    await fix_time_format_in_db()
     #await migrate_database()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     asyncio.create_task(periodic_cleanup())
