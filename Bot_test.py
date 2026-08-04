@@ -359,7 +359,7 @@ async def lesson_info(message: types.Message):
     if is_tutor and not is_admin:
         # Для преподавателей сразу показываем общую информацию без списка предметов
         await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
-        text = "📚 **Информация для преподавателей**\n\n" + TUTOR_INFO_TEXT
+        text = TUTOR_INFO_TEXT
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
         ])
