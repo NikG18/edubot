@@ -46,8 +46,8 @@ def parse_booking_time(booking: dict) -> datetime:
     time_part = booking["time_slot"].split("-")[0].replace(".", ":")
     return datetime.strptime(f"{date_str} {time_part}", "%d.%m.%Y %H:%M")
 
-ADMING_ID = os.environ.get(ADMING_ID)
-RECORDS_CHANNEL_ID = os.environ.get(RECORDS_CHANNEL_ID)
+ADMING_ID = int(os.environ.get("ADMING_ID)")
+RECORDS_CHANNEL_ID = os.environ.get("RECORDS_CHANNEL_ID")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан! Передайте его через export BOT_TOKEN=...")
