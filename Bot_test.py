@@ -2225,15 +2225,9 @@ async def reminder_loop(bot: Bot):
     while True:
         await send_reminders(bot)
         await asyncio.sleep(60)
-async def fix_time_format_in_db():
-    async with aiosqlite.connect("bot.db") as db:
-        await db.execute("UPDATE bookings SET time_slot = REPLACE(time_slot, '.', ':')")
-        await db.commit()
-        logging.info("Исправлен формат времени в БД (точки заменены на двоеточия)")
 # ==================== ЗАПУСК ====================
 async def main() -> None:
     await init_db()
-    await fix_time_format_in_db()
     #await migrate_database()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     asyncio.create_task(periodic_cleanup())
