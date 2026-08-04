@@ -60,6 +60,34 @@ WEEKDAY_NAMES = {
     "thursday": "Чт", "friday": "Пт", "saturday": "Сб", "sunday": "Вс"
 }
 
+
+TUTOR_INFO_TEXT = (
+    "👨‍🏫 **Информация для преподавателей**\n\n"
+    "📍 **Где проходят занятия?**\n"
+    "Занятия проводятся онлайн на платформе **Zoom**. Мы предоставляем корпоративную подписку, "
+    "поэтому нет ограничений по времени и количеству участников. Ссылка на занятие генерируется автоматически.\n\n"
+    "💰 **Как проходит оплата?**\n"
+    "Ученики оплачивают занятия напрямую платформе. Мы удерживаем комиссию и перечисляем вам "
+    "вознаграждение за вычетом комиссии **два раза в месяц** (1-го и 15-го числа).\n\n"
+    "📈 **Прогрессивная шкала комиссии:**\n"
+    "• 25% — 1-20 занятий в месяц\n"
+    "• 20% — 21-40 занятий в месяц (доступно после 1 месяца работы)\n"
+    "• 15% — более 40 занятий в месяц (доступно после 3 месяцев работы)\n\n"
+    "📝 **Ваши задачи:**\n"
+    "— Подготовка и проведение занятий.\n"
+    "— Обратная связь ученикам.\n"
+    "— Ведение расписания через бот (доступно в панели преподавателя).\n\n"
+    "🆘 **Поддержка:**\n"
+    "Все административные вопросы решаются через поддержку в боте."
+)
+
+SUBJECT_INFO_FOR_STUDENT = (
+    "📚 Занятия по выбранному предмету проводятся опытными преподавателями.\n"
+    "Для записи на занятие воспользуйтесь разделом «Запись на занятие».\n"
+    "Подробнее о скидках можно узнать по кнопке ниже."
+)
+
+
 # ---- FSM состояния ----
 class BookingStates(StatesGroup):
     choosing_tutor = State()
@@ -323,6 +351,21 @@ async def show_tutor_info(call: CallbackQuery):
 # ==================== ИНФОРМАЦИЯ О ЗАНЯТИЯХ ====================
 @dp.message(F.text.in_(["📚 Информация о занятиях"]))
 async def lesson_info(message: types.Message):
+    user_id = message.from_user.id
+    is_tutor = await get_tutor_by_telegram_id(user_id) is not None
+    is_admin = (user_id == ADMING_ID)
+
+    if is_tutor and not is_admin:
+        # Для преподавателей сразу показываем общую информацию без списка предметов
+        await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
+        text = "📚 **Информация для преподавателей**\n\n" + TUTOR_INFO_TEXT
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+        ])
+        await message.answer(text, reply_markup=keyboard)
+        return
+
+    # Для учеников и администраторов — список предметов
     await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
     tutors = await get_all_tutors()
     subjects_set = set()
@@ -332,9 +375,9 @@ async def lesson_info(message: types.Message):
         await message.answer("Пока нет доступных предметов.", reply_markup=await get_main_menu(message.from_user.id))
         return
     buttons = [[InlineKeyboardButton(text=subj, callback_data=f"lesson_subject_{subj}")] for subj in sorted(subjects_set)]
-    buttons.append([InlineKeyboardButton(text="🎫 Перечень скидок на занятия", callback_data="discount_info")])
     buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
     await message.answer("Какой предмет Вас интересует?", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
 
 @dp.callback_query(F.data == "back_to_lesson_subjects")
 async def back_to_lesson_subjects(call: CallbackQuery):
@@ -343,10 +386,9 @@ async def back_to_lesson_subjects(call: CallbackQuery):
     for t in tutors.values():
         subjects_set.update(t["subjects"].keys())
     buttons = [[InlineKeyboardButton(text=subj, callback_data=f"lesson_subject_{subj}")] for subj in sorted(subjects_set)]
-    buttons.append([InlineKeyboardButton(text="🎫 Перечень скидок на занятия", callback_data="discount_info")])
     buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
-    await call.message.edit_text("Какой предмет Вас интересует? Все цены указаны за 1 час индивидуального занятия",
-                                 reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await call.message.edit_text("Какой предмет Вас интересует?", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await safe_answer(call)
 
 @dp.callback_query(F.data == "discount_info")
 async def show_discount_info(call: CallbackQuery):
@@ -367,14 +409,13 @@ async def show_discount_info(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("lesson_subject_"))
 async def show_lesson_subject_info(call: CallbackQuery):
     subject = call.data.split("lesson_subject_", 1)[1]
-    tutors = await get_all_tutors()
-    lines = [f"Предмет: {subject} (цены указаны за 1 час, время МСК)\n"]
-    for t in tutors.values():
-        if subject in t["subjects"]:
-            lines.append(f"👨‍🏫 {t['name']} — {t['subjects'][subject]} руб.")
-    await call.message.edit_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+    # Эта функция теперь вызывается только у учеников и админов
+    text = f"📚 Предмет: {subject}\n\n" + SUBJECT_INFO_FOR_STUDENT
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎫 Скидки", callback_data="discount_info")],
         [InlineKeyboardButton(text="🔙 К списку предметов", callback_data="back_to_lesson_subjects")]
-    ]))
+    ])
+    await call.message.edit_text(text, reply_markup=keyboard)
     await safe_answer(call)
 
 # ==================== ЗАПИСЬ НА ЗАНЯТИЕ ====================
