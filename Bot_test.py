@@ -15,7 +15,7 @@ from aiogram.types import (
     Message, ReplyKeyboardRemove, ReplyKeyboardMarkup,
     KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery)
 from database import (
-    init_db, migrate_database,
+    init_db, #migrate_database,
     get_all_tutors, add_tutor, update_tutor, delete_tutor,
     add_subject, update_subject, delete_subject,
     get_schedule, add_schedule_slot, delete_schedule_slot,
@@ -2214,7 +2214,7 @@ async def reminder_loop(bot: Bot):
 # ==================== ЗАПУСК ====================
 async def main() -> None:
     await init_db()
-    await migrate_database()
+    #await migrate_database()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     asyncio.create_task(periodic_cleanup())
     asyncio.create_task(reminder_loop(bot))
