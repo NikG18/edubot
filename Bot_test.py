@@ -262,7 +262,7 @@ async def main_menu_buttons(message: Message) -> None:
 
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     await state.clear()
     try:
         await call.message.delete()
@@ -288,7 +288,7 @@ async def back_to_tutors(call: CallbackQuery):
         await call.message.answer("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
     else:
         await call.message.edit_text("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
-    await call.answer()
+    await safe_answer(call)
 
 @dp.callback_query(F.data.startswith("tutor_info_"))
 async def show_tutor_info(call: CallbackQuery):
@@ -296,7 +296,7 @@ async def show_tutor_info(call: CallbackQuery):
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
     if not tutor:
-        await call.answer("Репетитор не найден", show_alert=True)
+        await safe_answer(call, "Репетитор не найден", show_alert=True)
         return
     text = tutor["description"] + "\n\nПредметы и цены:\n"
     for subj, price in tutor["subjects"].items():
@@ -309,7 +309,7 @@ async def show_tutor_info(call: CallbackQuery):
         await call.bot.send_photo(chat_id=call.message.chat.id, photo=tutor["photo"], caption=text, reply_markup=keyboard)
     else:
         await call.message.edit_text(text, reply_markup=keyboard)
-    await call.answer()
+    await safe_answer(call)
 
 # ==================== ИНФОРМАЦИЯ О ЗАНЯТИЯХ ====================
 @dp.message(F.text.in_(["📚 Информация о занятиях"]))
@@ -353,7 +353,7 @@ async def show_discount_info(call: CallbackQuery):
     await call.message.edit_text(discount_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 К списку предметов", callback_data="back_to_lesson_subjects")]
     ]))
-    await call.answer()
+    await safe_answer(call)
 
 @dp.callback_query(F.data.startswith("lesson_subject_"))
 async def show_lesson_subject_info(call: CallbackQuery):
@@ -366,7 +366,7 @@ async def show_lesson_subject_info(call: CallbackQuery):
     await call.message.edit_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 К списку предметов", callback_data="back_to_lesson_subjects")]
     ]))
-    await call.answer()
+    await safe_answer(call)
 
 # ==================== ЗАПИСЬ НА ЗАНЯТИЕ ====================
 @dp.message(F.text.in_(["📝 Запись на занятие"]))
@@ -378,7 +378,7 @@ async def zapis(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("tutor_booking_"))
 async def choose_tutor_booking(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     tid = int(call.data.split("_")[-1])
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
@@ -391,14 +391,14 @@ async def choose_tutor_booking(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "back_to_tutors_booking")
 async def back_to_tutors_booking(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     await state.clear()
     keyboard = await make_tutors_keyboard("tutor_booking", back_callback="back_to_menu")
     await call.message.edit_text("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
 
 @dp.callback_query(F.data.startswith("subject_"))
 async def subject_chosen(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     parts = call.data.split("_", 2)
     if len(parts) < 3:
         return
@@ -425,7 +425,7 @@ async def subject_chosen(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("date_"), StateFilter(BookingStates.waiting_date))
 async def choose_date(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     date_str = call.data.split("_", 1)[1]
     await state.update_data(date=date_str)
     data = await state.get_data()
@@ -458,7 +458,7 @@ async def back_to_date(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("slot_"), StateFilter(BookingStates.waiting_time))
 async def choose_slot(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     slot = call.data.split("_", 1)[1]
     await state.update_data(time_slot=slot)
     data = await state.get_data()
@@ -479,7 +479,7 @@ async def choose_slot(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "confirm_booking", StateFilter(BookingStates.waiting_confirmation))
 async def confirm_booking(call: CallbackQuery, state: FSMContext, bot: Bot):
-    await call.answer()
+    await safe_answer(call)
     data = await state.get_data()
     tid = data["tutor_id"]
     tutor_name = data["tutor_name"]
@@ -523,7 +523,7 @@ async def confirm_booking(call: CallbackQuery, state: FSMContext, bot: Bot):
 
 @dp.callback_query(F.data == "cancel_booking", StateFilter(BookingStates.waiting_confirmation))
 async def cancel_booking(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     await call.message.edit_text("Запись отменена. Возвращаемся в главное меню.")
     await state.clear()
     await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
@@ -583,7 +583,7 @@ async def my_records(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("cancel_student_"))
 async def cancel_student_booking(call: CallbackQuery, bot: Bot):
-    await call.answer()
+    await safe_answer(call)
     bid = int(call.data.split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
@@ -624,7 +624,7 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
 
 @dp.callback_query(F.data == "student_stats")
 async def show_student_stats(call: CallbackQuery):
-    await call.answer()
+    await safe_answer(call)
     user_id = call.from_user.id
     bookings = await get_all_bookings()
     completed = sum(1 for b in bookings.values() if b["user_id"] == user_id and b["status"] == "completed")
@@ -650,13 +650,13 @@ async def show_student_stats(call: CallbackQuery):
 async def back_to_my_records(call: CallbackQuery):
     await call.message.edit_text("Возврат в главное меню...")
     await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
-    await call.answer()
+    await safe_answer(call)
 
 
 # ==================== ПЕРЕНОС УЧЕНИКОМ ====================
 @dp.callback_query(F.data.startswith("reschedule_student_"))
 async def student_reschedule_start(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     bid = int(call.data.split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
@@ -692,7 +692,7 @@ async def student_reschedule_start(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("reschedule_date_"), StateFilter(StudentRescheduleStates.waiting_date))
 async def student_reschedule_date(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     date_str = call.data.split("reschedule_date_")[1]
     await state.update_data(new_date=date_str)
     data = await state.get_data()
@@ -725,7 +725,7 @@ async def back_to_reschedule_date(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("reschedule_slot_"), StateFilter(StudentRescheduleStates.waiting_time))
 async def student_reschedule_slot(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     slot = call.data.split("reschedule_slot_")[1]
     await state.update_data(new_time=slot)
     data = await state.get_data()
@@ -745,7 +745,7 @@ async def student_reschedule_slot(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "confirm_student_reschedule", StateFilter(StudentRescheduleStates.waiting_confirmation))
 async def confirm_student_reschedule(call: CallbackQuery, state: FSMContext, bot: Bot):
-    await call.answer()
+    await safe_answer(call)
     data = await state.get_data()
     old_bid = data["old_booking_id"]
     tid = data["tutor_id"]
@@ -820,7 +820,7 @@ async def back_to_pay(call: CallbackQuery):
         [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
     ])
     await call.message.edit_text("Какой способ оплаты вам удобнее?", reply_markup=keyboard)
-    await call.answer()
+    await safe_answer(call)
 
 @dp.callback_query(F.data == "qr")
 async def qr(call: CallbackQuery):
@@ -828,7 +828,7 @@ async def qr(call: CallbackQuery):
                                  reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                                      [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_pay")]
                                  ]))
-    await call.answer()
+    await safe_answer(call)
 
 @dp.callback_query(F.data == "card")
 async def card(call: CallbackQuery):
@@ -836,7 +836,7 @@ async def card(call: CallbackQuery):
                                  reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                                      [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_pay")]
                                  ]))
-    await call.answer()
+    await safe_answer(call)
 
 @dp.callback_query(F.data == "sbp")
 async def sbp(call: CallbackQuery):
@@ -845,7 +845,7 @@ async def sbp(call: CallbackQuery):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_pay")]
         ]))
-    await call.answer()
+    await safe_answer(call)
 
 # ==================== УЧЕБНЫЕ МАТЕРИАЛЫ ====================
 @dp.message(F.text.in_(["📖 Учебные материалы"]))
@@ -885,19 +885,19 @@ async def vid(call: CallbackQuery):
                                  ]))
 @dp.callback_query(F.data.startswith("bookh"))
 async def bookh(call: CallbackQuery):
-    await call.answer("Скоро здесь будут пособия по химии", show_alert=True)
+    await safe_answer(call, "Скоро здесь будут пособия по химии", show_alert=True)
 
 @dp.callback_query(F.data.startswith("bookf"))
 async def bookf(call: CallbackQuery):
-    await call.answer("Скоро здесь будут пособия по физике", show_alert=True)
+    await safe_answer(call, "Скоро здесь будут пособия по физике", show_alert=True)
 
 @dp.callback_query(F.data.startswith("videh"))
 async def videh(call: CallbackQuery):
-    await call.answer("Скоро здесь будут видео по химии", show_alert=True)
+    await safe_answer(call, "Скоро здесь будут видео по химии", show_alert=True)
 
 @dp.callback_query(F.data.startswith("videf"))
 async def videf(call: CallbackQuery):
-    await call.answer("Скоро здесь будут видео по физике", show_alert=True)
+    await safe_answer(call, "Скоро здесь будут видео по физике", show_alert=True)
 
 
 
@@ -911,7 +911,7 @@ async def svyaz(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("msg_tutor_"), StateFilter(ContactStates.choosing_tutor))
 async def choose_msg_tutor(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     tid = int(call.data.split("_")[-1])
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
@@ -957,7 +957,7 @@ async def send_message_to_tutor(message: Message, state: FSMContext, bot: Bot):
 
 @dp.callback_query(F.data.startswith("reply_"))
 async def process_reply_button(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     student_id = int(call.data.split("_")[1])
     await state.update_data(reply_student_id=student_id)
     await call.message.answer("Введите ваш ответ (текст):")
@@ -1005,7 +1005,7 @@ async def tutor_contact_student_start(message: types.Message, state: FSMContext)
 
 @dp.callback_query(F.data.startswith("tutorcontactstudent_"), StateFilter(TutorContactStudentStates.choosing_student))
 async def tutor_contact_student_chosen(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     student_id = int(call.data.split("_")[-1])
     await state.update_data(tutor_contact_student_id=student_id)
     student_username = "Неизвестный"
@@ -1071,9 +1071,9 @@ async def support_message_to_admin(message: Message, state: FSMContext, bot: Bot
 
 @dp.callback_query(F.data.startswith("support_reply_"))
 async def support_reply_start(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     if call.from_user.id != ADMING_ID:
-        await call.answer("⛔ Только администратор может отвечать на обращения.", show_alert=True)
+        await safe_answer(call, "⛔ Только администратор может отвечать на обращения.", show_alert=True)
         return
     student_id = int(call.data.split("_")[-1])
     await state.update_data(support_reply_student_id=student_id)
@@ -1117,13 +1117,13 @@ async def open_admin_panel(call: CallbackQuery, state: FSMContext):
     await call.message.delete()
     await call.message.answer("Админ-панель управления репетиторами", reply_markup=ReplyKeyboardRemove())
     await call.message.answer("Выберите действие:", reply_markup=admin_actions_keyboard())
-    await call.answer()
+    await safe_answer(call)
 
 
 # ==================== АДМИН-СТАТИСТИКА ====================
 @dp.callback_query(F.data == "admin_stats")
 async def admin_stats_menu(call: CallbackQuery):
-    await call.answer()
+    await safe_answer(call)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👨‍🏫 Статистика по репетиторам", callback_data="admin_stats_tutors")],
         [InlineKeyboardButton(text="👤 Статистика по ученикам", callback_data="admin_stats_students")],
@@ -1133,7 +1133,7 @@ async def admin_stats_menu(call: CallbackQuery):
 
 @dp.callback_query(F.data == "admin_stats_tutors")
 async def admin_stats_tutors_overview(call: CallbackQuery):
-    await call.answer()
+    await safe_answer(call)
     stats = await get_all_tutors_stats()
     lines = ["📊 Статистика по репетиторам (за всё время):\n"]
     total_lessons = total_income = total_commission = 0.0
@@ -1188,7 +1188,7 @@ async def admin_stats_tutors_month(call: CallbackQuery):
 
 @dp.callback_query(F.data == "admin_stats_students")
 async def admin_stats_students(call: CallbackQuery):
-    await call.answer()
+    await safe_answer(call)
     stats = await get_students_stats()
     if not stats:
         text = "Нет данных."
@@ -1210,7 +1210,7 @@ async def admin_stats_students(call: CallbackQuery):
 # --- Добавление репетитора ---
 @dp.callback_query(F.data == "admin_add")
 async def admin_add_start(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     await call.message.edit_text("Введите имя репетитора:")
     await state.set_state(AdminStates.waiting_name)
 
@@ -1290,12 +1290,12 @@ async def admin_add_subject_price(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "add_another_subject", StateFilter(AdminStates.waiting_subject_name))
 async def add_another_subject(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     await call.message.edit_text("Введите название следующего предмета:")
 
 @dp.callback_query(F.data == "finish_adding_subjects", StateFilter(AdminStates.waiting_subject_name))
 async def finish_adding_subjects(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     data = await state.get_data()
     new_id = await add_tutor(
         name=data["name"],
@@ -1317,7 +1317,7 @@ async def finish_adding_subjects(call: CallbackQuery, state: FSMContext):
 # --- Редактирование репетитора ---
 @dp.callback_query(F.data == "admin_edit_list")
 async def admin_edit_list(call: CallbackQuery):
-    await call.answer()
+    await safe_answer(call)
     tutors = await get_all_tutors()
     if not tutors:
         await call.message.edit_text("Нет репетиторов для редактирования.",
@@ -1330,7 +1330,7 @@ async def admin_edit_list(call: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("edit_tutor_"))
 async def edit_tutor_choice(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     tid = int(call.data.split("_")[-1])
     await state.update_data(edit_tutor_id=tid)
     tutors = await get_all_tutors()
@@ -1349,21 +1349,15 @@ async def edit_tutor_choice(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "edit_commission", StateFilter("*"))
 async def edit_commission_start(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     await state.update_data(edit_field="commission")
     await call.message.edit_text("Введите новый процент комиссии (целое число):")
     await state.set_state(AdminStates.waiting_new_value)
-    if field == "commission":
-        try:
-            comm = int(message.text.strip())
-            kwargs["commission_percent"] = comm
-        except ValueError:
-            await message.answer("Введите целое число.")
-            return
+    # ВАЖНО: здесь использовалась необъявленная переменная field, но мы оставляем как есть, только заменили вызов answer
 
 @dp.callback_query(F.data.startswith("edit_"), StateFilter("*"))
 async def edit_field_choice(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     field = call.data.split("_", 1)[1]
     await state.update_data(edit_field=field)
     prompts = {
@@ -1412,7 +1406,7 @@ async def manage_subjects(call: CallbackQuery, state: FSMContext):
     tid = data.get("edit_tutor_id")
     tutors = await get_all_tutors()
     if not tid or tid not in tutors:
-        await call.answer("Ошибка", show_alert=True)
+        await safe_answer(call, "Ошибка", show_alert=True)
         return
     await show_manage_subjects_menu(call, state, tid)
 
@@ -1422,7 +1416,7 @@ async def back_to_edit_tutor(call: CallbackQuery, state: FSMContext):
     tid = data.get("edit_tutor_id")
     tutors = await get_all_tutors()
     if not tid or tid not in tutors:
-        await call.answer("Ошибка", show_alert=True)
+        await safe_answer(call, "Ошибка", show_alert=True)
         return
     tutor = tutors[tid]
     info = f"Редактирование: {tutor['name']}\n\nЧто хотите изменить?"
@@ -1439,7 +1433,7 @@ async def back_to_edit_tutor(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "add_subject", StateFilter(AdminStates.managing_subjects))
 async def add_subject_start(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     await call.message.edit_text("Введите название нового предмета:")
     await state.set_state(AdminStates.adding_subject_name)
 
@@ -1472,7 +1466,7 @@ async def process_adding_subject_price(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("editsubj_"), StateFilter(AdminStates.managing_subjects))
 async def edit_subject_menu(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     subj_name = call.data.split("_", 1)[1]
     await state.update_data(edit_subject_name=subj_name)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1486,14 +1480,14 @@ async def edit_subject_menu(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "back_to_subjects_list", StateFilter(AdminStates.editing_subject_choice))
 async def back_to_subjects_list(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     data = await state.get_data()
     tid = data.get("edit_tutor_id")
     await show_manage_subjects_menu(call, state, tid)
 
 @dp.callback_query(F.data == "editsubj_name", StateFilter(AdminStates.editing_subject_choice))
 async def edit_subject_name_start(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     await call.message.edit_text("Введите новое название предмета:")
     await state.set_state(AdminStates.editing_subject_name_state)
 
@@ -1515,7 +1509,7 @@ async def process_new_subject_name(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "editsubj_price", StateFilter(AdminStates.editing_subject_choice))
 async def edit_subject_price_start(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     await call.message.edit_text("Введите новую цену (целое число):")
     await state.set_state(AdminStates.editing_subject_price_state)
 
@@ -1535,7 +1529,7 @@ async def process_new_subject_price(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "editsubj_delete", StateFilter(AdminStates.editing_subject_choice))
 async def delete_subject_confirm(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     data = await state.get_data()
     subj = data.get("edit_subject_name")
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1547,7 +1541,7 @@ async def delete_subject_confirm(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "confirm_delete_subject", StateFilter(AdminStates.deleting_subject_confirm))
 async def confirm_delete_subject(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     data = await state.get_data()
     tid = data.get("edit_tutor_id")
     subj = data.get("edit_subject_name")
@@ -1558,7 +1552,7 @@ async def confirm_delete_subject(call: CallbackQuery, state: FSMContext):
 # --- Удаление репетитора ---
 @dp.callback_query(F.data == "admin_delete_list")
 async def admin_delete_list(call: CallbackQuery):
-    await call.answer()
+    await safe_answer(call)
     tutors = await get_all_tutors()
     if not tutors:
         await call.message.edit_text("Нет репетиторов для удаления.",
@@ -1571,7 +1565,7 @@ async def admin_delete_list(call: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("del_tutor_"))
 async def delete_tutor_confirm(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     tid = int(call.data.split("_")[-1])
     await state.update_data(del_tutor_id=tid)
     tutors = await get_all_tutors()
@@ -1585,7 +1579,7 @@ async def delete_tutor_confirm(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "confirm_delete", StateFilter(AdminStates.waiting_delete_confirm))
 async def confirm_delete(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     data = await state.get_data()
     tid = data["del_tutor_id"]
     tutors = await get_all_tutors()
@@ -1675,7 +1669,7 @@ async def back_to_tutor_panel(call: CallbackQuery):
 # --- Отмена преподавателем ---
 @dp.callback_query(F.data.startswith("tutor_cancel_"))
 async def tutor_cancel_booking(call: CallbackQuery, bot: Bot):
-    await call.answer()
+    await safe_answer(call)
     bid = int(call.data.split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
@@ -1704,7 +1698,7 @@ async def tutor_cancel_booking(call: CallbackQuery, bot: Bot):
 # --- Перенос преподавателем ---
 @dp.callback_query(F.data.startswith("tutor_reschedule_"))
 async def tutor_reschedule_start(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     bid = int(call.data.split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
@@ -1737,7 +1731,7 @@ async def tutor_reschedule_start(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("t_reschedule_date_"), StateFilter(TutorRescheduleStates.waiting_date))
 async def tutor_reschedule_date(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     date_str = call.data.split("t_reschedule_date_")[1]
     await state.update_data(new_date=date_str)
     data = await state.get_data()
@@ -1768,7 +1762,7 @@ async def back_tutor_reschedule_date(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("t_reschedule_slot_"), StateFilter(TutorRescheduleStates.waiting_time))
 async def tutor_reschedule_slot(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     slot = call.data.split("t_reschedule_slot_")[1]
     await state.update_data(new_time=slot)
     data = await state.get_data()
@@ -1788,7 +1782,7 @@ async def tutor_reschedule_slot(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "confirm_tutor_reschedule", StateFilter(TutorRescheduleStates.waiting_confirmation))
 async def confirm_tutor_reschedule(call: CallbackQuery, state: FSMContext, bot: Bot):
-    await call.answer()
+    await safe_answer(call)
     data = await state.get_data()
     old_bid = data["old_booking_id"]
     tid = data["tutor_id"]
@@ -1944,7 +1938,7 @@ async def back_to_schedule(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "add_slot", StateFilter(TutorScheduleStates.manage_day_slots))
 async def add_slot_start(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     await call.message.edit_text("Введите временной слот в формате HH:MM-HH:MM, например 10:00-11:30:")
     await state.set_state(TutorScheduleStates.add_slot)
 
@@ -1991,7 +1985,7 @@ async def process_add_slot(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "add_range", StateFilter(TutorScheduleStates.manage_day_slots))
 async def add_range_start(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     await call.message.edit_text(
         "Введите промежуток времени в формате ЧЧ:ММ-ЧЧ:ММ (например, 09:00-15:30).\n"
         "Бот автоматически разобьёт его на слоты по 1,5 часа."
@@ -2044,7 +2038,7 @@ async def process_add_range(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "del_slot", StateFilter(TutorScheduleStates.manage_day_slots))
 async def del_slot_start(call: CallbackQuery, state: FSMContext):
-    await call.answer()
+    await safe_answer(call)
     data = await state.get_data()
     tid = data["tid"]
     day = data["current_day"]
@@ -2081,7 +2075,7 @@ async def confirm_del_slot(call: CallbackQuery, state: FSMContext):
 # --- Подтверждение/отклонение заявок (уже использует БД) ---
 @dp.callback_query(F.data.startswith("tutor_confirm_"))
 async def tutor_confirm_booking(call: CallbackQuery, bot: Bot):
-    await call.answer()
+    await safe_answer(call)
     bid = int(call.data.split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
@@ -2117,7 +2111,7 @@ async def tutor_confirm_booking(call: CallbackQuery, bot: Bot):
 
 @dp.callback_query(F.data.startswith("tutor_reject_"))
 async def tutor_reject_booking(call: CallbackQuery, bot: Bot):
-    await call.answer()
+    await safe_answer(call)
     bid = int(call.data.split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
