@@ -471,6 +471,15 @@ async def choose_slot(call: CallbackQuery, state: FSMContext):
     slot = call.data.split("_", 1)[1]
     await state.update_data(time_slot=slot)
     data = await state.get_data()
+    tutor_id = data.get("tutor_id")
+    # Если tutor_name нет в состоянии, получаем из БД
+    if "tutor_name" not in data and tutor_id:
+        tutors = await get_all_tutors()
+        tutor = tutors.get(tutor_id)
+        if tutor:
+            data["tutor_name"] = tutor["name"]
+            await state.update_data(tutor_name=tutor["name"])
+    tutor_name = data.get("tutor_name", "Неизвестный")
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить запись", callback_data="confirm_booking")],
         [InlineKeyboardButton(text="✏️ Изменить время", callback_data="back_to_date")],
