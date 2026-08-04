@@ -23,7 +23,19 @@ from database import (
     get_tutor_by_telegram_id, get_student_subscriptions, get_tutor_financials, get_all_tutors_stats,
     get_students_stats, get_all_tutors_stats_by_month, get_students_stats_by_month
 )
+from aiogram.exceptions import TelegramBadRequest
 
+async def safe_answer(call: CallbackQuery, text: str = None, show_alert: bool = False):
+    """
+    Безопасно отвечает на callback, игнорируя ошибку 'query is too old'
+    """
+    try:
+        await call.answer(text, show_alert=show_alert)
+    except TelegramBadRequest as e:
+        if "query is too old" in str(e):
+            logging.warning(f"Callback query too old (ID: {call.id})")
+        else:
+            logging.error(f"Unexpected error in safe_answer: {e}")
 
 ADMING_ID = os.environ.get("ADMING_ID")
 RECORDS_CHANNEL_ID = os.environ.get("RECORDS_CHANNEL_ID")
