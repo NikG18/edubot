@@ -63,14 +63,14 @@ async def init_db():
         """)
         await db.commit()
         
-async def migrate_database():
-    async with aiosqlite.connect("bot.db") as db:
-        cursor = await db.execute("PRAGMA table_info(bookings)")
-        columns = [row[1] for row in await cursor.fetchall()]
-        if "channel_msg_id" not in columns:
-            await db.execute("ALTER TABLE bookings ADD COLUMN channel_msg_id INTEGER DEFAULT NULL")
-            await db.commit()
-        print("Миграция базы данных завершена.")
+#async def migrate_database():
+#    async with aiosqlite.connect("bot.db") as db:
+#        cursor = await db.execute("PRAGMA table_info(bookings)")
+#        columns = [row[1] for row in await cursor.fetchall()]
+#        if "channel_msg_id" not in columns:
+ #           await db.execute("ALTER TABLE bookings ADD COLUMN channel_msg_id INTEGER DEFAULT NULL")
+ ##           await db.commit()
+#        print("Миграция базы данных завершена.")
 # ------------------------------------------------------------
 # TUTORS
 # ------------------------------------------------------------
