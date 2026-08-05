@@ -669,8 +669,8 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
     tutor_id = booking["tutor_id"]
     tutors = await get_all_tutors()
     tutor_name = tutors.get(tutor_id, {}).get("name", "Неизвестный")
-    msg_student = "✅ Вы отменили занятие."
-    await bot.send_message(student_id, msg_student)
+    #msg_student = "✅ Вы отменили занятие."
+    await bot.send_message(student_id) #msg_student)
     if tutor_id and (tutor_tg := tutors.get(tutor_id, {}).get("telegram_id")):
         msg_tutor = (
             f"❌ Ученик {booking['username']} отменил занятие:\n"
@@ -1106,7 +1106,7 @@ async def tutor_contact_student_start(message: types.Message, state: FSMContext)
     await state.set_state(TutorContactStudentStates.choosing_student)
 
 
-@dp.callback_query(F.data.startswith("tutorcontactstudent_"), StateFilter(TutorContactStudentStates.choosing_student))
+@dp.callback_query(F.data.startswith("tutor_contact_student_"), StateFilter(TutorContactStudentStates.choosing_student))
 async def tutor_contact_student_chosen(call: CallbackQuery, state: FSMContext):
     await safe_answer(call)
     student_id = int(call.data.split("_")[-1])
