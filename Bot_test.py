@@ -1686,7 +1686,11 @@ async def back_to_tutor_panel(call: CallbackQuery):
         [InlineKeyboardButton(text="📊 Статистика", callback_data=f"tutor_stats_{tid}")],
         [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
     ])
-    await call.message.edit_text("Панель преподавателя:", reply_markup=keyboard)
+    if call.message.content_type != 'text':
+        await call.message.delete()
+        await call.message.answer("Панель преподавателя:", reply_markup=keyboard)
+    else:
+        await call.message.edit_text("Панель преподавателя:", reply_markup=keyboard)
 
 # --- Отмена преподавателем ---
 @dp.callback_query(F.data.startswith("tutor_cancel_"))
