@@ -1619,6 +1619,7 @@ async def tutor_panel(message: types.Message):
         return
     await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 Моя анкета", callback_data=f"tutor_profile_{tutor_id}")],
         [InlineKeyboardButton(text="📋 Мои ученики", callback_data=f"tutor_students_{tutor_id}")],
         [InlineKeyboardButton(text="⚙️ Настроить расписание", callback_data=f"tutor_schedule_{tutor_id}")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data=f"tutor_stats_{tutor_id}")],
@@ -2142,6 +2143,35 @@ async def tutor_reject_booking(call: CallbackQuery, bot: Bot):
     await bot.send_message(user_id,
         "❌ Ваша заявка на занятие была отклонена преподавателем. Вы можете записаться на другое время.")
     await call.message.edit_text("❌ Заявка отклонена.")
+    
+    
+@dp.callback_query(F.data.startswith("tutor_profile_"))
+async def show_tutor_own_profile(call: CallbackQuery):
+    await safe_answer(call)
+    tid = int(call.data.split("_")[-1])
+    user_tutor_id = await get_tutor_by_telegram_id(call.from_user.id)
+    if user_tutor_id != tid:
+        await call.answer("⛔ Доступ запрещён.", show_alert=True)
+        return
+    tutors = await get_all_tutors()
+    tutor = tutors.get(tid)
+    if not tutor:
+        await call.message.edit_text("Анкета не найдена.")
+        return
+
+    text = tutor["description"] + "\n\nПредметы и цены:\n"
+    for subj, price in tutor["subjects"].items():
+        text += f"• {subj} — {price} руб.\n"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад в панель", callback_data=f"back_to_tutor_panel_{tid}")]
+    ])
+
+    if tutor["photo"]:
+        await call.message.delete()
+        await call.bot.send_photo(chat_id=call.message.chat.id, photo=tutor["photo"], caption=text, reply_markup=keyboard)
+    else:
+        await call.message.edit_text(text, reply_markup=keyboard)
 
 # ==================== ПОМОЩЬ ====================
 @dp.message(F.text.in_(["❓ Помощь"]))
