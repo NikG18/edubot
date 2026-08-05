@@ -216,7 +216,8 @@ async def get_all_bookings() -> Dict[int, dict]:
                 "date": row["date"],
                 "time_slot": row["time_slot"],
                 "status": row["status"],
-                "reminded": bool(row["reminded"])
+                "reminded": bool(row["reminded"]),
+                "channel_msg_id": row["channel_msg_id"]
             }
     return bookings
 
