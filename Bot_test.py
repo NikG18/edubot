@@ -1680,8 +1680,10 @@ async def show_students(call: CallbackQuery, bot: Bot):
 async def back_to_tutor_panel(call: CallbackQuery):
     tid = int(call.data.split("_")[-1])
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 Мои ученики", callback_data=f"tutor_students_{tid}")],
-        [InlineKeyboardButton(text="⚙️ Настроить расписание", callback_data=f"tutor_schedule_{tid}")],
+        [InlineKeyboardButton(text="👤 Моя анкета", callback_data=f"tutor_profile_{tutor_id}")],
+        [InlineKeyboardButton(text="📋 Мои ученики", callback_data=f"tutor_students_{tutor_id}")],
+        [InlineKeyboardButton(text="⚙️ Настроить расписание", callback_data=f"tutor_schedule_{tutor_id}")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data=f"tutor_stats_{tutor_id}")],
         [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
     ])
     await call.message.edit_text("Панель преподавателя:", reply_markup=keyboard)
