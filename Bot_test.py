@@ -362,7 +362,7 @@ async def back_to_tutors(call: CallbackQuery):
         except TelegramBadRequest:
             pass  # не удалось удалить – ничего страшного
         await call.message.answer("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
-        else:
+    else:
         await call.message.edit_text("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
     await safe_answer(call)
 
