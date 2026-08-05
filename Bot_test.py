@@ -175,14 +175,14 @@ async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
             [KeyboardButton(text="✉️ Связь с преподавателем")],
             [KeyboardButton(text="❓ Помощь")],
-            [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
+            #[KeyboardButton(text="👨‍🏫 Панель преподавателя")],
         ]
         buttons.append([KeyboardButton(text="👨‍🏫 Админ-панель")])
         return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
     if is_tutor:
         buttons = [
-            [KeyboardButton(text="ℹ️ Информация о репетиторах")],
+            #[KeyboardButton(text="ℹ️ Информация о репетиторах")],
             [KeyboardButton(text="📚 Информация о занятиях")],
             [KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
             [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
