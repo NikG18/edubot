@@ -680,9 +680,10 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
             await bot.send_message(tutor_tg, msg_tutor)
         except:
             pass
-    await call.message.edit_text("✅ Запись отменена.")
-    await call.message.answer("Запись успешно отменена.", reply_markup=await get_main_menu(call.from_user.id))
-
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 К моим записям", callback_data="back_to_my_records")]
+    ])
+    await call.message.edit_text("✅ Запись отменена.", reply_markup=keyboard)
 
 @dp.callback_query(F.data == "student_stats")
 async def show_student_stats(call: CallbackQuery):
@@ -1002,9 +1003,22 @@ async def choose_msg_tutor(call: CallbackQuery, state: FSMContext):
         await call.message.edit_text("Преподаватель не найден.")
         return
     await state.update_data(msg_tutor_id=tid, msg_tutor_name=tutor["name"])
-    await call.message.edit_text(f"Вы пишете преподавателю {tutor['name']}.\nВведите ваше сообщение:")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_msg_to_tutor")]
+    ])
+    await call.message.edit_text(
+        f"Вы пишете преподавателю {tutor['name']}.\nВведите ваше сообщение:",
+        reply_markup=keyboard
+    )
     await state.set_state(ContactStates.waiting_message)
 
+@dp.callback_query(F.data == "cancel_msg_to_tutor", StateFilter(ContactStates.waiting_message))
+async def cancel_msg_to_tutor(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    await state.clear()
+    # возвращаемся к выбору преподавателя
+    keyboard = await make_tutors_keyboard("msg_tutor", back_callback="back_to_menu")
+    await call.message.edit_text("Выберите преподавателя, которому хотите написать:", reply_markup=keyboard)
 
 @dp.message(ContactStates.waiting_message)
 async def send_message_to_tutor(message: Message, state: FSMContext, bot: Bot):
@@ -1103,8 +1117,31 @@ async def tutor_contact_student_chosen(call: CallbackQuery, state: FSMContext):
         if b["user_id"] == student_id:
             student_username = b["username"]
             break
-    await call.message.edit_text(f"Вы пишете ученику {student_username}. Введите сообщение:")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_tutor_msg_to_student")]
+    ])
+    await call.message.edit_text(
+        f"Вы пишете ученику {student_username}. Введите сообщение:",
+        reply_markup=keyboard
+    )
     await state.set_state(TutorContactStudentStates.waiting_message)
+
+@dp.callback_query(F.data == "cancel_tutor_msg_to_student", StateFilter(TutorContactStudentStates.waiting_message))
+async def cancel_tutor_msg_to_student(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    await state.clear()
+    # возвращаемся в панель преподавателя
+    tid = await get_tutor_by_telegram_id(call.from_user.id)
+    if tid:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Мои ученики", callback_data=f"tutor_students_{tid}")],
+            [InlineKeyboardButton(text="⚙️ Настроить расписание", callback_data=f"tutor_schedule_{tid}")],
+            [InlineKeyboardButton(text="📊 Статистика", callback_data=f"tutor_stats_{tid}")],
+            [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+        ])
+        await call.message.edit_text("Панель преподавателя:", reply_markup=keyboard)
+    else:
+        await call.message.edit_text("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
 
 
 @dp.message(TutorContactStudentStates.waiting_message)
@@ -1137,10 +1174,24 @@ async def tutor_send_message_to_student(message: Message, state: FSMContext, bot
 # ==================== ПОДДЕРЖКА ====================
 @dp.message(F.text.in_(["🆘 Поддержка"]))
 async def support_start(message: types.Message, state: FSMContext):
-    await message.answer("Опишите вашу проблему или вопрос. Администратор свяжется с вами.",
+    await message.answer("Переходим в раздел...",
                          reply_markup=ReplyKeyboardRemove())
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_support")]
+        ])
+    await message.answer(
+            "Опишите вашу проблему или вопрос. Администратор свяжется с вами.",
+            reply_markup=keyboard
+        )
     await state.set_state(SupportUserStates.waiting_message)
 
+@dp.callback_query(F.data == "cancel_support", StateFilter(SupportUserStates.waiting_message))
+async def cancel_support(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    await state.clear()
+    await call.message.edit_text("Обращение отменено.")
+    await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
 
 @dp.message(SupportUserStates.waiting_message)
 async def support_message_to_admin(message: Message, state: FSMContext, bot: Bot):
@@ -1842,7 +1893,11 @@ async def tutor_cancel_booking(call: CallbackQuery, bot: Bot):
     tutor_name = tutors.get(booking["tutor_id"], {}).get("name", "Преподаватель")
     msg = f"❌ Преподаватель {tutor_name} отменил занятие {booking['date']} {booking['time_slot']} по предмету «{booking['subject']}»."
     await bot.send_message(student_id, msg)
-    await call.message.edit_text("✅ Занятие отменено.")
+    tid = booking["tutor_id"]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 К списку учеников", callback_data=f"tutor_students_{tid}")]
+    ])
+    await call.message.edit_text("✅ Занятие отменено.", reply_markup=keyboard)
 
 
 # --- Перенос преподавателем ---
@@ -1993,8 +2048,15 @@ async def confirm_tutor_reschedule(call: CallbackQuery, state: FSMContext, bot: 
     tutor_msg = f"✅ Вы перенесли занятие с {student_username} на {new_date} {new_time}."
     await bot.send_message(call.from_user.id, tutor_msg)
 
+    # вместо:
     await call.message.edit_text("Перенос выполнен.")
     await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
+
+    # поставить:
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 К списку учеников", callback_data=f"tutor_students_{tid}")]
+    ])
+    await call.message.edit_text("Перенос выполнен.", reply_markup=keyboard)
     await state.clear()
 
 
@@ -2277,7 +2339,11 @@ async def tutor_confirm_booking(call: CallbackQuery, bot: Bot):
     tutor_name = tutor["name"] if tutor else "Неизвестный"
     await bot.send_message(user_id,
                            f"✅ Ваше занятие по предмету «{booking['subject']}» с преподавателем {tutor_name} на {booking['date']} (МСК) в {booking['time_slot']} (МСК) подтверждено!")
-    await call.message.edit_text("✅ Вы подтвердили занятие.")
+    tid = booking["tutor_id"]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 К списку учеников", callback_data=f"tutor_students_{tid}")]
+    ])
+    await call.message.edit_text("✅ Вы подтвердили занятие.", reply_markup=keyboard)
 
 
 @dp.callback_query(F.data.startswith("tutor_reject_"))
@@ -2293,7 +2359,11 @@ async def tutor_reject_booking(call: CallbackQuery, bot: Bot):
     await delete_booking(bid)
     await bot.send_message(user_id,
                            "❌ Ваша заявка на занятие была отклонена преподавателем. Вы можете записаться на другое время.")
-    await call.message.edit_text("❌ Заявка отклонена.")
+    tid = booking["tutor_id"]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 К списку учеников", callback_data=f"tutor_students_{tid}")]
+    ])
+    await call.message.edit_text("❌ Заявка отклонена.", reply_markup=keyboard)
 
 
 @dp.callback_query(F.data.startswith("tutor_profile_"))
