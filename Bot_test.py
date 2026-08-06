@@ -416,7 +416,6 @@ async def start_trial_booking(call: CallbackQuery, state: FSMContext):
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
     if not tutor:
-        # Безопасно завершаем
         if call.message.content_type != 'text':
             await call.message.delete()
         await call.message.answer("Репетитор не найден.")
@@ -428,14 +427,16 @@ async def start_trial_booking(call: CallbackQuery, state: FSMContext):
     if len(subjects) == 1:
         subject = subjects[0]
         await state.update_data(subject=subject)
-        # Удаляем/редактируем сообщение
+        # Если сообщение – фото, удаляем и показываем кнопку "Далее"
         if call.message.content_type != 'text':
             await call.message.delete()
-            msg = await call.message.answer("Ищем ближайший свободный слот...")
-            # подменяем call.message для дальнейшего использования
-            call.message = msg
-        else:
-            await call.message.edit_text("Ищем ближайший свободный слот...")
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="▶️ Продолжить", callback_data=f"trial_proceed_{tid}")]
+            ])
+            await call.message.answer("Ищем ближайший свободный слот...", reply_markup=keyboard)
+            return
+        # Текстовое сообщение – продолжаем сразу
+        await call.message.edit_text("Ищем ближайший свободный слот...")
         await show_trial_slot(call, state, tid, subject)
 
     elif len(subjects) > 1:
@@ -445,10 +446,10 @@ async def start_trial_booking(call: CallbackQuery, state: FSMContext):
 
         if call.message.content_type != 'text':
             await call.message.delete()
-            msg = await call.message.answer("Выберите предмет для пробного занятия:", reply_markup=keyboard)
-            call.message = msg
-        else:
-            await call.message.edit_text("Выберите предмет для пробного занятия:", reply_markup=keyboard)
+            await call.message.answer("Выберите предмет для пробного занятия:", reply_markup=keyboard)
+            return
+
+        await call.message.edit_text("Выберите предмет для пробного занятия:", reply_markup=keyboard)
         await state.set_state(TrialBookingStates.choosing_subject)
     else:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -461,6 +462,20 @@ async def start_trial_booking(call: CallbackQuery, state: FSMContext):
             await call.message.edit_text("У этого репетитора пока нет предметов.", reply_markup=keyboard)
 
 
+@dp.callback_query(F.data.startswith("trial_proceed_"))
+async def trial_proceed(call: CallbackQuery, state: FSMContext):
+    """Продолжение после удаления фото для одного предмета."""
+    await safe_answer(call)
+    tid = int(call.data.split("_")[2])
+    data = await state.get_data()
+    subject = data.get("subject")
+    if not subject:
+        await call.message.edit_text("Ошибка: предмет не найден.")
+        return
+    # Здесь сообщение уже точно текстовое, потому что мы только что отправили его из start_trial_booking
+    await show_trial_slot(call, state, tid, subject)
+
+
 @dp.callback_query(F.data.startswith("trial_subject_"), StateFilter(TrialBookingStates.choosing_subject))
 async def trial_subject_chosen(call: CallbackQuery, state: FSMContext):
     await safe_answer(call)
@@ -469,14 +484,13 @@ async def trial_subject_chosen(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     tid = data["tutor_id"]
 
-    # Безопасное обновление сообщения
+    # Всегда текстовое сообщение (если только не произошло чудо)
     if call.message.content_type != 'text':
         await call.message.delete()
-        msg = await call.message.answer("Ищем ближайший свободный слот...")
-        call.message = msg
-    else:
-        await call.message.edit_text("Ищем ближайший свободный слот...")
+        await call.message.answer("Ищем ближайший свободный слот...")
+        return
 
+    await call.message.edit_text("Ищем ближайший свободный слот...")
     await show_trial_slot(call, state, tid, subject)
 
 
@@ -569,7 +583,6 @@ async def confirm_trial_booking(call: CallbackQuery, state: FSMContext, bot: Bot
         except:
             pass
 
-    # Завершающее сообщение
     text = "✅ Заявка на пробное занятие отправлена преподавателю. Ожидайте подтверждения."
     if call.message.content_type != 'text':
         await call.message.delete()
