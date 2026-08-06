@@ -21,7 +21,8 @@ from database import (
     get_schedule, add_schedule_slot, delete_schedule_slot,
     get_all_bookings, add_booking, update_booking, delete_booking,
     get_tutor_by_telegram_id, get_student_subscriptions, get_tutor_financials, get_all_tutors_stats,
-    get_students_stats, get_all_tutors_stats_by_month, get_students_stats_by_month
+    get_students_stats, get_all_tutors_stats_by_month, get_students_stats_by_month,
+    block_day, unblock_day, is_day_blocked
 )
 from aiogram.exceptions import TelegramBadRequest
 
@@ -283,6 +284,9 @@ async def get_available_slots(tutor_id: int, date_str: str, exclude_booking_id: 
                 continue
             busy.append(b["time_slot"])
     free = [s for s in all_slots if s not in busy]
+    day_of_week = WEEKDAYS[date.weekday()]
+    if await is_day_blocked(tutor_id, day_of_week):
+        return []
     return free
 
 
@@ -2118,32 +2122,81 @@ async def schedule_main(call: CallbackQuery, state: FSMContext):
     text = "Ваше расписание:\n"
     for day in WEEKDAYS:
         slots = sched.get(day, [])
-        icon = "✅" if slots else ""
-        text += f"{icon} {WEEKDAY_NAMES[day]}: {', '.join(slots) if slots else 'нет'}\n"
-    buttons = [[InlineKeyboardButton(text=f"✏️ {WEEKDAY_NAMES[day]}", callback_data=f"sched_day_{day}")] for day in
-               WEEKDAYS]
+        blocked = await is_day_blocked(tid, day)
+        if blocked:
+            icon = "🔒"
+            info = "заблокирован"
+        else:
+            icon = "✅" if slots else ""
+            info = ', '.join(slots) if slots else 'нет'
+        text += f"{icon} {WEEKDAY_NAMES[day]}: {info}\n"
+    buttons = [[InlineKeyboardButton(text=f"✏️ {WEEKDAY_NAMES[day]}", callback_data=f"sched_day_{day}")] for day in WEEKDAYS]
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_tutor_panel_{tid}")])
     await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await state.set_state(TutorScheduleStates.choose_day)
+
+
+
+async def _show_day_management(call: CallbackQuery, state: FSMContext):
+    """Вспомогательная функция для отображения управления конкретным днём."""
+    data = await state.get_data()
+    day = data["current_day"]
+    tid = data["tid"]
+    sched = await get_schedule(tid)
+    slots = sched.get(day, [])
+    blocked = await is_day_blocked(tid, day)
+
+    if blocked:
+        status_line = "🔒 День заблокирован (запись недоступна)\n"
+    else:
+        status_line = ""
+
+    text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + status_line
+    text += "\n".join(f"• {s}" for s in slots) if slots else "Нет слотов."
+
+    buttons = [
+        [InlineKeyboardButton(text="➕ Добавить слот", callback_data="add_slot")],
+        [InlineKeyboardButton(text="📅 Заполнить промежуток", callback_data="add_range")],
+    ]
+    if slots:
+        buttons.append([InlineKeyboardButton(text="❌ Удалить слот", callback_data="del_slot")])
+
+    # Кнопка блокировки/разблокировки
+    if blocked:
+        buttons.append([InlineKeyboardButton(text="🔓 Разблокировать день", callback_data=f"unblock_day_{day}")])
+    else:
+        buttons.append([InlineKeyboardButton(text="🔒 Заблокировать день", callback_data=f"block_day_{day}")])
+
+    buttons.append([InlineKeyboardButton(text="🔙 К дням недели", callback_data="back_to_schedule")])
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
 @dp.callback_query(F.data.startswith("sched_day_"), StateFilter(TutorScheduleStates.choose_day))
 async def edit_day(call: CallbackQuery, state: FSMContext):
     day = call.data.split("_")[2]
     await state.update_data(current_day=day)
+    await _show_day_management(call, state)
+
+
+@dp.callback_query(F.data.startswith("block_day_"), StateFilter(TutorScheduleStates.manage_day_slots))
+async def handle_block_day(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    day = call.data.split("block_day_")[1]
     data = await state.get_data()
     tid = data["tid"]
-    sched = await get_schedule(tid)
-    slots = sched.get(day, [])
-    text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + "\n".join(f"• {s}" for s in slots) if slots else "Нет слотов."
-    buttons = [
-        [InlineKeyboardButton(text="➕ Добавить слот", callback_data="add_slot")],
-        [InlineKeyboardButton(text="📅 Заполнить промежуток", callback_data="add_range")],
-        [InlineKeyboardButton(text="❌ Удалить слот", callback_data="del_slot")] if slots else [],
-        [InlineKeyboardButton(text="🔙 К дням недели", callback_data="back_to_schedule")]
-    ]
-    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-    await state.set_state(TutorScheduleStates.manage_day_slots)
+    await block_day(tid, day)
+    # Перерисовываем управление днём
+    await _show_day_management(call, state)
+
+
+@dp.callback_query(F.data.startswith("unblock_day_"), StateFilter(TutorScheduleStates.manage_day_slots))
+async def handle_unblock_day(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    day = call.data.split("unblock_day_")[1]
+    data = await state.get_data()
+    tid = data["tid"]
+    await unblock_day(tid, day)
+    await _show_day_management(call, state)
 
 
 @dp.callback_query(F.data == "back_to_schedule", StateFilter(TutorScheduleStates.manage_day_slots))
