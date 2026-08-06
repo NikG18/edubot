@@ -414,11 +414,9 @@ async def show_tutor_info(call: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("trial_"))
 async def start_trial_booking(call: CallbackQuery, state: FSMContext):
     """Точка входа: проверяем, сколько предметов у репетитора."""
-    if call.data.startswith("trial_subject_"):
-        await trial_subject_chosen(call, state)
-        return
-    if call.data.startswith("trial_proceed_"):
-        await trial_proceed(call, state)
+    if any(call.data.startswith(p) for p in (
+            "trial_subject_", "trial_proceed_", "trial_date_", "trial_slot_"
+    )) or call.data == "confirm_trial":
         return
 
     await safe_answer(call)
