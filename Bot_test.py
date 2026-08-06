@@ -148,6 +148,8 @@ class TutorScheduleStates(StatesGroup):
     add_slot = State()
     add_range = State()
     delete_slot = State()
+    range_duration = State()
+    range_break = State()
 
 
 class TutorContactStudentStates(StatesGroup):
@@ -304,7 +306,7 @@ def clean_time_input(user_input: str) -> str:
     return cleaned
 
 
-def split_into_slots(start_time: str, end_time: str, duration_min=90):
+def split_into_slots(start_time: str, end_time: str, duration_min=90, break_min=0):
     fmt = "%H:%M"
     start = datetime.strptime(start_time, fmt)
     end = datetime.strptime(end_time, fmt)
@@ -315,7 +317,7 @@ def split_into_slots(start_time: str, end_time: str, duration_min=90):
     while current + timedelta(minutes=duration_min) <= end:
         slot_end = current + timedelta(minutes=duration_min)
         slots.append(f"{current.strftime(fmt)}-{slot_end.strftime(fmt)}")
-        current = slot_end
+        current = slot_end + timedelta(minutes=break_min)
     return slots
 
 
@@ -2213,12 +2215,57 @@ async def process_add_slot(message: Message, state: FSMContext):
 @dp.callback_query(F.data == "add_range", StateFilter(TutorScheduleStates.manage_day_slots))
 async def add_range_start(call: CallbackQuery, state: FSMContext):
     await safe_answer(call)
+    # Клавиатура с выбором длительности
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="60 минут", callback_data="dur_60")],
+        [InlineKeyboardButton(text="90 минут", callback_data="dur_90")],
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="back_to_schedule")]
+    ])
+    await call.message.edit_text("Выберите длительность занятия:", reply_markup=keyboard)
+    await state.set_state(TutorScheduleStates.range_duration)
+
+
+@dp.callback_query(F.data.startswith("dur_"), StateFilter(TutorScheduleStates.range_duration))
+async def range_duration_chosen(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    duration = int(call.data.split("_")[1])  # 60 или 90
+    await state.update_data(range_duration=duration)
+    # Клавиатура с выбором перерыва
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Без перерыва", callback_data="brk_0")],
+        [InlineKeyboardButton(text="10 минут", callback_data="brk_10")],
+        [InlineKeyboardButton(text="15 минут", callback_data="brk_15")],
+        [InlineKeyboardButton(text="20 минут", callback_data="brk_20")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="add_range_back")]
+    ])
+    await call.message.edit_text("Нужен ли перерыв между занятиями?", reply_markup=keyboard)
+    await state.set_state(TutorScheduleStates.range_break)
+
+
+@dp.callback_query(F.data == "add_range_back", StateFilter(TutorScheduleStates.range_break))
+async def range_break_back(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    # Возвращаемся к выбору длительности
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="60 минут", callback_data="dur_60")],
+        [InlineKeyboardButton(text="90 минут", callback_data="dur_90")],
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="back_to_schedule")]
+    ])
+    await call.message.edit_text("Выберите длительность занятия:", reply_markup=keyboard)
+    await state.set_state(TutorScheduleStates.range_duration)
+
+
+@dp.callback_query(F.data.startswith("brk_"), StateFilter(TutorScheduleStates.range_break))
+async def range_break_chosen(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    break_min = int(call.data.split("_")[1])  # 0, 10, 15, 20
+    await state.update_data(range_break=break_min)
+    # Теперь запрашиваем промежуток времени
     await call.message.edit_text(
         "Введите промежуток времени в формате ЧЧ:ММ-ЧЧ:ММ (например, 09:00-15:30).\n"
-        "Бот автоматически разобьёт его на слоты по 1,5 часа."
+        "Бот автоматически разобьёт его на слоты с учётом выбранной длительности и перерыва."
     )
     await state.set_state(TutorScheduleStates.add_range)
-
 
 @dp.message(TutorScheduleStates.add_range)
 async def process_add_range(message: Message, state: FSMContext):
@@ -2238,13 +2285,19 @@ async def process_add_range(message: Message, state: FSMContext):
         except ValueError:
             await message.answer(f"Некорректное время «{t}». Пожалуйста, используйте формат ЧЧ:ММ (например, 09:00).")
             return
-    slots = split_into_slots(start_time, end_time, duration_min=90)
-    if not slots:
-        await message.answer("Не удалось создать ни одного слота. Проверьте время.")
-        return
+
+    # Получаем сохранённые параметры
     data = await state.get_data()
     tid = data["tid"]
     day = data["current_day"]
+    duration_min = data.get("range_duration", 90)
+    break_min = data.get("range_break", 0)
+
+    slots = split_into_slots(start_time, end_time, duration_min=duration_min, break_min=break_min)
+    if not slots:
+        await message.answer("Не удалось создать ни одного слота. Проверьте время.")
+        return
+
     sched = await get_schedule(tid)
     existing = sched.get(day, [])
     added = 0
@@ -2253,15 +2306,17 @@ async def process_add_range(message: Message, state: FSMContext):
             await add_schedule_slot(tid, day, s)
             existing.append(s)
             added += 1
+
     await message.answer(f"Добавлено {added} новых слотов (пропущены существующие).")
-    text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + "\n".join(f"• {s}" for s in existing)
+    # Показываем обновлённый список слотов
+    display_text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + "\n".join(f"• {s}" for s in existing)
     buttons = [
         [InlineKeyboardButton(text="➕ Добавить слот", callback_data="add_slot")],
         [InlineKeyboardButton(text="📅 Заполнить промежуток", callback_data="add_range")],
         [InlineKeyboardButton(text="❌ Удалить слот", callback_data="del_slot")],
         [InlineKeyboardButton(text="🔙 К дням недели", callback_data="back_to_schedule")]
     ]
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await message.answer(display_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await state.set_state(TutorScheduleStates.manage_day_slots)
 
 
