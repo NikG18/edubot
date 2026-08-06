@@ -4,7 +4,7 @@ import sys
 import re
 import os
 import aiosqlite
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram import Bot, Dispatcher, html, types, F
@@ -2497,6 +2497,59 @@ async def send_reminders(bot: Bot):
             await update_booking(bid, reminded=1)
 
 
+async def send_pending_reminders(bot: Bot):
+    """Отправляет преподавателям сводку неподтверждённых заявок."""
+    bookings = await get_all_bookings()
+    pending_by_tutor = {}
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    for bid, b in bookings.items():
+        if b["status"] != "pending":
+            continue
+        # Игнорируем заявки на прошедшие даты
+        try:
+            booking_date = datetime.strptime(b["date"], "%d.%m.%Y")
+            if booking_date < today:
+                continue
+        except ValueError:
+            continue
+
+        pending_by_tutor.setdefault(b["tutor_id"], []).append(b)
+
+    if not pending_by_tutor:
+        return
+
+    tutors = await get_all_tutors()
+    for tid, plist in pending_by_tutor.items():
+        tutor = tutors.get(tid)
+        if not tutor or not tutor.get("telegram_id"):
+            continue
+
+        # Формируем сообщение
+        lines = [f"🔔 У вас есть неподтверждённые заявки ({len(plist)}):"]
+        for b in plist:
+            lines.append(f"• {b['username']}: {b['subject']}, {b['date']} {b['time_slot']}")
+        text = "\n".join(lines)
+
+        # Кнопка быстрого перехода к списку учеников
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Мои ученики", callback_data=f"tutor_students_{tid}")]
+        ])
+
+        try:
+            await bot.send_message(tutor["telegram_id"], text, reply_markup=keyboard)
+        except Exception as e:
+            logging.warning(f"Не удалось отправить напоминание преподавателю {tid}: {e}")
+
+async def pending_reminder_loop(bot: Bot):
+    """Проверяет время и отправляет напоминания в 9, 15 и 21 час по Москве."""
+    msk = timezone(timedelta(hours=3))
+    while True:
+        now = datetime.now(msk)
+        if now.hour in (9, 15, 21) and now.minute == 0:
+            await send_pending_reminders(bot)
+        await asyncio.sleep(60)  # проверка каждую минуту
+
 async def reminder_loop(bot: Bot):
     while True:
         await send_reminders(bot)
@@ -2510,6 +2563,7 @@ async def main() -> None:
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     asyncio.create_task(periodic_cleanup())
     asyncio.create_task(reminder_loop(bot))
+    asyncio.create_task(pending_reminder_loop(bot))
     await dp.start_polling(bot, drop_pending_updates=True)
 
 
