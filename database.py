@@ -61,6 +61,14 @@ async def init_db():
             FOREIGN KEY (tutor_id) REFERENCES tutors(id) ON DELETE CASCADE
         );
 
+
+        CREATE TABLE IF NOT EXISTS blocked_days (
+            tutor_id INTEGER NOT NULL,
+            day TEXT NOT NULL,
+            PRIMARY KEY (tutor_id, day),
+            FOREIGN KEY (tutor_id) REFERENCES tutors(id) ON DELETE CASCADE
+        );
+
         """)
         await db.commit()
         
@@ -197,6 +205,31 @@ async def delete_schedule_slot(tutor_id: int, day: str, time_slot: str):
         await db.execute("DELETE FROM schedule_slots WHERE tutor_id=? AND day=? AND time_slot=?",
                          (tutor_id, day, time_slot))
         await db.commit()
+
+async def block_day(tutor_id: int, day: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO blocked_days (tutor_id, day) VALUES (?, ?)",
+            (tutor_id, day)
+        )
+        await db.commit()
+
+async def unblock_day(tutor_id: int, day: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM blocked_days WHERE tutor_id = ? AND day = ?",
+            (tutor_id, day)
+        )
+        await db.commit()
+
+async def is_day_blocked(tutor_id: int, day: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM blocked_days WHERE tutor_id = ? AND day = ?",
+            (tutor_id, day)
+        )
+        row = await cursor.fetchone()
+        return row is not None
 
 # ------------------------------------------------------------
 # BOOKINGS
