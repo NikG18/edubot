@@ -405,9 +405,9 @@ async def show_tutor_info(call: CallbackQuery, state: FSMContext):
                                   reply_markup=keyboard)
     else:
         await call.message.edit_text(text, reply_markup=keyboard)
-        
-        
-        
+
+
+
 # ==================== ПРОБНОЕ ЗАНЯТИЕ ====================
 @dp.callback_query(F.data.startswith("trial_"))
 async def start_trial_booking(call: CallbackQuery, state: FSMContext):
@@ -416,26 +416,49 @@ async def start_trial_booking(call: CallbackQuery, state: FSMContext):
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
     if not tutor:
-        await call.message.edit_text("Репетитор не найден.")
+        # Безопасно завершаем
+        if call.message.content_type != 'text':
+            await call.message.delete()
+        await call.message.answer("Репетитор не найден.")
         return
+
     await state.update_data(tutor_id=tid, tutor_name=tutor["name"])
     subjects = list(tutor["subjects"].keys())
+
     if len(subjects) == 1:
         subject = subjects[0]
         await state.update_data(subject=subject)
-        await call.message.edit_text("Ищем ближайший свободный слот...")
+        # Удаляем/редактируем сообщение
+        if call.message.content_type != 'text':
+            await call.message.delete()
+            msg = await call.message.answer("Ищем ближайший свободный слот...")
+            # подменяем call.message для дальнейшего использования
+            call.message = msg
+        else:
+            await call.message.edit_text("Ищем ближайший свободный слот...")
         await show_trial_slot(call, state, tid, subject)
+
     elif len(subjects) > 1:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=subj, callback_data=f"trial_subject_{subj}")] for subj in subjects
         ] + [[InlineKeyboardButton(text="🔙 Отмена", callback_data="back_to_tutors")]])
-        await call.message.edit_text("Выберите предмет для пробного занятия:", reply_markup=keyboard)
+
+        if call.message.content_type != 'text':
+            await call.message.delete()
+            msg = await call.message.answer("Выберите предмет для пробного занятия:", reply_markup=keyboard)
+            call.message = msg
+        else:
+            await call.message.edit_text("Выберите предмет для пробного занятия:", reply_markup=keyboard)
         await state.set_state(TrialBookingStates.choosing_subject)
     else:
-        await call.message.edit_text("У этого репетитора пока нет предметов.",
-                                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                         [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
-                                     ]))
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
+        ])
+        if call.message.content_type != 'text':
+            await call.message.delete()
+            await call.message.answer("У этого репетитора пока нет предметов.", reply_markup=keyboard)
+        else:
+            await call.message.edit_text("У этого репетитора пока нет предметов.", reply_markup=keyboard)
 
 
 @dp.callback_query(F.data.startswith("trial_subject_"), StateFilter(TrialBookingStates.choosing_subject))
@@ -445,30 +468,46 @@ async def trial_subject_chosen(call: CallbackQuery, state: FSMContext):
     await state.update_data(subject=subject)
     data = await state.get_data()
     tid = data["tutor_id"]
-    await call.message.edit_text("Ищем ближайший свободный слот...")
+
+    # Безопасное обновление сообщения
+    if call.message.content_type != 'text':
+        await call.message.delete()
+        msg = await call.message.answer("Ищем ближайший свободный слот...")
+        call.message = msg
+    else:
+        await call.message.edit_text("Ищем ближайший свободный слот...")
+
     await show_trial_slot(call, state, tid, subject)
 
 
 async def show_trial_slot(call: CallbackQuery, state: FSMContext, tid: int, subject: str):
     available_dates = await get_available_dates(tid)
     if not available_dates:
-        await call.message.edit_text(
-            "К сожалению, у репетитора пока нет свободных слотов.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 К анкете", callback_data=f"tutor_info_{tid}")]
-            ])
-        )
+        text = "К сожалению, у репетитора пока нет свободных слотов."
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 К анкете", callback_data=f"tutor_info_{tid}")]
+        ])
+        if call.message.content_type != 'text':
+            await call.message.delete()
+            await call.message.answer(text, reply_markup=keyboard)
+        else:
+            await call.message.edit_text(text, reply_markup=keyboard)
         return
+
     date_str = available_dates[0]
     slots = await get_available_slots(tid, date_str)
     if not slots:
-        await call.message.edit_text(
-            "Не удалось найти свободный слот.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 К анкете", callback_data=f"tutor_info_{tid}")]
-            ])
-        )
+        text = "Не удалось найти свободный слот."
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 К анкете", callback_data=f"tutor_info_{tid}")]
+        ])
+        if call.message.content_type != 'text':
+            await call.message.delete()
+            await call.message.answer(text, reply_markup=keyboard)
+        else:
+            await call.message.edit_text(text, reply_markup=keyboard)
         return
+
     slot = slots[0]
     await state.update_data(date=date_str, time_slot=slot)
 
@@ -486,7 +525,12 @@ async def show_trial_slot(call: CallbackQuery, state: FSMContext, tid: int, subj
         [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_trial")],
         [InlineKeyboardButton(text="🔙 Отмена", callback_data=f"tutor_info_{tid}")]
     ])
-    await call.message.edit_text(text, reply_markup=keyboard)
+
+    if call.message.content_type != 'text':
+        await call.message.delete()
+        await call.message.answer(text, reply_markup=keyboard)
+    else:
+        await call.message.edit_text(text, reply_markup=keyboard)
     await state.set_state(TrialBookingStates.waiting_confirmation)
 
 
@@ -525,7 +569,14 @@ async def confirm_trial_booking(call: CallbackQuery, state: FSMContext, bot: Bot
         except:
             pass
 
-    await call.message.edit_text("✅ Заявка на пробное занятие отправлена преподавателю. Ожидайте подтверждения.")
+    # Завершающее сообщение
+    text = "✅ Заявка на пробное занятие отправлена преподавателю. Ожидайте подтверждения."
+    if call.message.content_type != 'text':
+        await call.message.delete()
+        await call.message.answer(text)
+    else:
+        await call.message.edit_text(text)
+
     await call.message.answer(
         "Ваша заявка принята и будет рассмотрена.",
         reply_markup=await get_main_menu(call.from_user.id)
