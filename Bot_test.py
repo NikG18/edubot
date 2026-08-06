@@ -398,7 +398,7 @@ async def show_tutor_info(call: CallbackQuery, state: FSMContext):
     for subj, price in tutor["subjects"].items():
         text += f"• {subj} — {price} руб.\n"
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎓 Записаться на пробное занятие", callback_data=f"trial_{tid}")],
+        [InlineKeyboardButton(text="🎓 Записаться на пробное занятие", callback_data=f"trials_{tid}")],
         [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
     ])
     if tutor["photo"]:
@@ -411,7 +411,7 @@ async def show_tutor_info(call: CallbackQuery, state: FSMContext):
 
 
 # ==================== ПРОБНОЕ ЗАНЯТИЕ ====================
-@dp.callback_query(F.data.startswith("trial_"))
+@dp.callback_query(F.data.startswith("trials_"))
 async def start_trial_booking(call: CallbackQuery, state: FSMContext):
     """Точка входа: проверяем, сколько предметов у репетитора."""
     if any(call.data.startswith(p) for p in (
