@@ -179,6 +179,11 @@ class TutorRescheduleStates(StatesGroup):
     waiting_confirmation = State()
 
 
+class TrialBookingStates(StatesGroup):
+    choosing_subject = State()
+    waiting_confirmation = State()
+
+
 # -------------------- ГЛАВНОЕ МЕНЮ --------------------
 async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
     is_tutor = await get_tutor_by_telegram_id(user_id) is not None
@@ -376,7 +381,11 @@ async def back_to_tutors(call: CallbackQuery):
 
 
 @dp.callback_query(F.data.startswith("tutor_info_"))
-async def show_tutor_info(call: CallbackQuery):
+async def show_tutor_info(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    # сбрасываем любые предыдущие FSM, чтобы не мешали
+    await state.clear()
+
     tid = int(call.data.split("_")[-1])
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
@@ -387,6 +396,7 @@ async def show_tutor_info(call: CallbackQuery):
     for subj, price in tutor["subjects"].items():
         text += f"• {subj} — {price} руб.\n"
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎓 Записаться на пробное занятие", callback_data=f"trial_{tid}")],
         [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
     ])
     if tutor["photo"]:
@@ -395,7 +405,132 @@ async def show_tutor_info(call: CallbackQuery):
                                   reply_markup=keyboard)
     else:
         await call.message.edit_text(text, reply_markup=keyboard)
+        
+        
+        
+# ==================== ПРОБНОЕ ЗАНЯТИЕ ====================
+@dp.callback_query(F.data.startswith("trial_"))
+async def start_trial_booking(call: CallbackQuery, state: FSMContext):
     await safe_answer(call)
+    tid = int(call.data.split("_")[1])
+    tutors = await get_all_tutors()
+    tutor = tutors.get(tid)
+    if not tutor:
+        await call.message.edit_text("Репетитор не найден.")
+        return
+    await state.update_data(tutor_id=tid, tutor_name=tutor["name"])
+    subjects = list(tutor["subjects"].keys())
+    if len(subjects) == 1:
+        subject = subjects[0]
+        await state.update_data(subject=subject)
+        await call.message.edit_text("Ищем ближайший свободный слот...")
+        await show_trial_slot(call, state, tid, subject)
+    elif len(subjects) > 1:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=subj, callback_data=f"trial_subject_{subj}")] for subj in subjects
+        ] + [[InlineKeyboardButton(text="🔙 Отмена", callback_data="back_to_tutors")]])
+        await call.message.edit_text("Выберите предмет для пробного занятия:", reply_markup=keyboard)
+        await state.set_state(TrialBookingStates.choosing_subject)
+    else:
+        await call.message.edit_text("У этого репетитора пока нет предметов.",
+                                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                         [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
+                                     ]))
+
+
+@dp.callback_query(F.data.startswith("trial_subject_"), StateFilter(TrialBookingStates.choosing_subject))
+async def trial_subject_chosen(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    subject = call.data.split("trial_subject_", 1)[1]
+    await state.update_data(subject=subject)
+    data = await state.get_data()
+    tid = data["tutor_id"]
+    await call.message.edit_text("Ищем ближайший свободный слот...")
+    await show_trial_slot(call, state, tid, subject)
+
+
+async def show_trial_slot(call: CallbackQuery, state: FSMContext, tid: int, subject: str):
+    available_dates = await get_available_dates(tid)
+    if not available_dates:
+        await call.message.edit_text(
+            "К сожалению, у репетитора пока нет свободных слотов.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 К анкете", callback_data=f"tutor_info_{tid}")]
+            ])
+        )
+        return
+    date_str = available_dates[0]
+    slots = await get_available_slots(tid, date_str)
+    if not slots:
+        await call.message.edit_text(
+            "Не удалось найти свободный слот.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 К анкете", callback_data=f"tutor_info_{tid}")]
+            ])
+        )
+        return
+    slot = slots[0]
+    await state.update_data(date=date_str, time_slot=slot)
+
+    tutors = await get_all_tutors()
+    tutor_name = tutors[tid]["name"]
+    text = (
+        f"🎓 <b>Пробное занятие</b>\n"
+        f"👨‍🏫 Репетитор: {tutor_name}\n"
+        f"📚 Предмет: {subject}\n"
+        f"📅 Дата: {date_str} (МСК)\n"
+        f"🕒 Время: {slot}\n\n"
+        f"Подтвердить запись?"
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_trial")],
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data=f"tutor_info_{tid}")]
+    ])
+    await call.message.edit_text(text, reply_markup=keyboard)
+    await state.set_state(TrialBookingStates.waiting_confirmation)
+
+
+@dp.callback_query(F.data == "confirm_trial", StateFilter(TrialBookingStates.waiting_confirmation))
+async def confirm_trial_booking(call: CallbackQuery, state: FSMContext, bot: Bot):
+    await safe_answer(call)
+    data = await state.get_data()
+    tid = data["tutor_id"]
+    subject = data["subject"]
+    date = data["date"]
+    slot = data["time_slot"]
+    user = call.from_user
+    username = user.username or user.full_name
+    uid = user.id
+
+    new_id = await add_booking(tid, uid, username, subject, date, slot)
+
+    booking_msg = (
+        f"📝 Новая заявка на пробное занятие (ожидает подтверждения)\n"
+        f"👤 Ученик: {username} (ID: {uid})\n"
+        f"👨‍🏫 Репетитор: {data['tutor_name']}\n"
+        f"📚 Предмет: {subject}\n"
+        f"📅 Дата: {date} (МСК)\n"
+        f"🕒 Время: {slot} (МСК)"
+    )
+
+    tutors = await get_all_tutors()
+    tutor = tutors.get(tid)
+    if tutor and tutor.get("telegram_id"):
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"tutor_confirm_{new_id}")],
+            [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"tutor_reject_{new_id}")]
+        ])
+        try:
+            await bot.send_message(tutor["telegram_id"], booking_msg, reply_markup=keyboard)
+        except:
+            pass
+
+    await call.message.edit_text("✅ Заявка на пробное занятие отправлена преподавателю. Ожидайте подтверждения.")
+    await call.message.answer(
+        "Ваша заявка принята и будет рассмотрена.",
+        reply_markup=await get_main_menu(call.from_user.id)
+    )
+    await state.clear()
 
 
 # ==================== ИНФОРМАЦИЯ О ЗАНЯТИЯХ ====================
