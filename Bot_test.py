@@ -22,7 +22,7 @@ from database import (
     get_all_bookings, add_booking, update_booking, delete_booking,
     get_tutor_by_telegram_id, get_student_subscriptions, get_tutor_financials, get_all_tutors_stats,
     get_students_stats, get_all_tutors_stats_by_month, get_students_stats_by_month,
-    block_day, unblock_day, is_day_blocked
+    block_day, unblock_day, is_day_blocked, recalculate_monthly_stats
 )
 from aiogram.exceptions import TelegramBadRequest
 
@@ -1756,6 +1756,7 @@ async def edit_tutor_choice(call: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="Изменить Telegram ID", callback_data="edit_telegram_id")],
         [InlineKeyboardButton(text="📚 Управление предметами", callback_data="manage_subjects")],
         [InlineKeyboardButton(text="💰 Изменить комиссию", callback_data="edit_commission")],
+        [InlineKeyboardButton(text="🔄 Режим комиссии", callback_data="toggle_commission_mode")],
         [InlineKeyboardButton(text="🔙 К списку", callback_data="admin_edit_list")]
     ])
     await call.message.edit_text(info, reply_markup=keyboard)
@@ -1768,6 +1769,26 @@ async def edit_commission_start(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text("Введите новый процент комиссии (целое число):")
     await state.set_state(AdminStates.waiting_new_value)
     # ВАЖНО: здесь использовалась необъявленная переменная field, но мы оставляем как есть, только заменили вызов answer
+
+@dp.callback_query(F.data == "toggle_commission_mode", StateFilter("*"))
+async def toggle_commission_mode(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    data = await state.get_data()
+    tid = data.get("edit_tutor_id")
+    if not tid:
+        return
+    tutors = await get_all_tutors()
+    tutor = tutors.get(tid)
+    current_mode = tutor.get("commission_mode", "manual")
+    new_mode = "auto" if current_mode == "manual" else "manual"
+    await update_tutor(tid, commission_mode=new_mode)
+    await call.message.edit_text(
+        f"Режим комиссии изменён на {'автоматический' if new_mode=='auto' else 'ручной'}.\n"
+        "При автоматическом режиме процент рассчитывается по прогрессивной шкале."
+    )
+    # Возвращаемся в меню редактирования репетитора
+    await edit_tutor_choice(call, state)
+
 
 
 @dp.callback_query(F.data.startswith("edit_"), StateFilter("*"))
@@ -1807,6 +1828,13 @@ async def process_new_value(message: Message, state: FSMContext):
             kwargs["telegram_id"] = new_id if new_id != 0 else None
         except ValueError:
             await message.answer("Введите целое число или 0.")
+            return
+    elif field == "commission":
+        try:
+            comm = int(message.text.strip())
+            kwargs["commission_percent"] = comm
+        except ValueError:
+            await message.answer("Введите целое число.")
             return
     await update_tutor(tid, **kwargs)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -2324,7 +2352,7 @@ async def tutor_stats_menu(call: CallbackQuery):
         f"📊 Статистика за всё время\n"
         f"• Проведено занятий: {fin['total_lessons']}\n"
         f"• Общий доход: {fin['total_income']:.2f} руб.\n"
-        f"• Комиссия ({comm_percent}%): {fin['commission_amount']:.2f} руб.\n"
+        f"• Комиссия ({comm_percent}%{', авто' if tutor.get('commission_mode')=='auto' else ''}): {fin['commission_amount']:.2f} руб.\n"
         f"• Доход после комиссии: {fin['net_income']:.2f} руб.\n\n"
         "Выберите месяц для детализации:"
     )
@@ -2803,6 +2831,11 @@ async def cleanup_old_bookings():
             await db.commit()
             logging.info(f"Старые записи переведены в completed. Обновлено: {cursor.rowcount}")
 
+            # Пересчёт статистики для всех преподавателей за текущий месяц
+            now = datetime.now()
+            tutors = await get_all_tutors()
+            for tid in tutors:
+                await recalculate_monthly_stats(tid, now.year, now.month)
 
 async def periodic_cleanup():
     while True:
