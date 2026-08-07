@@ -16,7 +16,8 @@ async def init_db():
             photo TEXT DEFAULT '',
             telegram_id INTEGER,
             description TEXT DEFAULT '',
-            commission_percent INTEGER DEFAULT 15
+            commission_percent INTEGER DEFAULT 25,
+            commission_mode TEXT DEFAULT 'manual'
         );
 
         CREATE TABLE IF NOT EXISTS subjects (
@@ -69,16 +70,31 @@ async def init_db():
             FOREIGN KEY (tutor_id) REFERENCES tutors(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS monthly_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tutor_id INTEGER NOT NULL,
+            year INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            lessons_count INTEGER DEFAULT 0,
+            total_income REAL DEFAULT 0.0,
+            commission_amount REAL DEFAULT 0.0,
+            net_income REAL DEFAULT 0.0,
+            commission_mode TEXT DEFAULT 'manual',
+            commission_percent REAL DEFAULT 15,
+            UNIQUE(tutor_id, year, month)
+        );
+
         """)
         await db.commit()
         
 async def migrate_database():
     async with aiosqlite.connect("bot.db") as db:
-        cursor = await db.execute("PRAGMA table_info(bookings)")
+        cursor = await db.execute("PRAGMA table_info(tutors)")
         columns = [row[1] for row in await cursor.fetchall()]
-        if "channel_msg_id" not in columns:
-            await db.execute("ALTER TABLE bookings ADD COLUMN channel_msg_id INTEGER DEFAULT NULL")
+        if "commission_mode" not in columns:
+            await db.execute("ALTER TABLE tutors ADD COLUMN commission_mode TEXT DEFAULT 'manual'")
             await db.commit()
+        
         print("Миграция базы данных завершена.")
 # ------------------------------------------------------------
 # TUTORS
@@ -97,6 +113,7 @@ async def get_all_tutors() -> Dict[int, dict]:
                 "telegram_id": row["telegram_id"],
                 "description": row["description"],
                 "commission_percent": row["commission_percent"],
+                "commission_mode": row["commission_mode"],
                 "subjects": {}
             }
         cursor2 = await db.execute("SELECT * FROM subjects")
@@ -106,11 +123,11 @@ async def get_all_tutors() -> Dict[int, dict]:
                 tutors[tid]["subjects"][row["name"]] = row["price"]
     return tutors
 
-async def add_tutor(name, photo, telegram_id, description, commission_percent=15):
+async def add_tutor(name, photo, telegram_id, description, commission_percent=25, commission_mode='manual'):
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "INSERT INTO tutors (name, photo, telegram_id, description, commission_percent) VALUES (?,?,?,?,?)",
-            (name, photo, telegram_id, description, commission_percent)
+            "INSERT INTO tutors (name, photo, telegram_id, description, commission_percent, commission_mode) VALUES (?,?,?,?,?,?)",
+            (name, photo, telegram_id, description, commission_percent, commission_mode)
         )
         await db.commit()
         return cur.lastrowid
@@ -129,6 +146,106 @@ async def update_tutor(tutor_id: int, **kwargs):
 async def delete_tutor(tutor_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM tutors WHERE id = ?", (tutor_id,))
+        await db.commit()
+
+async def get_tutor_first_lesson_date(tutor_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT MIN(date) FROM bookings WHERE tutor_id=? AND status='completed'",
+            (tutor_id,)
+        )
+        row = await cursor.fetchone()
+        if row and row[0]:
+            return datetime.strptime(row[0], "%d.%m.%Y")
+        return None
+
+
+async def calculate_auto_commission(tutor_id: int, year: int, month: int):
+    """Возвращает (commission_percent, lessons_count_for_month)."""
+    # Считаем количество завершённых занятий в указанном месяце
+    start_date = f"{year}-{month:02d}-01"
+    end_date = f"{year}-{month:02d}-31"  # SQLite проигнорирует лишние дни
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM bookings WHERE tutor_id=? AND status='completed' "
+            "AND date BETWEEN ? AND ?",
+            (tutor_id, start_date, end_date)
+        )
+        lessons = (await cursor.fetchone())[0]
+
+    # Стаж в полных календарных месяцах до начала текущего месяца
+    first_lesson = await get_tutor_first_lesson_date(tutor_id)
+    if not first_lesson:
+        return (25, lessons)
+
+    first_of_current_month = datetime(year, month, 1)
+    months_diff = (first_of_current_month.year - first_lesson.year) * 12 + \
+                  (first_of_current_month.month - first_lesson.month)
+
+    # Занятия за первые 60 дней работы
+    first_60_days_end = first_lesson + timedelta(days=60)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM bookings WHERE tutor_id=? AND status='completed' "
+            "AND date BETWEEN ? AND ?",
+            (tutor_id, first_lesson.strftime("%d.%m.%Y"),
+             first_60_days_end.strftime("%d.%m.%Y"))
+        )
+        first_60_days_lessons = (await cursor.fetchone())[0]
+
+    if lessons >= 41 and months_diff >= 4 and first_60_days_lessons > 100:
+        return (15, lessons)
+    elif lessons >= 21 and months_diff >= 2:
+        return (20, lessons)
+    else:
+        return (25, lessons)
+
+
+async def recalculate_monthly_stats(tutor_id: int, year: int, month: int):
+    tutors = await get_all_tutors()
+    tutor = tutors.get(tutor_id)
+    if not tutor:
+        return
+
+    mode = tutor.get("commission_mode", "manual")
+    if mode == "auto":
+        percent, lessons = await calculate_auto_commission(tutor_id, year, month)
+    else:
+        percent = tutor.get("commission_percent", 15)
+        # Количество занятий в этом месяце
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM bookings WHERE tutor_id=? AND status='completed' "
+                "AND strftime('%Y', date)=? AND strftime('%m', date)=?",
+                (tutor_id, str(year), f"{month:02d}")
+            )
+            lessons = (await cursor.fetchone())[0]
+
+    # Суммарный доход (цена предмета) за месяц
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT SUM(s.price) FROM bookings b "
+            "JOIN subjects s ON s.tutor_id = b.tutor_id AND s.name = b.subject "
+            "WHERE b.tutor_id=? AND b.status='completed' "
+            "AND strftime('%Y', b.date)=? AND strftime('%m', b.date)=?",
+            (tutor_id, str(year), f"{month:02d}")
+        )
+        total_income = (await cursor.fetchone())[0] or 0.0
+
+    commission = total_income * percent / 100
+    net = total_income - commission
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO monthly_stats (tutor_id, year, month, lessons_count, total_income, "
+            "commission_amount, net_income, commission_mode, commission_percent) "
+            "VALUES (?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(tutor_id, year, month) DO UPDATE SET "
+            "lessons_count=excluded.lessons_count, total_income=excluded.total_income, "
+            "commission_amount=excluded.commission_amount, net_income=excluded.net_income, "
+            "commission_mode=excluded.commission_mode, commission_percent=excluded.commission_percent",
+            (tutor_id, year, month, lessons, total_income, commission, net, mode, percent)
+        )
         await db.commit()
 
 # ------------------------------------------------------------
@@ -281,44 +398,57 @@ async def delete_booking(booking_id: int):
         await db.commit()
 
 async def get_tutor_financials(tutor_id: int, year: int = None, month: int = None) -> dict:
-    tutors = await get_all_tutors()
-    tutor = tutors.get(tutor_id)
-    commission_percent = tutor.get("commission_percent", 15) if tutor else 15
-
-    query = """
-        SELECT b.subject, b.date, s.price 
-        FROM bookings b 
-        JOIN subjects s ON s.tutor_id = b.tutor_id AND s.name = b.subject 
-        WHERE b.tutor_id=? AND b.status='completed'
-    """
-    params = [tutor_id]
     if year is not None and month is not None:
-        query += " AND strftime('%Y', b.date) = ? AND strftime('%m', b.date) = ?"
-        params += [str(year), f"{month:02d}"]
-    elif year is not None:
-        query += " AND strftime('%Y', b.date) = ?"
-        params.append(str(year))
-    elif month is not None:
-        query += " AND strftime('%m', b.date) = ?"
-        params.append(f"{month:02d}")
-
-    total_lessons = 0
-    total_income = 0.0
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(query, params)
-        async for row in cursor:
-            total_lessons += 1
-            total_income += row[2]
-
-    commission_amount = total_income * commission_percent / 100
-    net_income = total_income - commission_amount
-    return {
-        "total_lessons": total_lessons,
-        "total_income": total_income,
-        "commission_amount": commission_amount,
-        "net_income": net_income,
-        "commission_percent": commission_percent
-    }
+        # Пытаемся взять из кеша
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM monthly_stats WHERE tutor_id=? AND year=? AND month=?",
+                (tutor_id, year, month)
+            )
+            row = await cursor.fetchone()
+            if row:
+                return {
+                    "total_lessons": row["lessons_count"],
+                    "total_income": row["total_income"],
+                    "commission_amount": row["commission_amount"],
+                    "net_income": row["net_income"],
+                    "commission_percent": row["commission_percent"]
+                }
+        # Нет в кеше – пересчитываем
+        await recalculate_monthly_stats(tutor_id, year, month)
+        # Повторный запрос
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM monthly_stats WHERE tutor_id=? AND year=? AND month=?",
+                (tutor_id, year, month)
+            )
+            row = await cursor.fetchone()
+            if row:
+                return {
+                    "total_lessons": row["lessons_count"],
+                    "total_income": row["total_income"],
+                    "commission_amount": row["commission_amount"],
+                    "net_income": row["net_income"],
+                    "commission_percent": row["commission_percent"]
+                }
+        return {"total_lessons":0, "total_income":0, "commission_amount":0, "net_income":0, "commission_percent":0}
+    else:
+        # За всё время – суммируем по monthly_stats
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                "SELECT SUM(lessons_count), SUM(total_income), SUM(commission_amount), SUM(net_income) "
+                "FROM monthly_stats WHERE tutor_id=?", (tutor_id,)
+            )
+            row = await cursor.fetchone()
+            return {
+                "total_lessons": row[0] or 0,
+                "total_income": row[1] or 0.0,
+                "commission_amount": row[2] or 0.0,
+                "net_income": row[3] or 0.0,
+                "commission_percent": "—"
+            }
 
 
 async def get_all_tutors_stats():
