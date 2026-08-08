@@ -8,7 +8,7 @@ import json
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 
-API_BASE = "https://securepay.tinkoff.ru/v2/"
+API_BASE = "https://rest-api-test.tinkoff.ru/v2/"
 
 def generate_token(params: dict) -> str:
     """Генерация подписи для запроса согласно документации Т‑Банка."""
