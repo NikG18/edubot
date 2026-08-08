@@ -224,7 +224,7 @@ async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="📝 Запись на занятие")],
         [KeyboardButton(text="📋 Мои записи")],
         [KeyboardButton(text="💳 Оплата")],
-        [KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
+        #[KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
         [KeyboardButton(text="✉️ Связь с преподавателем")],
         [KeyboardButton(text="🆘 Поддержка")],
         [KeyboardButton(text="❓ Помощь")],
