@@ -335,9 +335,36 @@ def split_into_slots(start_time: str, end_time: str, duration_min=90, break_min=
 # ==================== БАЗОВЫЕ ОБРАБОТЧИКИ ====================
 @dp.message(Command("start"))
 async def Start(message: Message) -> None:
+    user_id = message.from_user.id
+    is_tutor = await get_tutor_by_telegram_id(user_id) is not None
+    is_admin = (user_id == ADMING_ID)
+
+    # Базовое приветствие для всех
+    greeting = (
+        f"👋 <b>Добро пожаловать, {html.bold(message.from_user.full_name)}!</b>\n\n"
+        "Я онлайн‑помощник для удобства обучения. Помогаю ученикам находить репеитора и записываться на занятия, "
+        "а преподавателям — управлять расписанием и отслеживать доход.\n\n"
+        "📌 <b>Что я умею:</b>\n"
+        "• Запись на обычные и пробные занятия\n"
+        "• Просмотр и перенос ваших записей\n"
+        "• Удобная оплата\n"
+        "• Связь с преподавателем, учеником или поддержкой\n"
+        "• Статистика проведённых уроков\n"
+        "• Гибкая настройка расписания\n\n"
+    )
+
+    if is_admin:
+        greeting += "🔧 Вам доступна расширенная админ‑панель для управления репетиторами и общей статистикой."
+    elif is_tutor:
+        greeting += "👨‍🏫 Вы авторизованы как преподаватель. В панели преподавателя найдёте расписание, учеников и финансовую статистику."
+    else:
+        greeting += "🎓 Вы авторизованы как ученик. Выберите репетитора и начинайте учиться!"
+
+    greeting += "\n\nПерейдите в раздел *Помощь*, чтобы увидеть полную справку."
+
     await message.answer(
-        f"Привет, {html.bold(message.from_user.full_name)}! Я онлайн ассистент Никиты Тимуровича. Чем могу помочь?",
-        reply_markup=await get_main_menu(message.from_user.id)
+        greeting,
+        reply_markup=await get_main_menu(user_id)
     )
 
 
