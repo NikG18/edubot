@@ -1,3 +1,2 @@
 aiogram
 aiosqlite
-tinkoff-payment
