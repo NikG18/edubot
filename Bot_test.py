@@ -22,7 +22,7 @@ from database import (
     get_all_bookings, add_booking, update_booking, delete_booking,
     get_tutor_by_telegram_id, get_student_subscriptions, get_tutor_financials, get_all_tutors_stats,
     get_students_stats, get_all_tutors_stats_by_month, get_students_stats_by_month,
-    block_day, unblock_day, is_day_blocked, recalculate_monthly_stats
+    block_day, unblock_day, is_day_blocked, recalculate_monthly_stats, calculate_auto_commission
 )
 from aiogram.exceptions import TelegramBadRequest
 
