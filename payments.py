@@ -11,26 +11,14 @@ TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 
 API_BASE = "https://rest-api-test.tinkoff.ru/v2/"
 
-CA_BUNDLE = os.path.expanduser("~/ca-bundle.crt")
-if os.path.exists(CA_BUNDLE):
-    SSL_CONTEXT = ssl.create_default_context(cafile=CA_BUNDLE)
-else:
-    SSL_CONTEXT = None  # или fallback: ssl.create_default_context()
-
-async def api_call(endpoint: str, params: dict) -> dict:
-    url = API_BASE + endpoint
-    params["TerminalKey"] = TINKOFF_TERMINAL_KEY
-    params["Token"] = generate_token(params)
-
-    connector = aiohttp.TCPConnector(ssl=SSL_CONTEXT) if SSL_CONTEXT else aiohttp.TCPConnector(ssl=False)  # временно, если контекст не создан
-    async with aiohttp.ClientSession(connector=connector) as session:
-        try:
-            async with session.post(url, json=params) as resp:
-                data = await resp.json()
-                return data
-        except Exception as e:
-            logging.error(f"Tinkoff API error ({endpoint}): {e}")
-            return {}
+try:
+    SSL_CONTEXT = ssl.create_default_context()
+    logging.info("SSL-контекст создан (системные сертификаты)")
+except Exception:
+    logging.warning("Не удалось создать системный SSL-контекст, временно отключаем проверку (ТОЛЬКО ДЛЯ ТЕСТОВ)")
+    SSL_CONTEXT = ssl.create_default_context()
+    SSL_CONTEXT.check_hostname = False
+    SSL_CONTEXT.verify_mode = ssl.CERT_NONE
 
 
 def generate_token(params: dict) -> str:
