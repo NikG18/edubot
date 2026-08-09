@@ -1,16 +1,44 @@
 import logging
-from tinkoff_payment import TinkoffPayment
 import aiosqlite
 import os
+import hashlib
+import aiohttp
+import json
 
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 
-tinkoff = TinkoffPayment(
-    terminal_key=TINKOFF_TERMINAL_KEY,
-    password=TINKOFF_SECRET_KEY,
-    API_BASE = "https://rest-api-test.tinkoff.ru/v2/"
-)
+API_BASE = "https://rest-api-test.tinkoff.ru/v2/"
+
+def generate_token(params: dict) -> str:
+    """Генерация подписи для запроса согласно документации Т‑Банка."""
+    # Сортируем ключи в алфавитном порядке, исключая Token и Receipt (если есть)
+    data = {k: v for k, v in sorted(params.items()) if k not in ("Token", "Receipt")}
+    # Преобразуем значения в строку, для вложенных словарей – JSON
+    values = []
+    for v in data.values():
+        if isinstance(v, dict):
+            values.append(json.dumps(v, separators=(',', ':')))
+        else:
+            values.append(str(v))
+    concatenated = ''.join(values)
+    # Вычисляем SHA-256
+    return hashlib.sha256(concatenated.encode('utf-8')).hexdigest()
+
+async def api_call(endpoint: str, params: dict) -> dict:
+    """Выполняет запрос к API Т‑Банка."""
+    url = API_BASE + endpoint
+    params["TerminalKey"] = TINKOFF_TERMINAL_KEY
+    params["Token"] = generate_token(params)
+    
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(url, json=params) as resp:
+                data = await resp.json()
+                return data
+        except Exception as e:
+            logging.error(f"Tinkoff API error ({endpoint}): {e}")
+            return {}
 
 async def get_tutor_inn(tutor_id: int) -> str:
     async with aiosqlite.connect("bot.db") as db:
@@ -23,7 +51,7 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
     inn = await get_tutor_inn(tutor_id)
     receipt = {
         "Email": customer_email,
-        "Taxation": "usn_income",  # замените на вашу систему
+        "Taxation": "usn_income",
         "Items": [{
             "Name": description[:64],
             "Price": amount_kop,
@@ -35,35 +63,29 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
     if inn:
         receipt["AgentSign"] = "agent"
         receipt["AgentData"] = {
-            "AgentPhone": "+79331209603",
+            "AgentPhone": "+79331209603",       # замените на ваш номер
             "SupplierInfo": {
                 "Name": tutor_name,
                 "Inn": inn,
-                "Phones": ["+79331209603"]
+                "Phones": ["+79331209603"]      # замените на номер репетитора
             }
         }
 
-    payload = {
+    params = {
         "Amount": amount_kop,
         "OrderId": f"booking_{booking_id}",
         "Description": description,
-        "Receipt": receipt
+        "Receipt": receipt,
     }
-    try:
-        resp = tinkoff.init(payload)
-        if resp.get("Success"):
-            return resp["PaymentURL"], resp["PaymentId"]
-        else:
-            logging.error(f"Init failed: {resp.get('Details')}")
-            return None, None
-    except Exception as e:
-        logging.error(f"Tinkoff init error: {e}")
+
+    resp = await api_call("Init", params)
+    if resp.get("Success"):
+        return resp["PaymentURL"], resp["PaymentId"]
+    else:
+        logging.error(f"Init failed: {resp.get('Details')}")
         return None, None
 
 async def check_payment(payment_id: str) -> dict:
-    try:
-        resp = tinkoff.get_state({"PaymentId": payment_id})
-        return resp
-    except Exception as e:
-        logging.error(f"Check payment error: {e}")
-        return {}
+    params = {"PaymentId": payment_id}
+    resp = await api_call("GetState", params)
+    return resp
