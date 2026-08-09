@@ -22,7 +22,7 @@ from database import (
     get_all_bookings, add_booking, update_booking, delete_booking,
     get_tutor_by_telegram_id, get_student_subscriptions, get_tutor_financials, get_all_tutors_stats,
     get_students_stats, get_all_tutors_stats_by_month, get_students_stats_by_month,
-    block_day, unblock_day, is_day_blocked, recalculate_monthly_stats, get_user_email, set_user_email, 
+    block_day, unblock_day, is_day_blocked, recalculate_monthly_stats, get_user_email, set_user_email,
     add_lesson_to_balance, calculate_auto_commission, set_pending_email_request, get_pending_email_request, delete_pending_email_request
 )
 from aiogram.exceptions import TelegramBadRequest
@@ -2740,7 +2740,7 @@ async def confirm_del_slot(call: CallbackQuery, state: FSMContext):
     await state.set_state(TutorScheduleStates.manage_day_slots)
 
 
-async def create_and_send_payment(source, bot, state, booking, email):
+async def create_and_send_payment(source, bot, booking, email):
     """Создаёт платёж в Т-Банке и отправляет ученику ссылку на оплату."""
     bid = booking["id"]
     tutors = await get_all_tutors()
