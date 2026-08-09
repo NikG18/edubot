@@ -22,7 +22,8 @@ from database import (
     get_all_bookings, add_booking, update_booking, delete_booking,
     get_tutor_by_telegram_id, get_student_subscriptions, get_tutor_financials, get_all_tutors_stats,
     get_students_stats, get_all_tutors_stats_by_month, get_students_stats_by_month,
-    block_day, unblock_day, is_day_blocked, recalculate_monthly_stats, get_user_email, set_user_email, add_lesson_to_balance, calculate_auto_commission
+    block_day, unblock_day, is_day_blocked, recalculate_monthly_stats, get_user_email, set_user_email, 
+    add_lesson_to_balance, calculate_auto_commission, set_pending_email_request, get_pending_email_request, delete_pending_email_request
 )
 from aiogram.exceptions import TelegramBadRequest
 from payments import create_payment, check_payment
@@ -2741,7 +2742,7 @@ async def confirm_del_slot(call: CallbackQuery, state: FSMContext):
 
 async def create_and_send_payment(source, bot, state, booking, email):
     """Создаёт платёж в Т-Банке и отправляет ученику ссылку на оплату."""
-    bid = (await state.get_data())["pending_booking_id"]
+    bid = booking["id"]
     tutors = await get_all_tutors()
     tutor = tutors.get(booking["tutor_id"])
     if not tutor:
@@ -2825,42 +2826,51 @@ async def tutor_confirm_booking(call: CallbackQuery, bot: Bot, state: FSMContext
     # Сохраняем booking_id в состоянии для последующего создания платежа
     await state.update_data(pending_booking_id=bid, tutor_id=booking["tutor_id"])
     user_id = booking["user_id"]
-
-    # Проверяем наличие email у ученика
     email = await get_user_email(user_id)
     if email:
-        # Email уже есть – сразу создаём платёж
-        await create_and_send_payment(call, bot, state, booking, email)
+        # Сразу создаём платёж, передавая booking как аргумент
+        await create_and_send_payment(call, bot, booking, email)
     else:
-        # Запрашиваем email
+        # Сохраняем booking_id для ученика
+        await set_pending_email_request(user_id, bid)
         await call.message.edit_text("Заявка подтверждена. Запрашиваем email ученика для чека...")
         await bot.send_message(
             user_id,
             "📧 Для завершения записи и получения чека введите ваш адрес электронной почты:"
         )
-        await state.set_state(PaymentStates.waiting_email)
+        # Очищаем состояние ученика, чтобы он мог ответить
+        user_state = dp.fsm.resolve_context(bot, user_id=user_id, chat_id=user_id)
+        await user_state.clear()
+        # Сохранять bid в FSM преподавателя больше не нужно
 
-@dp.message(StateFilter(PaymentStates.waiting_email))
-async def process_payment_email(message: Message, state: FSMContext, bot: Bot):
+
+
+@dp.message()
+async def process_payment_email(message: Message, bot: Bot, state: FSMContext):
+    # Проверяем, ждём ли мы email от этого пользователя
+    booking_id = await get_pending_email_request(message.from_user.id)
+    if not booking_id:
+        return  # не наш случай, пропускаем
+
     email = message.text.strip()
     if "@" not in email or "." not in email:
         await message.answer("Некорректный email. Попробуйте ещё раз.")
         return
-    user_id = message.from_user.id
-    await set_user_email(user_id, email)
 
-    data = await state.get_data()
-    booking_id = data.get("pending_booking_id")
+    # Сохраняем email
+    await set_user_email(message.from_user.id, email)
+
+    # Получаем бронирование
     bookings = await get_all_bookings()
     booking = bookings.get(booking_id)
     if not booking:
         await message.answer("Ошибка: запись не найдена.")
-        await state.clear()
+        await delete_pending_email_request(message.from_user.id)
         return
 
-    # Сохраняем email и создаём платёж
-    await create_and_send_payment(message, bot, state, booking, email)
-    await state.clear()
+    # Создаём платёж
+    await create_and_send_payment(message, bot, booking, email)
+    await delete_pending_email_request(message.from_user.id)
 
 async def check_pending_payments(bot: Bot):
     bookings = await get_all_bookings()
