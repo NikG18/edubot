@@ -4,11 +4,34 @@ import os
 import hashlib
 import aiohttp
 import json
+import ssl
 
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 
 API_BASE = "https://rest-api-test.tinkoff.ru/v2/"
+
+CA_BUNDLE = os.path.expanduser("~/ca-bundle.crt")
+if os.path.exists(CA_BUNDLE):
+    SSL_CONTEXT = ssl.create_default_context(cafile=CA_BUNDLE)
+else:
+    SSL_CONTEXT = None  # или fallback: ssl.create_default_context()
+
+async def api_call(endpoint: str, params: dict) -> dict:
+    url = API_BASE + endpoint
+    params["TerminalKey"] = TINKOFF_TERMINAL_KEY
+    params["Token"] = generate_token(params)
+
+    connector = aiohttp.TCPConnector(ssl=SSL_CONTEXT) if SSL_CONTEXT else aiohttp.TCPConnector(ssl=False)  # временно, если контекст не создан
+    async with aiohttp.ClientSession(connector=connector) as session:
+        try:
+            async with session.post(url, json=params) as resp:
+                data = await resp.json()
+                return data
+        except Exception as e:
+            logging.error(f"Tinkoff API error ({endpoint}): {e}")
+            return {}
+
 
 def generate_token(params: dict) -> str:
     """Генерация подписи для запроса согласно документации Т‑Банка."""
