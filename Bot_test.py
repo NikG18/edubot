@@ -27,6 +27,9 @@ from database import (
 )
 from aiogram.exceptions import TelegramBadRequest
 from payments import create_payment, check_payment
+# Или явно в коде
+import requests
+requests.get("https://mddc.tbank.ru/", verify="/russian-trusted-ca-bundle.pem")
 
 async def safe_answer(call: CallbackQuery, text: str = None, show_alert: bool = False):
     """
