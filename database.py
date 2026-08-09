@@ -118,6 +118,12 @@ async def migrate_database():
                     )
                 """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS pending_email_requests (
+                user_id INTEGER PRIMARY KEY,
+                booking_id INTEGER NOT NULL
+            )
+        """)
         await db.commit()
         print("Миграция базы данных завершена.")
 
@@ -589,6 +595,26 @@ async def set_user_email(user_id: int, email: str):
         )
         await db.commit()
 
+async def set_pending_email_request(user_id: int, booking_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO pending_email_requests (user_id, booking_id) VALUES (?,?)",
+            (user_id, booking_id)
+        )
+        await db.commit()
+
+async def get_pending_email_request(user_id: int) -> Optional[int]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT booking_id FROM pending_email_requests WHERE user_id=?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+async def delete_pending_email_request(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM pending_email_requests WHERE user_id=?", (user_id,))
+        await db.commit()
 
 
 
