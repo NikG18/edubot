@@ -16,11 +16,11 @@ API_BASE = "https://rest-api-test.tinkoff.ru/v2/"
 try:
     SSL_CONTEXT = ssl.create_default_context()
     logging.info("SSL-контекст создан (системные сертификаты)")
-except Exception:
-    logging.warning("Не удалось создать системный SSL-контекст, временно отключаем проверку (ТОЛЬКО ДЛЯ ТЕСТОВ)")
-    SSL_CONTEXT = ssl.create_default_context()
-    SSL_CONTEXT.check_hostname = False
-    SSL_CONTEXT.verify_mode = ssl.CERT_NONE
+#except Exception:
+#    logging.warning("Не удалось создать системный SSL-контекст, временно отключаем проверку (ТОЛЬКО ДЛЯ ТЕСТОВ)")
+#    SSL_CONTEXT = ssl.create_default_context()
+#    SSL_CONTEXT.check_hostname = False
+#    SSL_CONTEXT.verify_mode = ssl.CERT_NONE
 
 
 
