@@ -28,7 +28,6 @@ from database import (
 from aiogram.exceptions import TelegramBadRequest
 from payments import create_payment, check_payment
 
-
 async def safe_answer(call: CallbackQuery, text: str = None, show_alert: bool = False):
     """
     Безопасно отвечает на callback, игнорируя ошибку 'query is too old'
@@ -2846,32 +2845,6 @@ async def tutor_confirm_booking(call: CallbackQuery, bot: Bot, state: FSMContext
 
 
 
-@dp.message()
-async def process_payment_email(message: Message, bot: Bot, state: FSMContext):
-    # Проверяем, ждём ли мы email от этого пользователя
-    booking_id = await get_pending_email_request(message.from_user.id)
-    if not booking_id:
-        return  # не наш случай, пропускаем
-
-    email = message.text.strip()
-    if "@" not in email or "." not in email:
-        await message.answer("Некорректный email. Попробуйте ещё раз.")
-        return
-
-    # Сохраняем email
-    await set_user_email(message.from_user.id, email)
-
-    # Получаем бронирование
-    bookings = await get_all_bookings()
-    booking = bookings.get(booking_id)
-    if not booking:
-        await message.answer("Ошибка: запись не найдена.")
-        await delete_pending_email_request(message.from_user.id)
-        return
-
-    # Создаём платёж
-    await create_and_send_payment(message, bot, booking, email, booking_id)
-    await delete_pending_email_request(message.from_user.id)
 
 async def check_pending_payments(bot: Bot):
     bookings = await get_all_bookings()
@@ -2983,6 +2956,41 @@ async def help(message: types.Message):
         [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
     ])
     await message.answer(help_text, reply_markup=keyboard)
+
+
+
+
+
+@dp.message()
+async def process_payment_email(message: Message, bot: Bot, state: FSMContext):
+    # Проверяем, ждём ли мы email от этого пользователя
+    booking_id = await get_pending_email_request(message.from_user.id)
+    if not booking_id:
+        return  # нет запроса – пропускаем, давая работать другим обработчикам
+
+    email = message.text.strip()
+    if "@" not in email or "." not in email:
+        # Сообщение явно не email (например, кнопка) – просто игнорируем, не мешая
+        return
+
+    # Сохраняем email
+    await set_user_email(message.from_user.id, email)
+
+    bookings = await get_all_bookings()
+    booking = bookings.get(booking_id)
+    if not booking:
+        await message.answer("Ошибка: запись не найдена.")
+        await delete_pending_email_request(message.from_user.id)
+        return
+
+    # Создаём платёж
+    await create_and_send_payment(message, bot, booking, email, booking_id)
+    await delete_pending_email_request(message.from_user.id)
+
+
+
+
+
 
 
 # ==================== Очистка и напоминания ====================
