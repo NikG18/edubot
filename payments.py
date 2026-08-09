@@ -33,10 +33,7 @@ logging.warning("⚠️ Проверка SSL отключена для тест�
 
 
 def generate_token(params: dict) -> str:
-    """Генерация подписи для запроса согласно документации Т‑Банка."""
-    # Сортируем ключи в алфавитном порядке, исключая Token и Receipt (если есть)
     data = {k: v for k, v in sorted(params.items()) if k not in ("Token", "Receipt")}
-    # Преобразуем значения в строку, для вложенных словарей – JSON
     values = []
     for v in data.values():
         if isinstance(v, dict):
@@ -44,21 +41,27 @@ def generate_token(params: dict) -> str:
         else:
             values.append(str(v))
     concatenated = ''.join(values)
-    # Вычисляем SHA-256
     return hashlib.sha256(concatenated.encode('utf-8')).hexdigest()
+
+
 
 async def api_call(endpoint: str, params: dict) -> dict:
     url = API_BASE + endpoint
     params["TerminalKey"] = TINKOFF_TERMINAL_KEY
     params["Token"] = generate_token(params)
 
-    # Временно отключаем проверку SSL-сертификата (только для тестового сервера!)
-    # Для боевого режима удалите ssl=False и используйте стандартный контекст.
+    logging.info(f"Sending to {url}: {json.dumps(params, indent=2)}")
+
     async with aiohttp.ClientSession() as session:
         try:
             async with session.post(url, json=params, ssl=False) as resp:
-                data = await resp.json()
-                return data
+                text = await resp.text()
+                logging.info(f"Response status: {resp.status}, body: {text[:500]}")
+                if resp.status == 200:
+                    return json.loads(text)
+                else:
+                    logging.error(f"Init failed with status {resp.status}: {text}")
+                    return {}
         except Exception as e:
             logging.error(f"Tinkoff API error ({endpoint}): {e}")
             return {}
