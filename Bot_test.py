@@ -2740,9 +2740,9 @@ async def confirm_del_slot(call: CallbackQuery, state: FSMContext):
     await state.set_state(TutorScheduleStates.manage_day_slots)
 
 
-async def create_and_send_payment(source, bot, booking, email):
+async def create_and_send_payment(source, bot, booking, email, booking_id):
     """Создаёт платёж в Т-Банке и отправляет ученику ссылку на оплату."""
-    bid = booking["id"]
+    bid = booking_id
     tutors = await get_all_tutors()
     tutor = tutors.get(booking["tutor_id"])
     if not tutor:
@@ -2829,7 +2829,7 @@ async def tutor_confirm_booking(call: CallbackQuery, bot: Bot, state: FSMContext
     email = await get_user_email(user_id)
     if email:
         # Сразу создаём платёж, передавая booking как аргумент
-        await create_and_send_payment(call, bot, booking, email)
+        await create_and_send_payment(call, bot, booking, email, bid)
     else:
         # Сохраняем booking_id для ученика
         await set_pending_email_request(user_id, bid)
@@ -2869,7 +2869,7 @@ async def process_payment_email(message: Message, bot: Bot, state: FSMContext):
         return
 
     # Создаём платёж
-    await create_and_send_payment(message, bot, booking, email)
+    await create_and_send_payment(message, bot, booking, email, booking_id)
     await delete_pending_email_request(message.from_user.id)
 
 async def check_pending_payments(bot: Bot):
