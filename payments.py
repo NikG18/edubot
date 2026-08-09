@@ -1,30 +1,15 @@
+import os
+import json
+import hashlib
 import logging
 import aiosqlite
-import os
-import hashlib
 import aiohttp
-import json
-import ssl
 
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 
-API_BASE = "https://rest-api-test.tinkoff.ru/v2/"
-
-
-
-try:
-    SSL_CONTEXT = ssl.create_default_context()
-    logging.info("SSL-контекст создан (системные сертификаты)")
-#except Exception:
-#    logging.warning("Не удалось создать системный SSL-контекст, временно отключаем проверку (ТОЛЬКО ДЛЯ ТЕСТОВ)")
-#    SSL_CONTEXT = ssl.create_default_context()
-#    SSL_CONTEXT.check_hostname = False
-#    SSL_CONTEXT.verify_mode = ssl.CERT_NONE
-
-
-
-
+# Для боевого API
+API_BASE = "https://securepay.tinkoff.ru/v2/"
 
 def generate_token(params: dict) -> str:
     data = {k: v for k, v in sorted(params.items()) if k not in ("Token", "Receipt")}
@@ -37,24 +22,19 @@ def generate_token(params: dict) -> str:
     concatenated = ''.join(values)
     return hashlib.sha256(concatenated.encode('utf-8')).hexdigest()
 
-
-
 async def api_call(endpoint: str, params: dict) -> dict:
     url = API_BASE + endpoint
     params["TerminalKey"] = TINKOFF_TERMINAL_KEY
     params["Token"] = generate_token(params)
 
-    logging.info(f"Sending to {url}: {json.dumps(params, indent=2)}")
-
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.post(url, json=params, ssl=False) as resp:
+            async with session.post(url, json=params) as resp:
                 text = await resp.text()
-                logging.info(f"Response status: {resp.status}, body: {text[:500]}")
                 if resp.status == 200:
                     return json.loads(text)
                 else:
-                    logging.error(f"Init failed with status {resp.status}: {text}")
+                    logging.error(f"API error {endpoint}: {resp.status} {text[:200]}")
                     return {}
         except Exception as e:
             logging.error(f"Tinkoff API error ({endpoint}): {e}")
@@ -83,11 +63,11 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
     if inn:
         receipt["AgentSign"] = "agent"
         receipt["AgentData"] = {
-            "AgentPhone": "+79331209603",       # замените на ваш номер
+            "AgentPhone": "+70000000000",
             "SupplierInfo": {
                 "Name": tutor_name,
                 "Inn": inn,
-                "Phones": ["+79331209603"]      # замените на номер репетитора
+                "Phones": ["+70000000001"]
             }
         }
 
@@ -107,5 +87,4 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
 
 async def check_payment(payment_id: str) -> dict:
     params = {"PaymentId": payment_id}
-    resp = await api_call("GetState", params)
-    return resp
+    return await api_call("GetState", params)
