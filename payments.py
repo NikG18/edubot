@@ -17,6 +17,8 @@ SSL_CONTEXT.check_hostname = False
 SSL_CONTEXT.verify_mode = ssl.CERT_NONE
 logging.warning("⚠️ Проверка SSL отключена для тестового API Т-Банка. Не используйте этот режим в продакшене!")
 
+
+
 #try:
 #    SSL_CONTEXT = ssl.create_default_context()
 #    logging.info("SSL-контекст создан (системные сертификаты)")
@@ -25,6 +27,9 @@ logging.warning("⚠️ Проверка SSL отключена для тест�
 #    SSL_CONTEXT = ssl.create_default_context()
 #    SSL_CONTEXT.check_hostname = False
 #    SSL_CONTEXT.verify_mode = ssl.CERT_NONE
+
+
+
 
 
 def generate_token(params: dict) -> str:
@@ -43,14 +48,15 @@ def generate_token(params: dict) -> str:
     return hashlib.sha256(concatenated.encode('utf-8')).hexdigest()
 
 async def api_call(endpoint: str, params: dict) -> dict:
-    """Выполняет запрос к API Т‑Банка."""
     url = API_BASE + endpoint
     params["TerminalKey"] = TINKOFF_TERMINAL_KEY
     params["Token"] = generate_token(params)
-    
+
+    # Временно отключаем проверку SSL-сертификата (только для тестового сервера!)
+    # Для боевого режима удалите ssl=False и используйте стандартный контекст.
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.post(url, json=params) as resp:
+            async with session.post(url, json=params, ssl=False) as resp:
                 data = await resp.json()
                 return data
         except Exception as e:
