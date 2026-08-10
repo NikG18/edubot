@@ -2708,11 +2708,23 @@ async def send_pending_reminders():
 
 
 # ==================== УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК CALLBACK-КОМАНД ====================
-@bot.on.raw_event(MessageEvent)
-async def universal_callback_handler(event: MessageEvent):
-    cmd = event.payload.get("cmd", "")
+@bot.on.raw_event()
+async def universal_raw_event(event: dict):
+    logging.info(f"Получено сырое событие: {type(event)} - {event}")
+    # Это сырой обработчик всех событий, приходящих от Long Poll
+    # Интересуют только сообщения и события callback-кнопок
+    if isinstance(event, Message):
+        # Обычные сообщения обрабатываются другими хендлерами, здесь ничего не делаем
+        return
+    # Попытка опознать MessageEvent вручную
+    if not hasattr(event, 'payload'):
+        return
+    cmd = getattr(event, 'payload', {}).get('cmd', '')
     if not cmd:
-        return  # игнорируем события без команды
+        return
+    user_id = getattr(event, 'user_id', None)
+    if not user_id:
+        return
 
     user_id = event.user_id
 
