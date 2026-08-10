@@ -2712,266 +2712,273 @@ async def send_pending_reminders():
 
 
 
-@bot.on.raw_event(dict)
-async def raw_event_handler(raw: dict):
-    logging.info(f"RAW EVENT: {json.dumps(raw, indent=2)}")
+@bot.loop_wrapper.listening_handler
+async def raw_longpoll_handler(raw_data: dict):
+    # Сюда приходят ВСЕ обновления от Long Poll
+    event_type = raw_data.get("type")
+    logging.info(f"LP event: {event_type}")
 
-    # Интересуют только callback-события (нажатия на inline-кнопки)
-    if raw.get("type") != "message_event":
-        return
+    if event_type == "message_new":
+        # Обычные сообщения уже обрабатываются, здесь можно не трогать
+        pass
+    elif event_type == "message_event":
+        obj = raw_data.get("object", {})
+        user_id = obj.get("user_id")
+        peer_id = obj.get("peer_id")
+        conversation_message_id = obj.get("conversation_message_id")
+        event_id = obj.get("event_id")
+        payload = obj.get("payload", {})
 
-    obj = raw.get("object", {})
-    user_id = obj.get("user_id")
-    peer_id = obj.get("peer_id")
-    conversation_message_id = obj.get("conversation_message_id")
-    event_id = obj.get("event_id")
-    payload = obj.get("payload", {})
+        if not user_id or not payload:
+            return
 
-    if not user_id or not payload:
-        return
+        # Создаём объект, совместимый с вашими старыми функциями
+        class MockEvent:
+            pass
+        mock = MockEvent()
+        mock.user_id = user_id
+        mock.payload = payload
+        mock.peer_id = peer_id
+        mock.conversation_message_id = conversation_message_id
+        mock.event_id = event_id
 
-    # Создаём объект, похожий на MessageEvent, чтобы функции edit_message и answer работали
-    class MockEvent:
-        def __init__(self):
-            self.user_id = user_id
-            self.peer_id = peer_id
-            self.conversation_message_id = conversation_message_id
-            self.event_id = event_id
-            self.payload = payload
-
-        async def edit_message(self, text, keyboard=None):
+        # Реализуем нужные методы
+        async def edit_message(text, keyboard=None):
             await bot.api.messages.edit(
-                peer_id=self.peer_id,
-                conversation_message_id=self.conversation_message_id,
+                peer_id=peer_id,
+                conversation_message_id=conversation_message_id,
                 message=text,
                 keyboard=keyboard,
                 dont_parse_links=1
             )
-
-        async def answer(self, notification_text, **kwargs):
+        async def answer(text, **kwargs):
             await bot.api.messages.send_message_event_answer(
-                event_id=self.event_id,
-                user_id=self.user_id,
-                peer_id=self.peer_id,
-                event_data=json.dumps({"type": "show_snackbar", "text": notification_text})
+                event_id=event_id,
+                user_id=user_id,
+                peer_id=peer_id,
+                event_data=json.dumps({"type": "show_snackbar", "text": text})
             )
+        mock.edit_message = edit_message
+        mock.answer = answer
 
-    event = MockEvent()
-    # Дальше — ваша старая логика обработки команд (скопируйте сюда весь if/elif из universal_callback_handler)
-    cmd = event.payload.get("cmd", "")
-    if cmd == "back_to_menu":
-        await state_dispenser.delete(user_id)
-        await event.edit_message("Главное меню", keyboard=await get_main_menu(user_id))
+        # ---- ВАША ЛОГИКА ОБРАБОТКИ ----
+        cmd = payload.get("cmd", "")
+        
+        if cmd == "back_to_menu":
+            await state_dispenser.delete(user_id)
+            await event.edit_message("Главное меню", keyboard=await get_main_menu(user_id))
 
-    elif cmd == "back_to_tutors":
-        await back_to_tutors(event)
+        elif cmd == "back_to_tutors":
+            await back_to_tutors(event)
 
-    elif cmd == "tutor_info":
-        await show_tutor_info(event)
+        elif cmd == "tutor_info":
+            await show_tutor_info(event)
 
     # --- Пробное занятие ---
-    elif cmd == "trials":
-        await start_trials_booking(event)
-    elif cmd == "trial_subject":
-        await trial_subject_chosen(event)
-    elif cmd == "trial_date":
-        await trial_date_chosen(event)
-    elif cmd == "back_to_trial_dates":
-        await back_to_trial_dates(event)
-    elif cmd == "trial_slot":
-        await trial_slot_chosen(event)
-    elif cmd == "confirm_trial":
-        await confirm_trial_booking(event)
+        elif cmd == "trials":
+            await start_trials_booking(event)
+        elif cmd == "trial_subject":
+            await trial_subject_chosen(event)
+        elif cmd == "trial_date":
+            await trial_date_chosen(event)
+        elif cmd == "back_to_trial_dates":
+            await back_to_trial_dates(event)
+        elif cmd == "trial_slot":
+            await trial_slot_chosen(event)
+        elif cmd == "confirm_trial":
+            await confirm_trial_booking(event)
 
     # --- Запись на занятие ---
-    elif cmd == "tutor_booking":
-        await choose_tutor_booking(event)
-    elif cmd == "back_to_tutors_booking":
-        await back_to_tutors_booking(event)
-    elif cmd.startswith("subject_"):
-        await subject_chosen(event)
-    elif cmd.startswith("date_"):
-        await choose_date(event)
-    elif cmd == "back_to_date":
-        await back_to_date(event)
-    elif cmd.startswith("slot_"):
-        await choose_slot(event)
-    elif cmd == "confirm_booking":
-        await confirm_booking(event)
-    elif cmd == "cancel_booking":
-        await cancel_booking(event)
+        elif cmd == "tutor_booking":
+            await choose_tutor_booking(event)
+        elif cmd == "back_to_tutors_booking":
+            await back_to_tutors_booking(event)
+        elif cmd.startswith("subject_"):
+            await subject_chosen(event)
+        elif cmd.startswith("date_"):
+            await choose_date(event)
+        elif cmd == "back_to_date":
+            await back_to_date(event)
+        elif cmd.startswith("slot_"):
+            await choose_slot(event)
+        elif cmd == "confirm_booking":
+            await confirm_booking(event)
+        elif cmd == "cancel_booking":
+            await cancel_booking(event)
 
     # --- Мои записи (ученик) ---
-    elif cmd.startswith("cancel_student_"):
-        await cancel_student_booking(event)
-    elif cmd == "student_stats":
-        await show_student_stats(event)
-    elif cmd == "back_to_my_records":
-        await back_to_my_records(event)
+        elif cmd.startswith("cancel_student_"):
+            await cancel_student_booking(event)
+        elif cmd == "student_stats":
+            await show_student_stats(event)
+        elif cmd == "back_to_my_records":
+            await back_to_my_records(event)
 
     # --- Перенос учеником ---
-    elif cmd.startswith("reschedule_student_"):
-        await student_reschedule_start(event)
-    elif cmd.startswith("reschedule_date_"):
-        await student_reschedule_date(event)
-    elif cmd == "back_to_reschedule_date":
-        await back_to_reschedule_date(event)
-    elif cmd.startswith("reschedule_slot_"):
-        await student_reschedule_slot(event)
-    elif cmd == "confirm_student_reschedule":
-        await confirm_student_reschedule(event)
+        elif cmd.startswith("reschedule_student_"):
+            await student_reschedule_start(event)
+        elif cmd.startswith("reschedule_date_"):
+            await student_reschedule_date(event)
+        elif cmd == "back_to_reschedule_date":
+            await back_to_reschedule_date(event)
+        elif cmd.startswith("reschedule_slot_"):
+            await student_reschedule_slot(event)
+        elif cmd == "confirm_student_reschedule":
+            await confirm_student_reschedule(event)
 
     # --- Оплата ---
-    elif cmd == "back_to_pay":
-        await back_to_pay(event)
-    elif cmd == "qr":
-        await qr(event)
-    elif cmd == "card":
-        await card(event)
-    elif cmd == "sbp":
-        await sbp(event)
+        elif cmd == "back_to_pay":
+            await back_to_pay(event)
+        elif cmd == "qr":
+            await qr(event)
+        elif cmd == "card":
+            await card(event)
+        elif cmd == "sbp":
+            await sbp(event)
 
     # --- Учебные материалы ---
-    elif cmd == "back_to_mat":
-        await back_to_mat(event)
-    elif cmd == "book":
-        await book(event)
-    elif cmd == "vid":
-        await vid(event)
-    elif cmd == "bookh":
-        await bookh(event)
-    elif cmd == "bookf":
-        await bookf(event)
-    elif cmd == "videh":
-        await videh(event)
-    elif cmd == "videf":
-        await videf(event)
+        elif cmd == "back_to_mat":
+            await back_to_mat(event)
+        elif cmd == "book":
+            await book(event)
+        elif cmd == "vid":
+            await vid(event)
+        elif cmd == "bookh":
+            await bookh(event)
+        elif cmd == "bookf":
+            await bookf(event)
+        elif cmd == "videh":
+            await videh(event)
+        elif cmd == "videf":
+            await videf(event)
 
     # --- Связь с преподавателем ---
-    elif cmd.startswith("msg_tutor_"):
-        await choose_msg_tutor(event)
-    elif cmd == "cancel_msg_to_tutor":
-        await cancel_msg_to_tutor(event)
-    elif cmd.startswith("reply_"):
-        await process_reply_button(event)
+        elif cmd.startswith("msg_tutor_"):
+            await choose_msg_tutor(event)
+        elif cmd == "cancel_msg_to_tutor":
+            await cancel_msg_to_tutor(event)
+        elif cmd.startswith("reply_"):
+            await process_reply_button(event)
 
     # --- Связь преподавателя с учеником ---
-    elif cmd.startswith("tutorcontactstudent_"):
-        await tutor_contact_student_chosen(event)
-    elif cmd == "cancel_tutor_msg_to_student":
-        await cancel_tutor_msg_to_student(event)
+        elif cmd.startswith("tutorcontactstudent_"):
+            await tutor_contact_student_chosen(event)
+        elif cmd == "cancel_tutor_msg_to_student":
+            await cancel_tutor_msg_to_student(event)
 
     # --- Поддержка ---
-    elif cmd == "cancel_support":
-        await cancel_support(event)
-    elif cmd.startswith("support_reply_"):
-        await support_reply_start(event)
+        elif cmd == "cancel_support":
+            await cancel_support(event)
+        elif cmd.startswith("support_reply_"):
+            await support_reply_start(event)
 
     # --- Админ-панель ---
-    elif cmd == "admin_add":
-        await admin_add_start(event)
-    elif cmd == "admin_panel_open":
-        await open_admin_panel(event)
-    elif cmd == "admin_edit_list":
-        await admin_edit_list(event)
-    elif cmd.startswith("edit_tutor_"):
-        await edit_tutor_choice(event)
-    elif cmd.startswith("edit_"):
-        await edit_field_choice(event)
-    elif cmd == "manage_subjects":
-        await manage_subjects(event)
-    elif cmd == "back_to_edit_tutor":
-        await back_to_edit_tutor(event)
-    elif cmd == "add_subject":
-        await add_subject_start(event)
-    elif cmd.startswith("editsubj_"):
-        await edit_subject_menu(event)
-    elif cmd == "editsubj_name":
-        await edit_subject_name_start(event)
-    elif cmd == "editsubj_price":
-        await edit_subject_price_start(event)
-    elif cmd == "editsubj_delete":
-        await delete_subject_confirm(event)
-    elif cmd == "confirm_delete_subject":
-        await confirm_delete_subject(event)
-    elif cmd == "back_to_subjects_list":
-        await back_to_subjects_list(event)
-    elif cmd == "toggle_commission_mode":
-        await toggle_commission_mode(event)
-    elif cmd == "admin_delete_list":
-        await admin_delete_list(event)
-    elif cmd.startswith("del_tutor_"):
-        await delete_tutor_confirm(event)
-    elif cmd == "confirm_delete":
-        await confirm_delete(event)
-    elif cmd == "admin_stats":
-        await admin_stats_menu(event)
-    elif cmd == "admin_stats_tutors":
-        await admin_stats_tutors_overview(event)
-    elif cmd.startswith("admin_stats_tutors_month_"):
-        await admin_stats_tutors_month(event)
-    elif cmd == "admin_stats_students":
-        await admin_stats_students(event)
-    elif cmd == "add_another_subject":
-        await add_another_subject(event)
-    elif cmd == "finish_adding_subjects":
-        await finish_adding_subjects(event)
+        elif cmd == "admin_add":
+            await admin_add_start(event)
+        elif cmd == "admin_panel_open":
+            await open_admin_panel(event)
+        elif cmd == "admin_edit_list":
+            await admin_edit_list(event)
+        elif cmd.startswith("edit_tutor_"):
+            await edit_tutor_choice(event)
+        elif cmd.startswith("edit_"):
+            await edit_field_choice(event)
+        elif cmd == "manage_subjects":
+            await manage_subjects(event)
+        elif cmd == "back_to_edit_tutor":
+            await back_to_edit_tutor(event)
+        elif cmd == "add_subject":
+            await add_subject_start(event)
+        elif cmd.startswith("editsubj_"):
+            await edit_subject_menu(event)
+        elif cmd == "editsubj_name":
+            await edit_subject_name_start(event)
+        elif cmd == "editsubj_price":
+            await edit_subject_price_start(event)
+        elif cmd == "editsubj_delete":
+            await delete_subject_confirm(event)
+        elif cmd == "confirm_delete_subject":
+            await confirm_delete_subject(event)
+        elif cmd == "back_to_subjects_list":
+            await back_to_subjects_list(event)
+        elif cmd == "toggle_commission_mode":
+            await toggle_commission_mode(event)
+        elif cmd == "admin_delete_list":
+            await admin_delete_list(event)
+        elif cmd.startswith("del_tutor_"):
+            await delete_tutor_confirm(event)
+        elif cmd == "confirm_delete":
+            await confirm_delete(event)
+        elif cmd == "admin_stats":
+            await admin_stats_menu(event)
+        elif cmd == "admin_stats_tutors":
+            await admin_stats_tutors_overview(event)
+        elif cmd.startswith("admin_stats_tutors_month_"):
+            await admin_stats_tutors_month(event)
+        elif cmd == "admin_stats_students":
+            await admin_stats_students(event)
+        elif cmd == "add_another_subject":
+            await add_another_subject(event)
+        elif cmd == "finish_adding_subjects":
+            await finish_adding_subjects(event)
 
     # --- Панель преподавателя ---
-    elif cmd.startswith("tutor_profile_"):
-        await show_tutor_own_profile(event)
-    elif cmd.startswith("back_to_tutor_panel_"):
-        await back_to_tutor_panel(event)
-    elif cmd.startswith("tutor_students_"):
-        await show_students(event)
-    elif cmd.startswith("tutor_confirm_"):
-        await tutor_confirm_booking(event)
-    elif cmd.startswith("tutor_reject_"):
-        await tutor_reject_booking(event)
-    elif cmd.startswith("tutor_cancel_"):
-        await tutor_cancel_booking(event)
-    elif cmd.startswith("tutor_reschedule_"):
-        await tutor_reschedule_start(event)
-    elif cmd.startswith("t_reschedule_date_"):
-        await tutor_reschedule_date(event)
-    elif cmd == "back_tutor_reschedule_date":
-        await back_tutor_reschedule_date(event)
-    elif cmd.startswith("t_reschedule_slot_"):
-        await tutor_reschedule_slot(event)
-    elif cmd == "confirm_tutor_reschedule":
-        await confirm_tutor_reschedule(event)
+        elif cmd.startswith("tutor_profile_"):
+            await show_tutor_own_profile(event)
+        elif cmd.startswith("back_to_tutor_panel_"):
+            await back_to_tutor_panel(event)
+        elif cmd.startswith("tutor_students_"):
+            await show_students(event)
+        elif cmd.startswith("tutor_confirm_"):
+            await tutor_confirm_booking(event)
+        elif cmd.startswith("tutor_reject_"):
+            await tutor_reject_booking(event)
+        elif cmd.startswith("tutor_cancel_"):
+            await tutor_cancel_booking(event)
+        elif cmd.startswith("tutor_reschedule_"):
+            await tutor_reschedule_start(event)
+        elif cmd.startswith("t_reschedule_date_"):
+            await tutor_reschedule_date(event)
+        elif cmd == "back_tutor_reschedule_date":
+            await back_tutor_reschedule_date(event)
+        elif cmd.startswith("t_reschedule_slot_"):
+            await tutor_reschedule_slot(event)
+        elif cmd == "confirm_tutor_reschedule":
+            await confirm_tutor_reschedule(event)
 
     # --- Настройка расписания преподавателем ---
-    elif cmd.startswith("tutor_schedule_"):
-        await schedule_main(event)
-    elif cmd.startswith("sched_day_"):
-        await edit_day(event)
-    elif cmd == "back_to_schedule":
-        await back_to_schedule(event)
-    elif cmd.startswith("block_day_"):
-        await handle_block_day(event)
-    elif cmd.startswith("unblock_day_"):
-        await handle_unblock_day(event)
-    elif cmd == "add_slot":
-        await add_slot_start(event)
-    elif cmd == "add_range":
-        await add_range_start(event)
-    elif cmd.startswith("dur_"):
-        await range_duration_chosen(event)
-    elif cmd == "add_range_back":
-        await range_break_back(event)
-    elif cmd.startswith("brk_"):
-        await range_break_chosen(event)
-    elif cmd == "del_slot":
-        await del_slot_start(event)
-    elif cmd.startswith("delslot_"):
-        await confirm_del_slot(event)
+        elif cmd.startswith("tutor_schedule_"):
+            await schedule_main(event)
+        elif cmd.startswith("sched_day_"):
+            await edit_day(event)
+        elif cmd == "back_to_schedule":
+            await back_to_schedule(event)
+        elif cmd.startswith("block_day_"):
+            await handle_block_day(event)
+        elif cmd.startswith("unblock_day_"):
+            await handle_unblock_day(event)
+        elif cmd == "add_slot":
+            await add_slot_start(event)
+        elif cmd == "add_range":
+            await add_range_start(event)
+        elif cmd.startswith("dur_"):
+            await range_duration_chosen(event)
+        elif cmd == "add_range_back":
+            await range_break_back(event)
+        elif cmd.startswith("brk_"):
+            await range_break_chosen(event)
+        elif cmd == "del_slot":
+            await del_slot_start(event)
+        elif cmd.startswith("delslot_"):
+            await confirm_del_slot(event)
 
     # --- Статистика преподавателя ---
-    elif cmd.startswith("tutor_stats_month_"):
-        await tutor_stats_month(event)
-    elif cmd.startswith("tutor_stats_"):
-        await tutor_stats_menu(event)
+        elif cmd.startswith("tutor_stats_month_"):
+            await tutor_stats_month(event)
+        elif cmd.startswith("tutor_stats_"):
+            await tutor_stats_menu(event)
+        
+
 
 @bot.on.private_message()
 async def debug_msg(message: Message):
