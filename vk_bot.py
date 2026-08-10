@@ -6,7 +6,7 @@ import os
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Union
-
+from vkbottle import InlineKeyboard, InlineKeyboardButton, KeyboardButtonColor
 from vkbottle import (
     Bot, Keyboard, KeyboardButtonColor, Text, OpenLink,
     BaseStateGroup, BuiltinStateDispenser
@@ -176,14 +176,14 @@ async def get_main_menu(user_id: int) -> str:
     return kb.get_json()
 
 # -------------------- Вспомогательные функции --------------------
-async def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_to_menu") -> Keyboard:
+async def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_to_menu") -> InlineKeyboard:
     tutors = await get_all_tutors()
-    kb = Keyboard(inline=True)
+    kb = InlineKeyboard()
     for tid, tdata in tutors.items():
-        kb.add(Text(tdata["name"], payload={"cmd": f"{callback_prefix}_{tid}"}))
+        kb.add(InlineKeyboardButton(tdata["name"], payload={"cmd": f"{callback_prefix}_{tid}"}))
         kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": back_callback}))
-    return kb  # возвращаем объект, а не строку
+    kb.add(InlineKeyboardButton("🔙 Назад в меню", payload={"cmd": back_callback}))
+    return kb  # возвращаем объект
 
 async def make_subjects_keyboard(tutor_id: int, back_callback: str = "back_to_menu") -> str:
     tutors = await get_all_tutors()
