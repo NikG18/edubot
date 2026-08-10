@@ -2708,16 +2708,18 @@ async def send_pending_reminders():
 
 
 # ==================== УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК CALLBACK-КОМАНД ====================
-@bot.on.raw_event(MessageEvent)
-async def universal_callback_handler(event: MessageEvent):
-    # Логирование для проверки получения событий
-    logging.info(f"Получен MessageEvent: payload={event.payload}")
+
+
+
+    # Если команда не распознана, ничего не делаем (можно добавить логирование)
+# Вспомогательная функция, в которую перенесена логика обработки callback (без декоратора)
+async def process_callback(event):
     cmd = event.payload.get("cmd", "")
     if not cmd:
         return
     user_id = event.user_id
 
-    # --- Навигация и общие действия ---
+    # Скопируйте сюда весь ваш старый if/elif код из universal_callback_handler
     if cmd == "back_to_menu":
         await state_dispenser.delete(user_id)
         await event.edit_message("Главное меню", keyboard=await get_main_menu(user_id))
@@ -2931,8 +2933,56 @@ async def universal_callback_handler(event: MessageEvent):
         await tutor_stats_month(event)
     elif cmd.startswith("tutor_stats_"):
         await tutor_stats_menu(event)
+# Новый сырой обработчик всех событий
+@bot.on.raw_event()
+async def catch_all_events(raw_event: dict):
+    # Интересуют только события типа message_event (нажатия на callback-кнопки)
+    if raw_event.get("type") != "message_event":
+        return
+    
+    obj = raw_event.get("object", {})
+    user_id = obj.get("user_id")
+    payload = obj.get("payload", {})
+    peer_id = obj.get("peer_id")
+    conversation_message_id = obj.get("conversation_message_id")
+    event_id = obj.get("event_id")
+    
+    if not user_id:
+        return
+    
+    # Создаём объект, эмулирующий MessageEvent
+    class MockMessageEvent:
+        def __init__(self):
+            self.user_id = user_id
+            self.payload = payload
+            self.peer_id = peer_id
+            self.conversation_message_id = conversation_message_id
+            self.event_id = event_id
+        
+        async def edit_message(self, text, keyboard=None):
+            await bot.api.messages.edit(
+                peer_id=self.peer_id,
+                conversation_message_id=self.conversation_message_id,
+                message=text,
+                keyboard=keyboard,
+                dont_parse_links=1
+            )
+        
+        async def answer(self, text, notification_type=None):
+            await bot.api.messages.send_message_event_answer(
+                event_id=self.event_id,
+                user_id=self.user_id,
+                peer_id=self.peer_id,
+                event_data=json.dumps({"type": "show_snackbar", "text": text})
+            )
+    
+    mock_event = MockMessageEvent()
+    await process_callback(mock_event)   # вызываем ту же логику обработки
 
-    # Если команда не распознана, ничего не делаем (можно добавить логирование)
+
+
+
+
 
 
 async def pending_reminder_loop():
