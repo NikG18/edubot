@@ -3,6 +3,7 @@ import logging
 import sys
 import re
 import os
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Union
 
@@ -182,7 +183,9 @@ async def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_
         kb.add(Text(tdata["name"], payload={"cmd": f"{callback_prefix}_{tid}"}))
         kb.row()
     kb.add(Text("🔙 Назад в меню", payload={"cmd": back_callback}))
-    return kb.get_json()
+    json_str = kb.get_json()
+    logging.info(f"Keyboard JSON: {json_str}")   # посмотрим, что генерируется
+    return json_str
 
 async def make_subjects_keyboard(tutor_id: int, back_callback: str = "back_to_menu") -> str:
     tutors = await get_all_tutors()
