@@ -924,7 +924,7 @@ async def student_reschedule_date(event: MessageEvent):
     await event.edit_message("Выберите новое время:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, StudentRescheduleStates.waiting_time)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_reschedule_date"}))
+
 async def back_to_reschedule_date(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data["tutor_id"]
