@@ -2,6 +2,7 @@ import asyncpg
 import os
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
+import logging
 
 # Подставьте свою строку подключения от Neon или задайте через переменную окружения
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://botuser:ваш_пароль@ep-xxxx.us-east-2.aws.neon.tech/botdb?sslmode=require")
