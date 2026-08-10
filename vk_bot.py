@@ -2708,10 +2708,11 @@ async def send_pending_reminders():
 
 
 # ==================== УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК CALLBACK-КОМАНД ====================
-@bot.on.raw_event()
-async def universal_raw_event(event: dict):
-    logging.info(f"Получено сырое событие: {type(event)} - {event}")
-    user_id = None
+@bot.on.event("message_event")
+async def universal_callback_handler(event):
+    # event здесь — объект MessageEvent
+    user_id = event.user_id
+    cmd = event.payload.get("cmd", "")
     if hasattr(event, 'user_id'):
         user_id = event.user_id
     elif isinstance(event, dict) and 'user_id' in event:
