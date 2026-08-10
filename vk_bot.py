@@ -37,9 +37,6 @@ if not BOT_TOKEN:
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY", "")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY", "")
 
-# Обёртка для удобства
-async def get_tutor_by_vk_id(vk_id: int) -> Optional[int]:
-    return await get_tutor_by_telegram_id(vk_id)
 
 # -------------------- Бот и диспетчер состояний --------------------
 bot = Bot(token=BOT_TOKEN)
@@ -69,6 +66,7 @@ class AdminStates(BaseStateGroup):
     waiting_name = "waiting_name"
     waiting_photo = "waiting_photo"
     waiting_description = "waiting_description"
+    waiting_telegram_id = "waiting_telegram_id"
     waiting_vk_id = "waiting_vk_id"   # здесь VK ID
     waiting_subject_name = "waiting_subject_name"
     waiting_subject_price = "waiting_subject_price"
@@ -302,9 +300,9 @@ async def create_and_send_payment(source, booking, email, booking_id):
         random_id=0
     )
 
-    if tutor.get("telegram_id"):  # здесь хранится VK ID
+    if tutor.get("vk_id"):  # здесь хранится VK ID
         await bot.api.messages.send(
-            user_id=tutor["telegram_id"],
+            user_id=tutor["vk_id"],
             message=f"✅ Занятие с {booking['username']} подтверждено. Ожидается оплата.",
             random_id=0
         )
@@ -485,13 +483,13 @@ async def confirm_trial_booking(event: MessageEvent):
 
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
-    if tutor and tutor.get("telegram_id"):
+    if tutor and tutor.get("vk_id"):
         keyboard = Keyboard(inline=True)
         keyboard.add(Text("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
         keyboard.add(Text("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
         try:
             await bot.api.messages.send(
-                user_id=tutor["telegram_id"],
+                user_id=tutor["vk_id"],
                 message=booking_msg,
                 keyboard=keyboard.get_json(),
                 random_id=0
@@ -701,13 +699,13 @@ async def confirm_booking(event: MessageEvent):
 
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
-    if tutor and tutor.get("telegram_id"):
+    if tutor and tutor.get("vk_id"):
         kb = Keyboard(inline=True)
         kb.add(Text("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
         kb.add(Text("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
         try:
             await bot.api.messages.send(
-                user_id=tutor["telegram_id"],
+                user_id=tutor["vk_id"],
                 message=booking_msg,
                 keyboard=kb.get_json(),
                 random_id=0
@@ -800,7 +798,7 @@ async def cancel_student_booking(event: MessageEvent):
     tutors = await get_all_tutors()
     tutor_name = tutors.get(tutor_id, {}).get("name", "Неизвестный")
     await bot.api.messages.send(user_id=student_id, message="✅ Вы отменили занятие.", random_id=0)
-    if tutor_id and (tutor_tg := tutors.get(tutor_id, {}).get("telegram_id")):
+    if tutor_id and (tutor_tg := tutors.get(tutor_id, {}).get("vk_id")):
         msg_tutor = (
             f"❌ Ученик {booking['username']} отменил занятие:\n"
             f"📚 {booking['subject']}\n📅 {booking['date']} 🕒 {booking['time_slot']}"
@@ -976,7 +974,7 @@ async def confirm_student_reschedule(event: MessageEvent):
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
     tutor_name = tutor["name"] if tutor else "Неизвестный"
-    tutor_tg = tutor.get("telegram_id") if tutor else None
+    tutor_tg = tutor.get("vk_id") if tutor else None
 
     notify_tutor = (
         f"🔄 Ученик {student_username} перенёс занятие.\n"
@@ -1161,9 +1159,9 @@ async def send_message_to_tutor(message: Message):
         pass
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
-    if tutor and tutor.get("telegram_id"):
+    if tutor and tutor.get("vk_id"):
         try:
-            await bot.api.messages.send(user_id=tutor["telegram_id"], message=forward_msg, keyboard=kb.get_json(), random_id=0)
+            await bot.api.messages.send(user_id=tutor["vk_id"], message=forward_msg, keyboard=kb.get_json(), random_id=0)
         except:
             pass
 
@@ -1379,6 +1377,17 @@ async def admin_add_description(message: Message):
     if desc == "-":
         desc = ""
     await state_dispenser.update_data(message.from_user_id, description=desc)
+    await message.answer("Введите Telegram ID репетитора (число или 0, если нет):")
+    await state_dispenser.set(message.from_user_id, AdminStates.waiting_telegram_id)
+
+@bot.on.private_message(state=AdminStates.waiting_telegram_id)
+async def admin_add_telegram_id(message: Message):
+    try:
+        tg_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("Введите целое число или 0.")
+        return
+    await state_dispenser.update_data(message.from_user_id, telegram_id=tg_id if tg_id != 0 else None)
     await message.answer("Введите VK ID репетитора (число или 0, если нет):")
     await state_dispenser.set(message.from_user_id, AdminStates.waiting_vk_id)
 
@@ -1456,8 +1465,8 @@ async def finish_adding_subjects(event: MessageEvent):
         telegram_id=data.get("telegram_id"),
         description=data["description"],
         commission_percent=data.get("commission_percent", 25),
-        inn=data.get("inn", "")
-        vk_id=data.get("vk_id")  
+        inn=data.get("inn", ""),
+        vk_id=data.get("vk_id")
     )
     subjects = data.get("subjects", {})
     for subj_name, subj_price in subjects.items():
@@ -1552,6 +1561,13 @@ async def process_new_value(message: Message):
         if inn == "-":
             inn = ""
         kwargs["inn"] = inn
+    elif field == "vk_id":
+        try:
+            new_id = int(message.text.strip())
+            kwargs["vk_id"] = new_id if new_id != 0 else None
+        except ValueError:
+            await message.answer("Введите целое число или 0.")
+            return
     await update_tutor(tid, **kwargs)
     kb = Keyboard(inline=True)
     kb.add(Text("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
@@ -2579,8 +2595,6 @@ async def process_payment_email(message: Message):
 
     await create_and_send_payment(message, booking, email, booking_id)
     await delete_pending_email_request(message.from_user_id)
-async def get_tutor_by_vk_id(vk_id: int) -> Optional[int]:
-    return await get_tutor_by_vk_id(vk_id)  # вызов из БД
 
 # ==================== Запуск ====================
 
@@ -2610,8 +2624,8 @@ async def check_pending_payments():
             await add_lesson_to_balance(b["user_id"], b["tutor_id"], b["subject"])
             tutors = await get_all_tutors()
             tutor = tutors.get(b["tutor_id"])
-            if tutor and tutor.get("telegram_id"):
-                await bot.api.messages.send(user_id=tutor["telegram_id"],
+            if tutor and tutor.get("vk_id"):
+                await bot.api.messages.send(user_id=tutor["vk_id"],
                                             message=f"✅ Оплата за занятие {b['date']} {b['time_slot']} получена.",
                                             random_id=0)
         elif payment_state.get("Status") in ("REJECTED", "CANCELED"):
@@ -2644,13 +2658,13 @@ async def send_reminders():
             await bot.api.messages.send(user_id=student_id, message=student_msg, random_id=0)
 
             tutor = tutors.get(tutor_id)
-            if tutor and tutor.get("telegram_id"):
+            if tutor and tutor.get("vk_id"):
                 tutor_msg = (
                     f"⏰ Напоминание! Через час у вас занятие по предмету «{b['subject']}» "
                     f"с учеником {b['username']} (ID: {student_id}). Время: {b['date']} {b['time_slot']}"
                 )
                 try:
-                    await bot.api.messages.send(user_id=tutor["telegram_id"], message=tutor_msg, random_id=0)
+                    await bot.api.messages.send(user_id=tutor["vk_id"], message=tutor_msg, random_id=0)
                 except:
                     pass
 
@@ -2679,7 +2693,7 @@ async def send_pending_reminders():
     tutors = await get_all_tutors()
     for tid, plist in pending_by_tutor.items():
         tutor = tutors.get(tid)
-        if not tutor or not tutor.get("telegram_id"):
+        if not tutor or not tutor.get("vk_id"):
             continue
         lines = [f"🔔 У вас есть неподтверждённые заявки ({len(plist)}):"]
         for b in plist:
@@ -2688,7 +2702,7 @@ async def send_pending_reminders():
         keyboard = Keyboard(inline=True)
         keyboard.add(Text("📋 Мои ученики", payload={"cmd": f"tutor_students_{tid}"}))
         try:
-            await bot.api.messages.send(user_id=tutor["telegram_id"], message=text, keyboard=keyboard.get_json(), random_id=0)
+            await bot.api.messages.send(user_id=tutor["vk_id"], message=text, keyboard=keyboard.get_json(), random_id=0)
         except Exception as e:
             logging.warning(f"Не удалось отправить напоминание преподавателю {tid}: {e}")
 
