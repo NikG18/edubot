@@ -29,13 +29,9 @@ async def api_call(endpoint: str, params: dict) -> dict:
 
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.post(url, json=params) as resp:
-                text = await resp.text()
-                if resp.status == 200:
-                    return json.loads(text)
-                else:
-                    logging.error(f"API error {endpoint}: {resp.status} {text[:200]}")
-                    return {}
+            async with session.post(url, json=params, ssl=False) as resp:
+                data = await resp.json()
+                return data
         except Exception as e:
             logging.error(f"Tinkoff API error ({endpoint}): {e}")
             return {}
