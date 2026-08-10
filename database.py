@@ -560,3 +560,21 @@ async def get_tutor_by_telegram_id(telegram_id: int) -> Optional[int]:
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT id FROM tutors WHERE telegram_id = $1", telegram_id)
         return row["id"] if row else None
+
+
+
+async def cleanup_old_bookings():
+    today = datetime.now().strftime("%d.%m.%Y")
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "UPDATE bookings SET status='completed' WHERE status IN ('pending','confirmed') AND date < $1 RETURNING id",
+            today
+        )
+        count = len(rows)
+        if count > 0:
+            logging.info(f"Старые записи переведены в completed. Обновлено: {count}")
+            now = datetime.now()
+            tutors = await get_all_tutors()
+            for tid in tutors:
+                await recalculate_monthly_stats(tid, now.year, now.month)
+
