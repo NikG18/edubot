@@ -2759,7 +2759,7 @@ async def raw_event_handler(raw: dict):
     event = MockEvent()
     # Дальше — ваша старая логика обработки команд (скопируйте сюда весь if/elif из universal_callback_handler)
     cmd = event.payload.get("cmd", "")
-        if cmd == "back_to_menu":
+    if cmd == "back_to_menu":
         await state_dispenser.delete(user_id)
         await event.edit_message("Главное меню", keyboard=await get_main_menu(user_id))
 
