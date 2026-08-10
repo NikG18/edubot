@@ -2934,7 +2934,7 @@ async def process_callback(event):
     elif cmd.startswith("tutor_stats_"):
         await tutor_stats_menu(event)
 # Новый сырой обработчик всех событий
-@bot.on.raw_event()
+@bot.on.raw_event(MessageEvent)
 async def catch_all_events(raw_event: dict):
     # Интересуют только события типа message_event (нажатия на callback-кнопки)
     if raw_event.get("type") != "message_event":
@@ -2981,7 +2981,13 @@ async def catch_all_events(raw_event: dict):
 
 
 
+@bot.on.private_message()
+async def debug_msg(message: Message):
+    logging.info(f"MSG: {message.text}")
 
+@bot.on.raw_event(MessageEvent)
+async def debug_callback(event: MessageEvent):
+    logging.info(f"CALLBACK: {event.payload}")
 
 
 
