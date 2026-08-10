@@ -7,9 +7,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Union
 
 from vkbottle import (
-    Bot, Message, Keyboard, KeyboardButtonColor, Text, OpenLink,
-    BaseStateGroup, StateDispenser, MessageEvent, PayloadRule
+    Bot, Keyboard, KeyboardButtonColor, Text, OpenLink,
+    BaseStateGroup, StateDispenser
 )
+from vkbottle.bot import Message, MessageEvent, PayloadRule
 from vkbottle.bot import rules
 
 # Импорт всех функций из базы данных
