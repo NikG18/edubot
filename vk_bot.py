@@ -182,6 +182,7 @@ async def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_
         kb.add(Text(tdata["name"], payload={"cmd": f"{callback_prefix}_{tid}"}))
         kb.row()
     kb.add(Text("🔙 Назад в меню", payload={"cmd": back_callback}))
+    logging.info(keyboard)
     return kb.get_json()
 
 async def make_subjects_keyboard(tutor_id: int, back_callback: str = "back_to_menu") -> str:
@@ -2711,11 +2712,11 @@ async def send_pending_reminders():
 @bot.on.raw_event(MessageEvent)
 async def universal_callback_handler(event: MessageEvent):
     cmd = event.payload.get("cmd", "")
-    
+    logging.info(f"Received callback: {cmd}") 
     if not cmd:
         return  # игнорируем события без команды
     await event.answer()
-
+    user_id = event.user_id
     # --- Навигация и общие действия ---
     if cmd == "back_to_menu":
         await state_dispenser.delete(user_id)
