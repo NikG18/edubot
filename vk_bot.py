@@ -13,7 +13,7 @@ import os
 import core
 
 # Токен сообщества ВК
-BOT_TOKENVK = "os.environ.get("BOT_TOKENVK")  # замените на реальный
+BOT_TOKENVK = os.environ.get("BOT_TOKENVK")  # замените на реальный
 
 bot = Bot(token=BOT_TOKENVK)
 storage = CtxStorage()
