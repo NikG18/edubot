@@ -2711,6 +2711,16 @@ async def send_pending_reminders():
 @bot.on.raw_event()
 async def universal_raw_event(event: dict):
     logging.info(f"Получено сырое событие: {type(event)} - {event}")
+    user_id = None
+    if hasattr(event, 'user_id'):
+        user_id = event.user_id
+    elif isinstance(event, dict) and 'user_id' in event:
+        user_id = event['user_id']
+    elif hasattr(event, 'object') and hasattr(event.object, 'user_id'):
+        user_id = event.object.user_id
+
+    if not user_id:
+        return
     # Это сырой обработчик всех событий, приходящих от Long Poll
     # Интересуют только сообщения и события callback-кнопок
     if isinstance(event, Message):
@@ -2723,10 +2733,7 @@ async def universal_raw_event(event: dict):
     if not cmd:
         return
     user_id = getattr(event, 'user_id', None)
-    if not user_id:
-        return
 
-    user_id = event.user_id
 
     # --- Навигация и общие действия ---
     if cmd == "back_to_menu":
