@@ -2673,7 +2673,7 @@ async def process_payment_email(message: Message):
 
 
 # ==================== УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК CALLBACK-КОМАНД ====================
-@bot.on.raw_event(MessageEvent)
+@bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent)
 async def universal_callback_handler(event: MessageEvent):
     logging.info(f"🔔 Получен callback: {event.payload}")
     cmd = event.payload.get("cmd", "")
