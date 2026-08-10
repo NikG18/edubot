@@ -4,7 +4,8 @@ import asyncio
 from database import get_all_bookings
 from datetime import datetime, timedelta
 from vkbottle import Bot, Keyboard, KeyboardButtonColor, Text, Callback
-from vkbottle.bot import Message, CallbackEvent
+from vkbottle.bot import Message
+from vkbottle_types.events.bot import CallbackEvent          
 from vkbottle.fsm.state import StatesGroup, State
 from vkbottle.fsm import CtxStorage
 from vkbottle.dispatch.rules.base import StateRule
