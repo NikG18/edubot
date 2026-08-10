@@ -9,7 +9,7 @@ TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 
 # Для боевого API
-API_BASE = "https://securepay.tinkoff.ru/v2/"
+API_BASE = "https://rest-api-test.tinkoff.ru/v2/Init"
 
 def generate_token(params: dict) -> str:
     data = {k: v for k, v in sorted(params.items()) if k not in ("Token", "Receipt")}
