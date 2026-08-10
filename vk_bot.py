@@ -2708,7 +2708,7 @@ async def send_pending_reminders():
 
 
 # ==================== УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК CALLBACK-КОМАНД ====================
-@bot.on.message_event()
+@bot.on.raw_event(MessageEvent)
 async def universal_callback_handler(event: MessageEvent):
     cmd = event.payload.get("cmd", "")
     if not cmd:
