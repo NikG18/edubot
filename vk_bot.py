@@ -11,7 +11,6 @@ from vkbottle import (
     BaseStateGroup, BuiltinStateDispenser
 )
 from vkbottle.bot import Message, MessageEvent
-from vkbottle.framework import PayloadRule
 from vkbottle.bot import rules
 
 # Импорт всех функций из базы данных
@@ -320,7 +319,7 @@ async def back_to_main_menu_button(message: Message):
     await message.answer("Главное меню", keyboard=await get_main_menu(message.from_user_id))
 
 # -------------------- Универсальный обработчик для inline-кнопок «Назад в меню» --------------------
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_menu"}))
+
 async def back_to_menu(event: MessageEvent):
     user_id = event.user_id
     # Сброс состояний (если требуется)
@@ -332,11 +331,11 @@ async def back_to_menu(event: MessageEvent):
 async def info_repetitors(message: Message):
     await message.answer("Кто из репетиторов вас интересует?", keyboard=await make_tutors_keyboard("tutor_info"))
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_tutors"}))
+
 async def back_to_tutors(event: MessageEvent):
     await event.edit_message("Кто из репетиторов вас интересует?", keyboard=await make_tutors_keyboard("tutor_info"))
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "tutor_info"}))
+
 async def show_tutor_info(event: MessageEvent):
     tid = event.payload["tutor_id"]
     tutors = await get_all_tutors()
@@ -354,7 +353,7 @@ async def show_tutor_info(event: MessageEvent):
     await event.edit_message(text, keyboard=keyboard.get_json())
 
 # ==================== ПРОБНОЕ ЗАНЯТИЕ ====================
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "trials"}))
+
 async def start_trials_booking(event: MessageEvent):
     tid = event.payload["tutor_id"]
     tutors = await get_all_tutors()
@@ -381,7 +380,7 @@ async def start_trials_booking(event: MessageEvent):
     keyboard.add(Text("🔙 Отмена", payload={"cmd": "back_to_tutors"}))
     await event.edit_message("Выберите предмет для пробного занятия:", keyboard=keyboard.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "trial_subject"}))
+
 async def trial_subject_chosen(event: MessageEvent):
     subject = event.payload["subject"]
     await state_dispenser.update_data(event.user_id, subject=subject)
@@ -411,7 +410,7 @@ async def show_trial_dates(event: MessageEvent, tid: int):
     await event.edit_message("Выберите дату пробного занятия:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TrialBookingStates.waiting_date)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "trial_date"}))
+
 async def trial_date_chosen(event: MessageEvent):
     date_str = event.payload["date"]
     await state_dispenser.update_data(event.user_id, date=date_str)
@@ -432,13 +431,13 @@ async def trial_date_chosen(event: MessageEvent):
     await event.edit_message("Выберите время:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TrialBookingStates.waiting_time)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_trial_dates"}))
+
 async def back_to_trial_dates(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data["tutor_id"]
     await show_trial_dates(event, tid)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "trial_slot"}))
+
 async def trial_slot_chosen(event: MessageEvent):
     slot = event.payload["slot"]
     await state_dispenser.update_data(event.user_id, time_slot=slot)
@@ -461,7 +460,7 @@ async def trial_slot_chosen(event: MessageEvent):
     await event.edit_message(text, keyboard=keyboard.get_json())
     await state_dispenser.set(event.user_id, TrialBookingStates.waiting_confirmation)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "confirm_trial"}))
+
 async def confirm_trial_booking(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data["tutor_id"]
@@ -564,7 +563,7 @@ async def zapis(message: Message):
     await message.answer("Кто из репетиторов вас интересует?", keyboard=await make_tutors_keyboard("tutor_booking", back_callback="back_to_menu"))
     await state_dispenser.delete(message.from_user_id)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "tutor_booking"}))
+
 async def choose_tutor_booking(event: MessageEvent):
     tid = event.payload["tutor_id"]
     tutors = await get_all_tutors()
@@ -577,13 +576,13 @@ async def choose_tutor_booking(event: MessageEvent):
     await event.edit_message("На занятие по какому предмету вы хотите записаться?",
                              keyboard=await make_subjects_keyboard(tid, back_callback="back_to_tutors_booking"))
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_tutors_booking"}))
+
 async def back_to_tutors_booking(event: MessageEvent):
     await state_dispenser.delete(event.user_id)
     await event.edit_message("Кто из репетиторов вас интересует?",
                              keyboard=await make_tutors_keyboard("tutor_booking", back_callback="back_to_menu"))
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "subject_"}))
+
 async def subject_chosen(event: MessageEvent):
     # payload: {"cmd": "subject_<tid>_<subject>"}
     parts = event.payload["cmd"].split("_", 2)
@@ -610,7 +609,7 @@ async def subject_chosen(event: MessageEvent):
     await event.edit_message("Выберите дату:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, BookingStates.waiting_date)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "date_"}))
+
 async def choose_date(event: MessageEvent):
     date_str = event.payload["cmd"].split("_", 1)[1]
     await state_dispenser.update_data(event.user_id, date=date_str)
@@ -631,7 +630,7 @@ async def choose_date(event: MessageEvent):
     await event.edit_message("Выберите время:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, BookingStates.waiting_time)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_date"}))
+
 async def back_to_date(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data.get("tutor_id")
@@ -648,7 +647,7 @@ async def back_to_date(event: MessageEvent):
     await event.edit_message("Выберите дату:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, BookingStates.waiting_date)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "slot_"}))
+
 async def choose_slot(event: MessageEvent):
     slot = event.payload["cmd"].split("_", 1)[1]
     await state_dispenser.update_data(event.user_id, time_slot=slot)
@@ -677,7 +676,7 @@ async def choose_slot(event: MessageEvent):
     await event.edit_message(text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, BookingStates.waiting_confirmation)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "confirm_booking"}))
+
 async def confirm_booking(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data["tutor_id"]
@@ -724,7 +723,7 @@ async def confirm_booking(event: MessageEvent):
     )
     await state_dispenser.delete(event.user_id)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "cancel_booking"}))
+
 async def cancel_booking(event: MessageEvent):
     await event.edit_message("Запись отменена. Возвращаемся в главное меню.")
     await state_dispenser.delete(event.user_id)
@@ -780,7 +779,7 @@ async def my_records(message: Message):
     kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer("\n".join(text_lines), keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "cancel_student_"}))
+
 async def cancel_student_booking(event: MessageEvent):
     bid = int(event.payload["cmd"].split("_")[2])
     bookings = await get_all_bookings()
@@ -813,7 +812,7 @@ async def cancel_student_booking(event: MessageEvent):
     kb.add(Text("🔙 К моим записям", payload={"cmd": "back_to_my_records"}))
     await event.edit_message("✅ Запись отменена.", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "student_stats"}))
+
 async def show_student_stats(event: MessageEvent):
     user_id = event.user_id
     bookings = await get_all_bookings()
@@ -835,7 +834,7 @@ async def show_student_stats(event: MessageEvent):
     kb.add(Text("🔙 К моим записям", payload={"cmd": "back_to_my_records"}))
     await event.edit_message(text, keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_my_records"}))
+
 async def back_to_my_records(event: MessageEvent):
     # Возврат к просмотру записей – повторно вызываем my_records логику
     # Но т.к. здесь event, делаем упрощённо – отправляем новое сообщение
@@ -869,7 +868,7 @@ async def back_to_my_records(event: MessageEvent):
     await event.edit_message("\n".join(text_lines), keyboard=kb.get_json())
 
 # ==================== ПЕРЕНОС УЧЕНИКОМ ====================
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "reschedule_student_"}))
+
 async def student_reschedule_start(event: MessageEvent):
     bid = int(event.payload["cmd"].split("_")[2])
     bookings = await get_all_bookings()
@@ -904,7 +903,7 @@ async def student_reschedule_start(event: MessageEvent):
     kb.add(Text("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await event.edit_message("Выберите новую дату:", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "reschedule_date_"}))
+
 async def student_reschedule_date(event: MessageEvent):
     date_str = event.payload["cmd"].split("reschedule_date_")[1]
     await state_dispenser.update_data(event.user_id, new_date=date_str)
@@ -940,7 +939,7 @@ async def back_to_reschedule_date(event: MessageEvent):
     await event.edit_message("Выберите новую дату:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, StudentRescheduleStates.waiting_date)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "reschedule_slot_"}))
+
 async def student_reschedule_slot(event: MessageEvent):
     slot = event.payload["cmd"].split("reschedule_slot_")[1]
     await state_dispenser.update_data(event.user_id, new_time=slot)
@@ -959,7 +958,7 @@ async def student_reschedule_slot(event: MessageEvent):
     await event.edit_message(text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, StudentRescheduleStates.waiting_confirmation)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "confirm_student_reschedule"}))
+
 async def confirm_student_reschedule(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     old_bid = data["old_booking_id"]
@@ -1016,7 +1015,7 @@ async def oplata(message: Message):
     kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer("Какой способ оплаты вам удобнее?", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_pay"}))
+
 async def back_to_pay(event: MessageEvent):
     kb = Keyboard(inline=True)
     kb.add(Text("📱 Оплата по QR-коду", payload={"cmd": "qr"}))
@@ -1028,19 +1027,18 @@ async def back_to_pay(event: MessageEvent):
     kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await event.edit_message("Какой способ оплаты вам удобнее?", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "qr"}))
 async def qr(event: MessageEvent):
     kb = Keyboard(inline=True)
     kb.add(Text("🔙 Назад к списку", payload={"cmd": "back_to_pay"}))
     await event.edit_message("📱 Сканируйте QR-код для оплаты в приложении вашего банка", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "card"}))
+
 async def card(event: MessageEvent):
     kb = Keyboard(inline=True)
     kb.add(Text("🔙 Назад к списку", payload={"cmd": "back_to_pay"}))
     await event.edit_message("💳 Переходите по ссылке и следуйте дальнейшим инструкциям", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "sbp"}))
+
 async def sbp(event: MessageEvent):
     kb = Keyboard(inline=True)
     kb.add(Text("🔙 Назад к списку", payload={"cmd": "back_to_pay"}))
@@ -1058,7 +1056,7 @@ async def material(message: Message):
     kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer("Вы ищете пособия или видео?", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_mat"}))
+
 async def back_to_mat(event: MessageEvent):
     kb = Keyboard(inline=True)
     kb.add(Text("📘 Учебные пособия", payload={"cmd": "book"}))
@@ -1068,7 +1066,7 @@ async def back_to_mat(event: MessageEvent):
     kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await event.edit_message("Вы ищете пособия или видео?", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "book"}))
+
 async def book(event: MessageEvent):
     kb = Keyboard(inline=True)
     kb.add(Text("🧪 Химия", payload={"cmd": "bookh"}))
@@ -1078,7 +1076,7 @@ async def book(event: MessageEvent):
     kb.add(Text("🔙 Назад к списку", payload={"cmd": "back_to_mat"}))
     await event.edit_message("📘 Учебники и таблицы", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "vid"}))
+
 async def vid(event: MessageEvent):
     kb = Keyboard(inline=True)
     kb.add(Text("🧪 Химия", payload={"cmd": "videh"}))
@@ -1088,19 +1086,19 @@ async def vid(event: MessageEvent):
     kb.add(Text("🔙 Назад к списку", payload={"cmd": "back_to_mat"}))
     await event.edit_message("🎥 Видеоматериалы (записи реакций и явлений)", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "bookh"}))
+
 async def bookh(event: MessageEvent):
     await event.answer("Скоро здесь будут пособия по химии", notification_type="callback")
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "bookf"}))
+
 async def bookf(event: MessageEvent):
     await event.answer("Скоро здесь будут пособия по физике", notification_type="callback")
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "videh"}))
+
 async def videh(event: MessageEvent):
     await event.answer("Скоро здесь будут видео по химии", notification_type="callback")
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "videf"}))
+
 async def videf(event: MessageEvent):
     await event.answer("Скоро здесь будут видео по физике", notification_type="callback")
 
@@ -1111,7 +1109,7 @@ async def svyaz(message: Message):
     await message.answer("Выберите преподавателя, которому хотите написать:",
                          keyboard=await make_tutors_keyboard("msg_tutor", back_callback="back_to_menu"))
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "msg_tutor_"}))
+
 async def choose_msg_tutor(event: MessageEvent):
     tid = int(event.payload["cmd"].split("_")[-1])
     tutors = await get_all_tutors()
@@ -1125,7 +1123,7 @@ async def choose_msg_tutor(event: MessageEvent):
     await event.edit_message(f"Вы пишете преподавателю {tutor['name']}.\nВведите ваше сообщение:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, ContactStates.waiting_message)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "cancel_msg_to_tutor"}))
+
 async def cancel_msg_to_tutor(event: MessageEvent):
     await state_dispenser.delete(event.user_id)
     kb = Keyboard(inline=True)
@@ -1171,7 +1169,7 @@ async def send_message_to_tutor(message: Message):
                          keyboard=await get_main_menu(message.from_user_id))
     await state_dispenser.delete(message.from_user_id)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "reply_"}))
+
 async def process_reply_button(event: MessageEvent):
     student_id = int(event.payload["cmd"].split("_")[1])
     await state_dispenser.update_data(event.user_id, reply_student_id=student_id)
@@ -1219,7 +1217,7 @@ async def tutor_contact_student_start(message: Message):
     await message.answer("Выберите ученика:", keyboard=kb.get_json())
     await state_dispenser.set(message.from_user_id, TutorContactStudentStates.choosing_student)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "tutorcontactstudent_"}))
+
 async def tutor_contact_student_chosen(event: MessageEvent):
     student_id = int(event.payload["cmd"].split("_")[-1])
     await state_dispenser.update_data(event.user_id, tutor_contact_student_id=student_id)
@@ -1234,7 +1232,7 @@ async def tutor_contact_student_chosen(event: MessageEvent):
     await event.edit_message(f"Вы пишете ученику {student_username}. Введите сообщение:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorContactStudentStates.waiting_message)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "cancel_tutor_msg_to_student"}))
+
 async def cancel_tutor_msg_to_student(event: MessageEvent):
     await state_dispenser.delete(event.user_id)
     tid = await get_tutor_by_vk_id(event.user_id)
@@ -1277,7 +1275,7 @@ async def support_start(message: Message):
     await message.answer("Опишите вашу проблему или вопрос. Администратор свяжется с вами.", keyboard=kb.get_json())
     await state_dispenser.set(message.from_user_id, SupportUserStates.waiting_message)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "cancel_support"}))
+
 async def cancel_support(event: MessageEvent):
     await state_dispenser.delete(event.user_id)
     await event.edit_message("Обращение отменено.")
@@ -1301,7 +1299,7 @@ async def support_message_to_admin(message: Message):
                          keyboard=await get_main_menu(uid))
     await state_dispenser.delete(message.from_user_id)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "support_reply_"}))
+
 async def support_reply_start(event: MessageEvent):
     if event.user_id != ADMIN_VK_ID:
         await event.answer("Только администратор может отвечать на обращения.")
@@ -1342,7 +1340,7 @@ async def admin_panel(message: Message):
     kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer("Админ-панель управления репетиторами", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "admin_panel_open"}))
+
 async def open_admin_panel(event: MessageEvent):
     await state_dispenser.delete(event.user_id)
     kb = Keyboard(inline=True)
@@ -1358,7 +1356,7 @@ async def open_admin_panel(event: MessageEvent):
     await event.edit_message("Админ-панель управления репетиторами", keyboard=kb.get_json())
 
 # -------------------- Добавление репетитора --------------------
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "admin_add"}))
+
 async def admin_add_start(event: MessageEvent):
     if event.user_id != ADMIN_VK_ID:
         return
@@ -1453,12 +1451,12 @@ async def admin_add_subject_price(message: Message):
     await message.answer(f"Предмет «{temp_subject}» с ценой {price} руб. добавлен. Добавить ещё предмет?",
                          keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "add_another_subject"}))
+
 async def add_another_subject(event: MessageEvent):
     await event.edit_message("Введите название следующего предмета:")
     await state_dispenser.set(event.user_id, AdminStates.waiting_subject_name)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "finish_adding_subjects"}))
+
 async def finish_adding_subjects(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     new_id = await add_tutor(
@@ -1480,7 +1478,7 @@ async def finish_adding_subjects(event: MessageEvent):
     await state_dispenser.delete(event.user_id)
 
 # -------------------- Редактирование репетитора --------------------
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "admin_edit_list"}))
+
 async def admin_edit_list(event: MessageEvent):
     tutors = await get_all_tutors()
     if not tutors:
@@ -1495,7 +1493,7 @@ async def admin_edit_list(event: MessageEvent):
     kb.add(Text("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
     await event.edit_message("Выберите репетитора для редактирования:", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "edit_tutor_"}))
+
 async def edit_tutor_choice(event: MessageEvent):
     tid = int(event.payload["cmd"].split("_")[-1])
     await state_dispenser.update_data(event.user_id, edit_tutor_id=tid)
@@ -1519,7 +1517,7 @@ async def edit_tutor_choice(event: MessageEvent):
     await event.edit_message(info, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.waiting_edit_choice)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "edit_"}))
+
 async def edit_field_choice(event: MessageEvent):
     field = event.payload["cmd"].split("_", 1)[1]
     await state_dispenser.update_data(event.user_id, edit_field=field)
@@ -1576,7 +1574,7 @@ async def process_new_value(message: Message):
     await message.answer("✅ Изменения сохранены.", keyboard=kb.get_json())
     await state_dispenser.delete(message.from_user_id)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "manage_subjects"}))
+
 async def manage_subjects(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data.get("edit_tutor_id")
@@ -1598,7 +1596,7 @@ async def manage_subjects(event: MessageEvent):
     await event.edit_message(text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.managing_subjects)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_edit_tutor"}))
+
 async def back_to_edit_tutor(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data.get("edit_tutor_id")
@@ -1625,7 +1623,7 @@ async def back_to_edit_tutor(event: MessageEvent):
     await event.edit_message(info, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.waiting_edit_choice)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "add_subject"}))
+
 async def add_subject_start(event: MessageEvent):
     await event.edit_message("Введите название нового предмета:")
     await state_dispenser.set(event.user_id, AdminStates.adding_subject_name)
@@ -1671,7 +1669,7 @@ async def process_adding_subject_price(message: Message):
     await message.answer(text, keyboard=kb.get_json())
     await state_dispenser.set(message.from_user_id, AdminStates.managing_subjects)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "editsubj_"}))
+
 async def edit_subject_menu(event: MessageEvent):
     subj_name = event.payload["cmd"].split("_", 1)[1]
     await state_dispenser.update_data(event.user_id, edit_subject_name=subj_name)
@@ -1686,7 +1684,7 @@ async def edit_subject_menu(event: MessageEvent):
     await event.edit_message(f"Предмет: {subj_name}\nВыберите действие:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.editing_subject_choice)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_subjects_list"}))
+
 async def back_to_subjects_list(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data.get("edit_tutor_id")
@@ -1705,7 +1703,7 @@ async def back_to_subjects_list(event: MessageEvent):
     await event.edit_message(text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.managing_subjects)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "editsubj_name"}))
+
 async def edit_subject_name_start(event: MessageEvent):
     await event.edit_message("Введите новое название предмета:")
     await state_dispenser.set(event.user_id, AdminStates.editing_subject_name_state)
@@ -1735,7 +1733,7 @@ async def process_new_subject_name(message: Message):
     await state_dispenser.set(message.from_user_id, AdminStates.managing_subjects)
     await state_dispenser.update_data(message.from_user_id, edit_subject_name=None)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "editsubj_price"}))
+
 async def edit_subject_price_start(event: MessageEvent):
     await event.edit_message("Введите новую цену (целое число):")
     await state_dispenser.set(event.user_id, AdminStates.editing_subject_price_state)
@@ -1768,7 +1766,7 @@ async def process_new_subject_price(message: Message):
     await message.answer(text, keyboard=kb.get_json())
     await state_dispenser.set(message.from_user_id, AdminStates.managing_subjects)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "editsubj_delete"}))
+
 async def delete_subject_confirm(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     subj = data.get("edit_subject_name")
@@ -1779,7 +1777,7 @@ async def delete_subject_confirm(event: MessageEvent):
     await event.edit_message(f"Удалить предмет «{subj}»?", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.deleting_subject_confirm)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "confirm_delete_subject"}))
+
 async def confirm_delete_subject(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data.get("edit_tutor_id")
@@ -1802,7 +1800,7 @@ async def confirm_delete_subject(event: MessageEvent):
     await event.edit_message(text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.managing_subjects)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "toggle_commission_mode"}))
+
 async def toggle_commission_mode(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data.get("edit_tutor_id")
@@ -1821,7 +1819,7 @@ async def toggle_commission_mode(event: MessageEvent):
     await edit_tutor_choice(event)  # повторно вызвать (передать event)
 
 # -------------------- Удаление репетитора --------------------
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "admin_delete_list"}))
+
 async def admin_delete_list(event: MessageEvent):
     tutors = await get_all_tutors()
     if not tutors:
@@ -1836,7 +1834,7 @@ async def admin_delete_list(event: MessageEvent):
     kb.add(Text("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
     await event.edit_message("Выберите репетитора для удаления:", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "del_tutor_"}))
+
 async def delete_tutor_confirm(event: MessageEvent):
     tid = int(event.payload["cmd"].split("_")[-1])
     tutors = await get_all_tutors()
@@ -1849,7 +1847,7 @@ async def delete_tutor_confirm(event: MessageEvent):
     await event.edit_message(f"Удалить репетитора «{tutor['name']}»?", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.waiting_delete_confirm)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "confirm_delete"}))
+
 async def confirm_delete(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data["del_tutor_id"]
@@ -1862,7 +1860,7 @@ async def confirm_delete(event: MessageEvent):
     await state_dispenser.delete(event.user_id)
 
 # -------------------- Админ-статистика --------------------
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "admin_stats"}))
+
 async def admin_stats_menu(event: MessageEvent):
     kb = Keyboard(inline=True)
     kb.add(Text("👨‍🏫 Статистика по репетиторам", payload={"cmd": "admin_stats_tutors"}))
@@ -1872,7 +1870,7 @@ async def admin_stats_menu(event: MessageEvent):
     kb.add(Text("🔙 В админ-панель", payload={"cmd": "admin_panel_open"}))
     await event.edit_message("📊 Административная статистика\nВыберите раздел:", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "admin_stats_tutors"}))
+
 async def admin_stats_tutors_overview(event: MessageEvent):
     stats = await get_all_tutors_stats()
     lines = ["📊 Статистика по репетиторам (за всё время):\n"]
@@ -1901,7 +1899,7 @@ async def admin_stats_tutors_overview(event: MessageEvent):
     kb.add(Text("🔙 К разделам статистики", payload={"cmd": "admin_stats"}))
     await event.edit_message(text, keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "admin_stats_tutors_month_"}))
+
 async def admin_stats_tutors_month(event: MessageEvent):
     parts = event.payload["cmd"].split("_")
     year = int(parts[4])
@@ -1928,7 +1926,7 @@ async def admin_stats_tutors_month(event: MessageEvent):
     kb.add(Text("🔙 К общей статистике", payload={"cmd": "admin_stats_tutors"}))
     await event.edit_message(text, keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "admin_stats_students"}))
+
 async def admin_stats_students(event: MessageEvent):
     stats = await get_students_stats()
     if not stats:
@@ -1965,7 +1963,7 @@ async def tutor_panel(message: Message):
     kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer("Панель преподавателя:", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_tutor_panel_"}))
+
 async def back_to_tutor_panel(event: MessageEvent):
     tid = int(event.payload["cmd"].split("_")[-1])
     kb = Keyboard(inline=True)
@@ -1980,7 +1978,7 @@ async def back_to_tutor_panel(event: MessageEvent):
     kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await event.edit_message("Панель преподавателя:", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "tutor_profile_"}))
+
 async def show_tutor_own_profile(event: MessageEvent):
     tid = int(event.payload["cmd"].split("_")[-1])
     user_tutor_id = await get_tutor_by_vk_id(event.user_id)
@@ -2000,7 +1998,7 @@ async def show_tutor_own_profile(event: MessageEvent):
     await event.edit_message(text, keyboard=kb.get_json())
 
 # Мои ученики (для преподавателя)
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "tutor_students_"}))
+
 async def show_students(event: MessageEvent):
     tid = int(event.payload["cmd"].split("_")[-1])
     bookings = await get_all_bookings()
@@ -2040,7 +2038,7 @@ async def show_students(event: MessageEvent):
     await event.edit_message(text, keyboard=kb.get_json())
 
 # Подтверждение/отклонение заявок преподавателем
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "tutor_confirm_"}))
+
 async def tutor_confirm_booking(event: MessageEvent):
     bid = int(event.payload["cmd"].split("_")[2])
     bookings = await get_all_bookings()
@@ -2061,7 +2059,7 @@ async def tutor_confirm_booking(event: MessageEvent):
                                     message="📧 Для завершения записи и получения чека введите ваш адрес электронной почты:",
                                     random_id=0)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "tutor_reject_"}))
+
 async def tutor_reject_booking(event: MessageEvent):
     bid = int(event.payload["cmd"].split("_")[2])
     bookings = await get_all_bookings()
@@ -2080,7 +2078,7 @@ async def tutor_reject_booking(event: MessageEvent):
     await event.edit_message("❌ Заявка отклонена.", keyboard=kb.get_json())
 
 # Отмена и перенос преподавателем
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "tutor_cancel_"}))
+
 async def tutor_cancel_booking(event: MessageEvent):
     bid = int(event.payload["cmd"].split("_")[2])
     bookings = await get_all_bookings()
@@ -2103,7 +2101,7 @@ async def tutor_cancel_booking(event: MessageEvent):
     kb.add(Text("🔙 К списку учеников", payload={"cmd": f"tutor_students_{tid}"}))
     await event.edit_message("✅ Занятие отменено.", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "tutor_reschedule_"}))
+
 async def tutor_reschedule_start(event: MessageEvent):
     bid = int(event.payload["cmd"].split("_")[2])
     bookings = await get_all_bookings()
@@ -2138,7 +2136,7 @@ async def tutor_reschedule_start(event: MessageEvent):
     kb.add(Text("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await event.edit_message("Выберите новую дату:", keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "t_reschedule_date_"}))
+
 async def tutor_reschedule_date(event: MessageEvent):
     date_str = event.payload["cmd"].split("t_reschedule_date_")[1]
     await state_dispenser.update_data(event.user_id, new_date=date_str)
@@ -2159,7 +2157,7 @@ async def tutor_reschedule_date(event: MessageEvent):
     await event.edit_message("Выберите новое время:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorRescheduleStates.waiting_time)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_tutor_reschedule_date"}))
+
 async def back_tutor_reschedule_date(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data["tutor_id"]
@@ -2174,7 +2172,7 @@ async def back_tutor_reschedule_date(event: MessageEvent):
     await event.edit_message("Выберите новую дату:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorRescheduleStates.waiting_date)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "t_reschedule_slot_"}))
+
 async def tutor_reschedule_slot(event: MessageEvent):
     slot = event.payload["cmd"].split("t_reschedule_slot_")[1]
     await state_dispenser.update_data(event.user_id, new_time=slot)
@@ -2193,7 +2191,7 @@ async def tutor_reschedule_slot(event: MessageEvent):
     await event.edit_message(text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorRescheduleStates.waiting_confirmation)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "confirm_tutor_reschedule"}))
+
 async def confirm_tutor_reschedule(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     old_bid = data["old_booking_id"]
@@ -2224,7 +2222,7 @@ async def confirm_tutor_reschedule(event: MessageEvent):
     await state_dispenser.delete(event.user_id)
 
 # -------------------- Настройка расписания преподавателем --------------------
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "tutor_schedule_"}))
+
 async def schedule_main(event: MessageEvent):
     tid = int(event.payload["cmd"].split("_")[-1])
     await state_dispenser.update_data(event.user_id, tid=tid)
@@ -2248,7 +2246,7 @@ async def schedule_main(event: MessageEvent):
     await event.edit_message(text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.choose_day)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "sched_day_"}))
+
 async def edit_day(event: MessageEvent):
     day = event.payload["cmd"].split("_")[2]
     await state_dispenser.update_data(event.user_id, current_day=day)
@@ -2279,7 +2277,7 @@ async def edit_day(event: MessageEvent):
     await event.edit_message(text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.manage_day_slots)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "back_to_schedule"}))
+
 async def back_to_schedule(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data["tid"]
@@ -2298,7 +2296,7 @@ async def back_to_schedule(event: MessageEvent):
     await event.edit_message(text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.choose_day)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "block_day_"}))
+
 async def handle_block_day(event: MessageEvent):
     day = event.payload["cmd"].split("block_day_")[1]
     data = await state_dispenser.get(event.user_id)
@@ -2306,7 +2304,7 @@ async def handle_block_day(event: MessageEvent):
     await block_day(tid, day)
     await edit_day(event)  # перерисовать
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "unblock_day_"}))
+
 async def handle_unblock_day(event: MessageEvent):
     day = event.payload["cmd"].split("unblock_day_")[1]
     data = await state_dispenser.get(event.user_id)
@@ -2314,7 +2312,7 @@ async def handle_unblock_day(event: MessageEvent):
     await unblock_day(tid, day)
     await edit_day(event)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "add_slot"}))
+
 async def add_slot_start(event: MessageEvent):
     await event.edit_message("Введите временной слот в формате HH:MM-HH:MM, например 10:00-11:30:")
     await state_dispenser.set(event.user_id, TutorScheduleStates.add_slot)
@@ -2358,7 +2356,7 @@ async def process_add_slot(message: Message):
     await message.answer(text, keyboard=kb.get_json())
     await state_dispenser.set(message.from_user_id, TutorScheduleStates.manage_day_slots)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "add_range"}))
+
 async def add_range_start(event: MessageEvent):
     kb = Keyboard(inline=True)
     kb.add(Text("60 минут", payload={"cmd": "dur_60"}))
@@ -2369,7 +2367,7 @@ async def add_range_start(event: MessageEvent):
     await event.edit_message("Выберите длительность занятия:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.range_duration)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "dur_"}))
+
 async def range_duration_chosen(event: MessageEvent):
     duration = int(event.payload["cmd"].split("_")[1])
     await state_dispenser.update_data(event.user_id, range_duration=duration)
@@ -2386,7 +2384,7 @@ async def range_duration_chosen(event: MessageEvent):
     await event.edit_message("Нужен ли перерыв между занятиями?", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.range_break)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "add_range_back"}))
+
 async def range_break_back(event: MessageEvent):
     kb = Keyboard(inline=True)
     kb.add(Text("60 минут", payload={"cmd": "dur_60"}))
@@ -2397,7 +2395,7 @@ async def range_break_back(event: MessageEvent):
     await event.edit_message("Выберите длительность занятия:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.range_duration)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "brk_"}))
+
 async def range_break_chosen(event: MessageEvent):
     break_min = int(event.payload["cmd"].split("_")[1])
     await state_dispenser.update_data(event.user_id, range_break=break_min)
@@ -2461,7 +2459,7 @@ async def process_add_range(message: Message):
     await message.answer(text, keyboard=kb.get_json())
     await state_dispenser.set(message.from_user_id, TutorScheduleStates.manage_day_slots)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "del_slot"}))
+
 async def del_slot_start(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     tid = data["tid"]
@@ -2479,7 +2477,7 @@ async def del_slot_start(event: MessageEvent):
     await event.edit_message("Выберите слот для удаления:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.delete_slot)
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "delslot_"}))
+
 async def confirm_del_slot(event: MessageEvent):
     slot = event.payload["cmd"].split("_", 1)[1]
     data = await state_dispenser.get(event.user_id)
@@ -2503,7 +2501,7 @@ async def confirm_del_slot(event: MessageEvent):
     await state_dispenser.set(event.user_id, TutorScheduleStates.manage_day_slots)
 
 # Статистика преподавателя
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "tutor_stats_"}))
+
 async def tutor_stats_menu(event: MessageEvent):
     tid = int(event.payload["cmd"].split("_")[2])
     fin = await get_tutor_financials(tid)
@@ -2527,7 +2525,7 @@ async def tutor_stats_menu(event: MessageEvent):
     kb.add(Text("🔙 Назад", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
     await event.edit_message(text, keyboard=kb.get_json())
 
-@bot.on.raw_event(MessageEvent, PayloadRule({"cmd": "tutor_stats_month_"}))
+
 async def tutor_stats_month(event: MessageEvent):
     parts = event.payload["cmd"].split("_")
     tid = int(parts[3])
@@ -2707,6 +2705,234 @@ async def send_pending_reminders():
             await bot.api.messages.send(user_id=tutor["vk_id"], message=text, keyboard=keyboard.get_json(), random_id=0)
         except Exception as e:
             logging.warning(f"Не удалось отправить напоминание преподавателю {tid}: {e}")
+
+
+# ==================== УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК CALLBACK-КОМАНД ====================
+@bot.on.raw_event(MessageEvent)
+async def universal_callback_handler(event: MessageEvent):
+    cmd = event.payload.get("cmd", "")
+    if not cmd:
+        return  # игнорируем события без команды
+
+    user_id = event.user_id
+
+    # --- Навигация и общие действия ---
+    if cmd == "back_to_menu":
+        await state_dispenser.delete(user_id)
+        await event.edit_message("Главное меню", keyboard=await get_main_menu(user_id))
+
+    elif cmd == "back_to_tutors":
+        await back_to_tutors(event)
+
+    elif cmd == "tutor_info":
+        await show_tutor_info(event)
+
+    # --- Пробное занятие ---
+    elif cmd == "trials":
+        await start_trials_booking(event)
+    elif cmd == "trial_subject":
+        await trial_subject_chosen(event)
+    elif cmd == "trial_date":
+        await trial_date_chosen(event)
+    elif cmd == "back_to_trial_dates":
+        await back_to_trial_dates(event)
+    elif cmd == "trial_slot":
+        await trial_slot_chosen(event)
+    elif cmd == "confirm_trial":
+        await confirm_trial_booking(event)
+
+    # --- Запись на занятие ---
+    elif cmd == "tutor_booking":
+        await choose_tutor_booking(event)
+    elif cmd == "back_to_tutors_booking":
+        await back_to_tutors_booking(event)
+    elif cmd.startswith("subject_"):
+        await subject_chosen(event)
+    elif cmd.startswith("date_"):
+        await choose_date(event)
+    elif cmd == "back_to_date":
+        await back_to_date(event)
+    elif cmd.startswith("slot_"):
+        await choose_slot(event)
+    elif cmd == "confirm_booking":
+        await confirm_booking(event)
+    elif cmd == "cancel_booking":
+        await cancel_booking(event)
+
+    # --- Мои записи (ученик) ---
+    elif cmd.startswith("cancel_student_"):
+        await cancel_student_booking(event)
+    elif cmd == "student_stats":
+        await show_student_stats(event)
+    elif cmd == "back_to_my_records":
+        await back_to_my_records(event)
+
+    # --- Перенос учеником ---
+    elif cmd.startswith("reschedule_student_"):
+        await student_reschedule_start(event)
+    elif cmd.startswith("reschedule_date_"):
+        await student_reschedule_date(event)
+    elif cmd == "back_to_reschedule_date":
+        await back_to_reschedule_date(event)
+    elif cmd.startswith("reschedule_slot_"):
+        await student_reschedule_slot(event)
+    elif cmd == "confirm_student_reschedule":
+        await confirm_student_reschedule(event)
+
+    # --- Оплата ---
+    elif cmd == "back_to_pay":
+        await back_to_pay(event)
+    elif cmd == "qr":
+        await qr(event)
+    elif cmd == "card":
+        await card(event)
+    elif cmd == "sbp":
+        await sbp(event)
+
+    # --- Учебные материалы ---
+    elif cmd == "back_to_mat":
+        await back_to_mat(event)
+    elif cmd == "book":
+        await book(event)
+    elif cmd == "vid":
+        await vid(event)
+    elif cmd == "bookh":
+        await bookh(event)
+    elif cmd == "bookf":
+        await bookf(event)
+    elif cmd == "videh":
+        await videh(event)
+    elif cmd == "videf":
+        await videf(event)
+
+    # --- Связь с преподавателем ---
+    elif cmd.startswith("msg_tutor_"):
+        await choose_msg_tutor(event)
+    elif cmd == "cancel_msg_to_tutor":
+        await cancel_msg_to_tutor(event)
+    elif cmd.startswith("reply_"):
+        await process_reply_button(event)
+
+    # --- Связь преподавателя с учеником ---
+    elif cmd.startswith("tutorcontactstudent_"):
+        await tutor_contact_student_chosen(event)
+    elif cmd == "cancel_tutor_msg_to_student":
+        await cancel_tutor_msg_to_student(event)
+
+    # --- Поддержка ---
+    elif cmd == "cancel_support":
+        await cancel_support(event)
+    elif cmd.startswith("support_reply_"):
+        await support_reply_start(event)
+
+    # --- Админ-панель ---
+    elif cmd == "admin_add":
+        await admin_add_start(event)
+    elif cmd == "admin_panel_open":
+        await open_admin_panel(event)
+    elif cmd == "admin_edit_list":
+        await admin_edit_list(event)
+    elif cmd.startswith("edit_tutor_"):
+        await edit_tutor_choice(event)
+    elif cmd.startswith("edit_"):
+        await edit_field_choice(event)
+    elif cmd == "manage_subjects":
+        await manage_subjects(event)
+    elif cmd == "back_to_edit_tutor":
+        await back_to_edit_tutor(event)
+    elif cmd == "add_subject":
+        await add_subject_start(event)
+    elif cmd.startswith("editsubj_"):
+        await edit_subject_menu(event)
+    elif cmd == "editsubj_name":
+        await edit_subject_name_start(event)
+    elif cmd == "editsubj_price":
+        await edit_subject_price_start(event)
+    elif cmd == "editsubj_delete":
+        await delete_subject_confirm(event)
+    elif cmd == "confirm_delete_subject":
+        await confirm_delete_subject(event)
+    elif cmd == "back_to_subjects_list":
+        await back_to_subjects_list(event)
+    elif cmd == "toggle_commission_mode":
+        await toggle_commission_mode(event)
+    elif cmd == "admin_delete_list":
+        await admin_delete_list(event)
+    elif cmd.startswith("del_tutor_"):
+        await delete_tutor_confirm(event)
+    elif cmd == "confirm_delete":
+        await confirm_delete(event)
+    elif cmd == "admin_stats":
+        await admin_stats_menu(event)
+    elif cmd == "admin_stats_tutors":
+        await admin_stats_tutors_overview(event)
+    elif cmd.startswith("admin_stats_tutors_month_"):
+        await admin_stats_tutors_month(event)
+    elif cmd == "admin_stats_students":
+        await admin_stats_students(event)
+    elif cmd == "add_another_subject":
+        await add_another_subject(event)
+    elif cmd == "finish_adding_subjects":
+        await finish_adding_subjects(event)
+
+    # --- Панель преподавателя ---
+    elif cmd.startswith("tutor_profile_"):
+        await show_tutor_own_profile(event)
+    elif cmd.startswith("back_to_tutor_panel_"):
+        await back_to_tutor_panel(event)
+    elif cmd.startswith("tutor_students_"):
+        await show_students(event)
+    elif cmd.startswith("tutor_confirm_"):
+        await tutor_confirm_booking(event)
+    elif cmd.startswith("tutor_reject_"):
+        await tutor_reject_booking(event)
+    elif cmd.startswith("tutor_cancel_"):
+        await tutor_cancel_booking(event)
+    elif cmd.startswith("tutor_reschedule_"):
+        await tutor_reschedule_start(event)
+    elif cmd.startswith("t_reschedule_date_"):
+        await tutor_reschedule_date(event)
+    elif cmd == "back_tutor_reschedule_date":
+        await back_tutor_reschedule_date(event)
+    elif cmd.startswith("t_reschedule_slot_"):
+        await tutor_reschedule_slot(event)
+    elif cmd == "confirm_tutor_reschedule":
+        await confirm_tutor_reschedule(event)
+
+    # --- Настройка расписания преподавателем ---
+    elif cmd.startswith("tutor_schedule_"):
+        await schedule_main(event)
+    elif cmd.startswith("sched_day_"):
+        await edit_day(event)
+    elif cmd == "back_to_schedule":
+        await back_to_schedule(event)
+    elif cmd.startswith("block_day_"):
+        await handle_block_day(event)
+    elif cmd.startswith("unblock_day_"):
+        await handle_unblock_day(event)
+    elif cmd == "add_slot":
+        await add_slot_start(event)
+    elif cmd == "add_range":
+        await add_range_start(event)
+    elif cmd.startswith("dur_"):
+        await range_duration_chosen(event)
+    elif cmd == "add_range_back":
+        await range_break_back(event)
+    elif cmd.startswith("brk_"):
+        await range_break_chosen(event)
+    elif cmd == "del_slot":
+        await del_slot_start(event)
+    elif cmd.startswith("delslot_"):
+        await confirm_del_slot(event)
+
+    # --- Статистика преподавателя ---
+    elif cmd.startswith("tutor_stats_month_"):
+        await tutor_stats_month(event)
+    elif cmd.startswith("tutor_stats_"):
+        await tutor_stats_menu(event)
+
+    # Если команда не распознана, ничего не делаем (можно добавить логирование)
+
 
 async def pending_reminder_loop():
     msk = timezone(timedelta(hours=3))
