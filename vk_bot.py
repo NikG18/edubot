@@ -11,6 +11,7 @@ from vkbottle import (
     BaseStateGroup, BuiltinStateDispenser
 )
 from vkbottle.bot import Message, MessageEvent
+from vkbottle.bot.rules import PayloadRule
 from vkbottle.bot import rules
 
 # Импорт всех функций из базы данных
