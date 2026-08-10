@@ -311,12 +311,12 @@ async def create_and_send_payment(source, booking, email, booking_id):
 # -------------------- Обработчики начала диалога и главного меню --------------------
 @bot.on.private_message(text=["Начать", "/start", "start"])
 async def start_handler(message: Message):
-    user_id = message.from_user_id
+    user_id = message.from_id
     await message.answer("👋 Добро пожаловать! Выберите действие в меню.", keyboard=await get_main_menu(user_id))
 
 @bot.on.private_message(text="🔙 Назад")
 async def back_to_main_menu_button(message: Message):
-    await message.answer("Главное меню", keyboard=await get_main_menu(message.from_user_id))
+    await message.answer("Главное меню", keyboard=await get_main_menu(message.from_id))
 
 # -------------------- Универсальный обработчик для inline-кнопок «Назад в меню» --------------------
 
@@ -510,7 +510,7 @@ async def confirm_trial_booking(event: MessageEvent):
 # ==================== ИНФОРМАЦИЯ О ЗАНЯТИЯХ ====================
 @bot.on.private_message(text="📚 Информация о занятиях")
 async def lesson_info(message: Message):
-    user_id = message.from_user_id
+    user_id = message.from_id
     is_tutor = await get_tutor_by_vk_id(user_id) is not None
     is_admin = (user_id == ADMIN_VK_ID)
 
@@ -561,7 +561,7 @@ STUDENT_INFO_TEXT = (
 @bot.on.private_message(text="📝 Запись на занятие")
 async def zapis(message: Message):
     await message.answer("Кто из репетиторов вас интересует?", keyboard=await make_tutors_keyboard("tutor_booking", back_callback="back_to_menu"))
-    await state_dispenser.delete(message.from_user_id)
+    await state_dispenser.delete(message.from_id)
 
 
 async def choose_tutor_booking(event: MessageEvent):
@@ -737,8 +737,8 @@ async def cancel_booking(event: MessageEvent):
 # ==================== МОИ ЗАПИСИ (УЧЕНИК) ====================
 @bot.on.private_message(text="📋 Мои записи")
 async def my_records(message: Message):
-    await state_dispenser.delete(message.from_user_id)
-    user_id = message.from_user_id
+    await state_dispenser.delete(message.from_id)
+    user_id = message.from_id
     bookings = await get_all_bookings()
     user_bookings = []
     for bid, b in bookings.items():
@@ -1105,7 +1105,7 @@ async def videf(event: MessageEvent):
 # ==================== СВЯЗЬ С ПРЕПОДАВАТЕЛЕМ ====================
 @bot.on.private_message(text="✉️ Связь с преподавателем")
 async def svyaz(message: Message):
-    await state_dispenser.set(message.from_user_id, ContactStates.choosing_tutor)
+    await state_dispenser.set(message.from_id, ContactStates.choosing_tutor)
     await message.answer("Выберите преподавателя, которому хотите написать:",
                          keyboard=await make_tutors_keyboard("msg_tutor", back_callback="back_to_menu"))
 
@@ -1136,23 +1136,23 @@ async def cancel_msg_to_tutor(event: MessageEvent):
 
 @bot.on.private_message(state=ContactStates.waiting_message)
 async def send_message_to_tutor(message: Message):
-    user = await bot.api.users.get(message.from_user_id)
-    username = f"{user[0].first_name} {user[0].last_name}" if user else str(message.from_user_id)
-    data = await state_dispenser.get(message.from_user_id)
+    user = await bot.api.users.get(message.from_id)
+    username = f"{user[0].first_name} {user[0].last_name}" if user else str(message.from_id)
+    data = await state_dispenser.get(message.from_id)
     tid = data["msg_tutor_id"]
     tutor_name = data["msg_tutor_name"]
     text = message.text.strip()
 
     forward_msg = (
         f"📨 Сообщение от ученика\n"
-        f"👤 {username} (ID: {message.from_user_id})\n"
+        f"👤 {username} (ID: {message.from_id})\n"
         f"✉️ Преподавателю: {tutor_name}\n\n"
         f"💬 Текст:\n{text}"
     )
 
     # Отправка админу и преподавателю
     kb = Keyboard(inline=True)
-    kb.add(Text("↩️ Ответить", payload={"cmd": f"reply_{message.from_user_id}"}))
+    kb.add(Text("↩️ Ответить", payload={"cmd": f"reply_{message.from_id}"}))
     try:
         await bot.api.messages.send(user_id=ADMIN_VK_ID, message=forward_msg, keyboard=kb.get_json(), random_id=0)
     except:
@@ -1166,8 +1166,8 @@ async def send_message_to_tutor(message: Message):
             pass
 
     await message.answer("✅ Сообщение отправлено. Ожидайте ответа.",
-                         keyboard=await get_main_menu(message.from_user_id))
-    await state_dispenser.delete(message.from_user_id)
+                         keyboard=await get_main_menu(message.from_id))
+    await state_dispenser.delete(message.from_id)
 
 
 async def process_reply_button(event: MessageEvent):
@@ -1178,21 +1178,21 @@ async def process_reply_button(event: MessageEvent):
 
 @bot.on.private_message(state=ContactStates.waiting_reply)
 async def send_reply_to_student(message: Message):
-    data = await state_dispenser.get(message.from_user_id)
+    data = await state_dispenser.get(message.from_id)
     student_id = data["reply_student_id"]
     reply_text = f"📬 Ответ от преподавателя:\n{message.text}"
     try:
         await bot.api.messages.send(user_id=student_id, message=reply_text, random_id=0)
-        await message.answer("✅ Ответ отправлен ученику.", keyboard=await get_main_menu(message.from_user_id))
+        await message.answer("✅ Ответ отправлен ученику.", keyboard=await get_main_menu(message.from_id))
     except:
         await message.answer("⚠️ Не удалось отправить ответ (возможно, ученик заблокировал бота).",
-                             keyboard=await get_main_menu(message.from_user_id))
-    await state_dispenser.delete(message.from_user_id)
+                             keyboard=await get_main_menu(message.from_id))
+    await state_dispenser.delete(message.from_id)
 
 # ==================== СВЯЗЬ ПРЕПОДАВАТЕЛЯ С УЧЕНИКОМ ====================
 @bot.on.private_message(text="✉️ Связь с учеником")
 async def tutor_contact_student_start(message: Message):
-    user_id = message.from_user_id
+    user_id = message.from_id
     tutor_id = await get_tutor_by_vk_id(user_id)
     if not tutor_id:
         await message.answer("Вы не зарегистрированы как преподаватель.")
@@ -1215,7 +1215,7 @@ async def tutor_contact_student_start(message: Message):
         kb.row()
     kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer("Выберите ученика:", keyboard=kb.get_json())
-    await state_dispenser.set(message.from_user_id, TutorContactStudentStates.choosing_student)
+    await state_dispenser.set(message.from_id, TutorContactStudentStates.choosing_student)
 
 
 async def tutor_contact_student_chosen(event: MessageEvent):
@@ -1251,9 +1251,9 @@ async def cancel_tutor_msg_to_student(event: MessageEvent):
 
 @bot.on.private_message(state=TutorContactStudentStates.waiting_message)
 async def tutor_send_message_to_student(message: Message):
-    data = await state_dispenser.get(message.from_user_id)
+    data = await state_dispenser.get(message.from_id)
     student_id = data["tutor_contact_student_id"]
-    tutor_id = await get_tutor_by_vk_id(message.from_user_id)
+    tutor_id = await get_tutor_by_vk_id(message.from_id)
     tutors = await get_all_tutors()
     tutor = tutors.get(tutor_id, {})
     tutor_name = tutor.get("name", "Преподаватель")
@@ -1261,11 +1261,11 @@ async def tutor_send_message_to_student(message: Message):
     forward_msg = f"📨 Сообщение от преподавателя {tutor_name}:\n\n{message.text}"
     try:
         await bot.api.messages.send(user_id=student_id, message=forward_msg, random_id=0)
-        await message.answer("✅ Сообщение отправлено ученику.", keyboard=await get_main_menu(message.from_user_id))
+        await message.answer("✅ Сообщение отправлено ученику.", keyboard=await get_main_menu(message.from_id))
     except:
         await message.answer("⚠️ Не удалось отправить сообщение (возможно, ученик заблокировал бота).",
-                             keyboard=await get_main_menu(message.from_user_id))
-    await state_dispenser.delete(message.from_user_id)
+                             keyboard=await get_main_menu(message.from_id))
+    await state_dispenser.delete(message.from_id)
 
 # ==================== ПОДДЕРЖКА ====================
 @bot.on.private_message(text="🆘 Поддержка")
@@ -1273,7 +1273,7 @@ async def support_start(message: Message):
     kb = Keyboard(inline=True)
     kb.add(Text("❌ Отмена", payload={"cmd": "cancel_support"}))
     await message.answer("Опишите вашу проблему или вопрос. Администратор свяжется с вами.", keyboard=kb.get_json())
-    await state_dispenser.set(message.from_user_id, SupportUserStates.waiting_message)
+    await state_dispenser.set(message.from_id, SupportUserStates.waiting_message)
 
 
 async def cancel_support(event: MessageEvent):
@@ -1283,9 +1283,9 @@ async def cancel_support(event: MessageEvent):
 
 @bot.on.private_message(state=SupportUserStates.waiting_message)
 async def support_message_to_admin(message: Message):
-    user = await bot.api.users.get(message.from_user_id)
-    username = f"{user[0].first_name} {user[0].last_name}" if user else str(message.from_user_id)
-    uid = message.from_user_id
+    user = await bot.api.users.get(message.from_id)
+    username = f"{user[0].first_name} {user[0].last_name}" if user else str(message.from_id)
+    uid = message.from_id
     text = message.text.strip()
 
     forward_msg = f"🆘 Сообщение в поддержку от {username} (ID: {uid}):\n\n{text}"
@@ -1297,7 +1297,7 @@ async def support_message_to_admin(message: Message):
         pass
     await message.answer("✅ Ваше сообщение отправлено администратору. Ожидайте ответа.",
                          keyboard=await get_main_menu(uid))
-    await state_dispenser.delete(message.from_user_id)
+    await state_dispenser.delete(message.from_id)
 
 
 async def support_reply_start(event: MessageEvent):
@@ -1311,21 +1311,21 @@ async def support_reply_start(event: MessageEvent):
 
 @bot.on.private_message(state=SupportAdminReplyStates.waiting_reply)
 async def support_send_reply(message: Message):
-    data = await state_dispenser.get(message.from_user_id)
+    data = await state_dispenser.get(message.from_id)
     student_id = data["support_reply_student_id"]
     reply_text = f"📬 Ответ от администратора:\n{message.text}"
     try:
         await bot.api.messages.send(user_id=student_id, message=reply_text, random_id=0)
-        await message.answer("✅ Ответ отправлен пользователю.", keyboard=await get_main_menu(message.from_user_id))
+        await message.answer("✅ Ответ отправлен пользователю.", keyboard=await get_main_menu(message.from_id))
     except:
         await message.answer("⚠️ Не удалось отправить ответ (возможно, пользователь заблокировал бота).",
-                             keyboard=await get_main_menu(message.from_user_id))
-    await state_dispenser.delete(message.from_user_id)
+                             keyboard=await get_main_menu(message.from_id))
+    await state_dispenser.delete(message.from_id)
 
 # ==================== АДМИН-ПАНЕЛЬ ====================
 @bot.on.private_message(text="👨‍🏫 Админ-панель")
 async def admin_panel(message: Message):
-    if message.from_user_id != ADMIN_VK_ID:
+    if message.from_id != ADMIN_VK_ID:
         await message.answer("⛔ Доступ запрещён.")
         return
     kb = Keyboard(inline=True)
@@ -1367,18 +1367,18 @@ async def admin_add_start(event: MessageEvent):
 
 @bot.on.private_message(state=AdminStates.waiting_name)
 async def admin_add_name(message: Message):
-    await state_dispenser.update_data(message.from_user_id, name=message.text.strip())
+    await state_dispenser.update_data(message.from_id, name=message.text.strip())
     await message.answer("Введите описание репетитора (или '-' чтобы пропустить):")
-    await state_dispenser.set(message.from_user_id, AdminStates.waiting_description)
+    await state_dispenser.set(message.from_id, AdminStates.waiting_description)
 
 @bot.on.private_message(state=AdminStates.waiting_description)
 async def admin_add_description(message: Message):
     desc = message.text.strip()
     if desc == "-":
         desc = ""
-    await state_dispenser.update_data(message.from_user_id, description=desc)
+    await state_dispenser.update_data(message.from_id, description=desc)
     await message.answer("Введите Telegram ID репетитора (число или 0, если нет):")
-    await state_dispenser.set(message.from_user_id, AdminStates.waiting_telegram_id)
+    await state_dispenser.set(message.from_id, AdminStates.waiting_telegram_id)
 
 @bot.on.private_message(state=AdminStates.waiting_telegram_id)
 async def admin_add_telegram_id(message: Message):
@@ -1387,9 +1387,9 @@ async def admin_add_telegram_id(message: Message):
     except ValueError:
         await message.answer("Введите целое число или 0.")
         return
-    await state_dispenser.update_data(message.from_user_id, telegram_id=tg_id if tg_id != 0 else None)
+    await state_dispenser.update_data(message.from_id, telegram_id=tg_id if tg_id != 0 else None)
     await message.answer("Введите VK ID репетитора (число или 0, если нет):")
-    await state_dispenser.set(message.from_user_id, AdminStates.waiting_vk_id)
+    await state_dispenser.set(message.from_id, AdminStates.waiting_vk_id)
 
 
 @bot.on.private_message(state=AdminStates.waiting_vk_id)
@@ -1399,9 +1399,9 @@ async def admin_add_vk_id(message: Message):
     except ValueError:
         await message.answer("Введите целое число или 0.")
         return
-    await state_dispenser.update_data(message.from_user_id, vk_id=vk_id if vk_id != 0 else None)
+    await state_dispenser.update_data(message.from_id, vk_id=vk_id if vk_id != 0 else None)
     await message.answer("Введите процент комиссии (целое число, по умолчанию 25):")
-    await state_dispenser.set(message.from_user_id, AdminStates.waiting_commission)
+    await state_dispenser.set(message.from_id, AdminStates.waiting_commission)
 
 @bot.on.private_message(state=AdminStates.waiting_commission)
 async def admin_add_commission(message: Message):
@@ -1410,26 +1410,26 @@ async def admin_add_commission(message: Message):
     except ValueError:
         await message.answer("Введите целое число.")
         return
-    await state_dispenser.update_data(message.from_user_id, commission_percent=comm)
+    await state_dispenser.update_data(message.from_id, commission_percent=comm)
     await message.answer("Введите ИНН репетитора (или отправьте '-', чтобы пропустить):")
-    await state_dispenser.set(message.from_user_id, AdminStates.waiting_inn)
+    await state_dispenser.set(message.from_id, AdminStates.waiting_inn)
 
 @bot.on.private_message(state=AdminStates.waiting_inn)
 async def admin_add_inn(message: Message):
     inn = message.text.strip()
     if inn == "-":
         inn = ""
-    await state_dispenser.update_data(message.from_user_id, inn=inn)
-    await state_dispenser.update_data(message.from_user_id, subjects={})
+    await state_dispenser.update_data(message.from_id, inn=inn)
+    await state_dispenser.update_data(message.from_id, subjects={})
     await message.answer("Введите название первого предмета, который ведёт репетитор:")
-    await state_dispenser.set(message.from_user_id, AdminStates.waiting_subject_name)
+    await state_dispenser.set(message.from_id, AdminStates.waiting_subject_name)
 
 @bot.on.private_message(state=AdminStates.waiting_subject_name)
 async def admin_add_subject_name(message: Message):
     subject = message.text.strip()
-    await state_dispenser.update_data(message.from_user_id, temp_subject=subject)
+    await state_dispenser.update_data(message.from_id, temp_subject=subject)
     await message.answer(f"Введите цену за занятие для предмета «{subject}» (целое число рублей):")
-    await state_dispenser.set(message.from_user_id, AdminStates.waiting_subject_price)
+    await state_dispenser.set(message.from_id, AdminStates.waiting_subject_price)
 
 @bot.on.private_message(state=AdminStates.waiting_subject_price)
 async def admin_add_subject_price(message: Message):
@@ -1438,11 +1438,11 @@ async def admin_add_subject_price(message: Message):
     except ValueError:
         await message.answer("Пожалуйста, введите целое число.")
         return
-    data = await state_dispenser.get(message.from_user_id)
+    data = await state_dispenser.get(message.from_id)
     subjects = data.get("subjects", {})
     temp_subject = data.get("temp_subject")
     subjects[temp_subject] = price
-    await state_dispenser.update_data(message.from_user_id, subjects=subjects)
+    await state_dispenser.update_data(message.from_id, subjects=subjects)
 
     kb = Keyboard(inline=True)
     kb.add(Text("✅ Да, добавить ещё", payload={"cmd": "add_another_subject"}))
@@ -1533,7 +1533,7 @@ async def edit_field_choice(event: MessageEvent):
 
 @bot.on.private_message(state=AdminStates.waiting_new_value)
 async def process_new_value(message: Message):
-    data = await state_dispenser.get(message.from_user_id)
+    data = await state_dispenser.get(message.from_id)
     tid = data["edit_tutor_id"]
     field = data["edit_field"]
 
@@ -1572,7 +1572,7 @@ async def process_new_value(message: Message):
     kb = Keyboard(inline=True)
     kb.add(Text("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
     await message.answer("✅ Изменения сохранены.", keyboard=kb.get_json())
-    await state_dispenser.delete(message.from_user_id)
+    await state_dispenser.delete(message.from_id)
 
 
 async def manage_subjects(event: MessageEvent):
@@ -1631,15 +1631,15 @@ async def add_subject_start(event: MessageEvent):
 @bot.on.private_message(state=AdminStates.adding_subject_name)
 async def process_adding_subject_name(message: Message):
     name = message.text.strip()
-    data = await state_dispenser.get(message.from_user_id)
+    data = await state_dispenser.get(message.from_id)
     tid = data.get("edit_tutor_id")
     tutors = await get_all_tutors()
     if tid and name in tutors[tid]["subjects"]:
         await message.answer("Такой предмет уже существует. Введите другое название.")
         return
-    await state_dispenser.update_data(message.from_user_id, temp_new_subject=name)
+    await state_dispenser.update_data(message.from_id, temp_new_subject=name)
     await message.answer(f"Введите цену за занятие для предмета «{name}» (целое число рублей):")
-    await state_dispenser.set(message.from_user_id, AdminStates.adding_subject_price)
+    await state_dispenser.set(message.from_id, AdminStates.adding_subject_price)
 
 @bot.on.private_message(state=AdminStates.adding_subject_price)
 async def process_adding_subject_price(message: Message):
@@ -1648,7 +1648,7 @@ async def process_adding_subject_price(message: Message):
     except ValueError:
         await message.answer("Введите целое число.")
         return
-    data = await state_dispenser.get(message.from_user_id)
+    data = await state_dispenser.get(message.from_id)
     tid = data.get("edit_tutor_id")
     name = data.get("temp_new_subject")
     await add_subject(tid, name, price)
@@ -1667,7 +1667,7 @@ async def process_adding_subject_price(message: Message):
     kb.row()
     kb.add(Text("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
     await message.answer(text, keyboard=kb.get_json())
-    await state_dispenser.set(message.from_user_id, AdminStates.managing_subjects)
+    await state_dispenser.set(message.from_id, AdminStates.managing_subjects)
 
 
 async def edit_subject_menu(event: MessageEvent):
@@ -1711,7 +1711,7 @@ async def edit_subject_name_start(event: MessageEvent):
 @bot.on.private_message(state=AdminStates.editing_subject_name_state)
 async def process_new_subject_name(message: Message):
     new_name = message.text.strip()
-    data = await state_dispenser.get(message.from_user_id)
+    data = await state_dispenser.get(message.from_id)
     tid = data.get("edit_tutor_id")
     old_name = data.get("edit_subject_name")
     await update_subject(tid, old_name, new_name=new_name)
@@ -1730,8 +1730,8 @@ async def process_new_subject_name(message: Message):
     kb.row()
     kb.add(Text("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
     await message.answer(text, keyboard=kb.get_json())
-    await state_dispenser.set(message.from_user_id, AdminStates.managing_subjects)
-    await state_dispenser.update_data(message.from_user_id, edit_subject_name=None)
+    await state_dispenser.set(message.from_id, AdminStates.managing_subjects)
+    await state_dispenser.update_data(message.from_id, edit_subject_name=None)
 
 
 async def edit_subject_price_start(event: MessageEvent):
@@ -1745,7 +1745,7 @@ async def process_new_subject_price(message: Message):
     except ValueError:
         await message.answer("Введите целое число.")
         return
-    data = await state_dispenser.get(message.from_user_id)
+    data = await state_dispenser.get(message.from_id)
     tid = data.get("edit_tutor_id")
     subj = data.get("edit_subject_name")
     await update_subject(tid, subj, new_price=new_price)
@@ -1764,7 +1764,7 @@ async def process_new_subject_price(message: Message):
     kb.row()
     kb.add(Text("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
     await message.answer(text, keyboard=kb.get_json())
-    await state_dispenser.set(message.from_user_id, AdminStates.managing_subjects)
+    await state_dispenser.set(message.from_id, AdminStates.managing_subjects)
 
 
 async def delete_subject_confirm(event: MessageEvent):
@@ -1946,7 +1946,7 @@ async def admin_stats_students(event: MessageEvent):
 # ==================== ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ ====================
 @bot.on.private_message(text="👨‍🏫 Панель преподавателя")
 async def tutor_panel(message: Message):
-    user_id = message.from_user_id
+    user_id = message.from_id
     tutor_id = await get_tutor_by_vk_id(user_id)
     if not tutor_id:
         await message.answer("⛔ Вы не зарегистрированы как преподаватель.")
@@ -2336,7 +2336,7 @@ async def process_add_slot(message: Message):
             await message.answer(f"Некорректное время «{t}». Пожалуйста, введите слот в формате ЧЧ:ММ-ЧЧ:ММ.")
             return
     slot = f"{start}-{end}"
-    data = await state_dispenser.get(message.from_user_id)
+    data = await state_dispenser.get(message.from_id)
     tid = data["tid"]
     day = data["current_day"]
     await add_schedule_slot(tid, day, slot)
@@ -2354,7 +2354,7 @@ async def process_add_slot(message: Message):
     kb.row()
     kb.add(Text("🔙 К дням недели", payload={"cmd": "back_to_schedule"}))
     await message.answer(text, keyboard=kb.get_json())
-    await state_dispenser.set(message.from_user_id, TutorScheduleStates.manage_day_slots)
+    await state_dispenser.set(message.from_id, TutorScheduleStates.manage_day_slots)
 
 
 async def add_range_start(event: MessageEvent):
@@ -2424,7 +2424,7 @@ async def process_add_range(message: Message):
             await message.answer(f"Некорректное время «{t}». Пожалуйста, используйте формат ЧЧ:ММ.")
             return
 
-    data = await state_dispenser.get(message.from_user_id)
+    data = await state_dispenser.get(message.from_id)
     tid = data["tid"]
     day = data["current_day"]
     duration_min = data.get("range_duration", 90)
@@ -2457,7 +2457,7 @@ async def process_add_range(message: Message):
     kb.row()
     kb.add(Text("🔙 К дням недели", payload={"cmd": "back_to_schedule"}))
     await message.answer(text, keyboard=kb.get_json())
-    await state_dispenser.set(message.from_user_id, TutorScheduleStates.manage_day_slots)
+    await state_dispenser.set(message.from_id, TutorScheduleStates.manage_day_slots)
 
 
 async def del_slot_start(event: MessageEvent):
@@ -2578,23 +2578,23 @@ async def help(message: Message):
 @bot.on.private_message()
 async def process_payment_email(message: Message):
     # Срабатывает на любое текстовое сообщение, если пользователь ожидает ввода email
-    booking_id = await get_pending_email_request(message.from_user_id)
+    booking_id = await get_pending_email_request(message.from_id)
     if not booking_id:
         return  # не в контексте платежа — игнорируем
     email = message.text.strip()
     if "@" not in email or "." not in email:
         return  # не email — ничего не делаем
 
-    await set_user_email(message.from_user_id, email)
+    await set_user_email(message.from_id, email)
     bookings = await get_all_bookings()
     booking = bookings.get(booking_id)
     if not booking:
         await message.answer("Ошибка: запись не найдена.")
-        await delete_pending_email_request(message.from_user_id)
+        await delete_pending_email_request(message.from_id)
         return
 
     await create_and_send_payment(message, booking, email, booking_id)
-    await delete_pending_email_request(message.from_user_id)
+    await delete_pending_email_request(message.from_id)
 
 # ==================== Запуск ====================
 
