@@ -106,7 +106,9 @@ async def init_db():
             booking_id INTEGER NOT NULL
         );
         """)
-
+    await conn.execute("""
+        ALTER TABLE tutors ADD COLUMN IF NOT EXISTS vk_id BIGINT;
+    """)
 async def close_db():
     global pool
     if pool:
@@ -130,6 +132,7 @@ async def get_all_tutors() -> Dict[int, dict]:
                 "commission_percent": row["commission_percent"],
                 "commission_mode": row["commission_mode"],
                 "inn": row["inn"],
+                "vk_id": row["vk_id"],
                 "subjects": {}
             }
         subjects_rows = await conn.fetch("SELECT * FROM subjects")
@@ -139,16 +142,16 @@ async def get_all_tutors() -> Dict[int, dict]:
                 tutors[tid]["subjects"][s["name"]] = s["price"]
     return tutors
 
-async def add_tutor(name, photo, telegram_id, description, commission_percent=25, commission_mode='manual', inn=''):
+async def add_tutor(name, photo, telegram_id, description, commission_percent=25, commission_mode='manual', inn='', vk_id=None):
     async with pool.acquire() as conn:
         return await conn.fetchval(
-            "INSERT INTO tutors (name, photo, telegram_id, description, commission_percent, commission_mode, inn) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
-            name, photo, telegram_id, description, commission_percent, commission_mode, inn
+            "INSERT INTO tutors (name, photo, telegram_id, description, commission_percent, commission_mode, inn, vk_id) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+            name, photo, telegram_id, description, commission_percent, commission_mode, inn, vk_id
         )
 
 async def update_tutor(tutor_id: int, **kwargs):
-    """kwargs: name, photo, telegram_id, description, commission_percent, commission_mode, inn"""
+    """kwargs: name, photo, telegram_id, description, commission_percent, commission_mode, inn, vk_id"""
     fields = {k: v for k, v in kwargs.items() if v is not None}
     if not fields:
         return
@@ -569,7 +572,10 @@ async def get_tutor_by_telegram_id(telegram_id: int) -> Optional[int]:
         row = await conn.fetchrow("SELECT id FROM tutors WHERE telegram_id = $1", telegram_id)
         return row["id"] if row else None
 
-
+async def get_tutor_by_vk_id(vk_id: int) -> Optional[int]:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT id FROM tutors WHERE vk_id = $1", vk_id)
+        return row["id"] if row else None
 
 async def cleanup_old_bookings():
     today = datetime.now().strftime("%d.%m.%Y")
