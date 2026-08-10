@@ -6,7 +6,6 @@ import os
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Union
-from vkbottle import InlineKeyboard, InlineKeyboardButton, KeyboardButtonColor
 from vkbottle import (
     Bot, Keyboard, KeyboardButtonColor, Text, OpenLink,
     BaseStateGroup, BuiltinStateDispenser
@@ -176,14 +175,14 @@ async def get_main_menu(user_id: int) -> str:
     return kb.get_json()
 
 # -------------------- Вспомогательные функции --------------------
-async def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_to_menu") -> InlineKeyboard:
+async def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_to_menu") -> Keyboard:
     tutors = await get_all_tutors()
-    kb = InlineKeyboard()
+    kb = Keyboard(inline=True)          # inline-режим
     for tid, tdata in tutors.items():
-        kb.add(InlineKeyboardButton(tdata["name"], payload={"cmd": f"{callback_prefix}_{tid}"}))
+        kb.add(Text(tdata["name"], payload={"cmd": f"{callback_prefix}_{tid}"}))
         kb.row()
-    kb.add(InlineKeyboardButton("🔙 Назад в меню", payload={"cmd": back_callback}))
-    return kb  # возвращаем объект
+    kb.add(Text("🔙 Назад в меню", payload={"cmd": back_callback}))
+    return kb                           # возвращаем объект, а не .get_json()
 
 async def make_subjects_keyboard(tutor_id: int, back_callback: str = "back_to_menu") -> str:
     tutors = await get_all_tutors()
@@ -2711,6 +2710,8 @@ async def send_pending_reminders():
 # ==================== УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК CALLBACK-КОМАНД ====================
 @bot.on.raw_event(MessageEvent)
 async def universal_callback_handler(event: MessageEvent):
+    logging.info(f"Получено событие: {event}")
+    logging.info(f"Payload: {event.payload}")
     cmd = event.payload.get("cmd", "")
     logging.info(f"Received callback: {cmd}") 
     if not cmd:
