@@ -3,7 +3,6 @@ import logging
 import sys
 import re
 import os
-import aiosqlite
 from datetime import datetime, timedelta, timezone
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -15,15 +14,15 @@ from aiogram.types import (
     Message, ReplyKeyboardRemove, ReplyKeyboardMarkup,
     KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery)
 from database import (
-    init_db, migrate_database,
-    get_all_tutors, add_tutor, update_tutor, delete_tutor,
+    init_db, get_all_tutors, add_tutor, update_tutor, delete_tutor,
     add_subject, update_subject, delete_subject,
     get_schedule, add_schedule_slot, delete_schedule_slot,
     get_all_bookings, add_booking, update_booking, delete_booking,
     get_tutor_by_telegram_id, get_student_subscriptions, get_tutor_financials, get_all_tutors_stats,
     get_students_stats, get_all_tutors_stats_by_month, get_students_stats_by_month,
     block_day, unblock_day, is_day_blocked, recalculate_monthly_stats, get_user_email, set_user_email,
-    add_lesson_to_balance, calculate_auto_commission, set_pending_email_request, get_pending_email_request, delete_pending_email_request
+    add_lesson_to_balance, calculate_auto_commission, set_pending_email_request, 
+    get_pending_email_request, delete_pending_email_request, close_db, cleanup_old_bookings
 )
 from aiogram.exceptions import TelegramBadRequest
 from payments import create_payment, check_payment
@@ -2994,22 +2993,6 @@ async def process_payment_email(message: Message, bot: Bot, state: FSMContext):
 
 
 # ==================== Очистка и напоминания ====================
-async def cleanup_old_bookings():
-    today = datetime.now().strftime("%d.%m.%Y")
-    async with aiosqlite.connect("bot.db") as db:
-        cursor = await db.execute(
-            "UPDATE bookings SET status='completed' WHERE status IN ('pending','confirmed') AND date < ?",
-            (today,)
-        )
-        if cursor.rowcount > 0:
-            await db.commit()
-            logging.info(f"Старые записи переведены в completed. Обновлено: {cursor.rowcount}")
-
-            # Пересчёт статистики для всех преподавателей за текущий месяц
-            now = datetime.now()
-            tutors = await get_all_tutors()
-            for tid in tutors:
-                await recalculate_monthly_stats(tid, now.year, now.month)
 
 
 async def send_reminders(bot: Bot):
@@ -3115,7 +3098,6 @@ async def reminder_loop(bot: Bot):
 # ==================== ЗАПУСК ====================
 async def main():
     await init_db()
-    await migrate_database()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
     async def periodic_cleanup_with_bot():
@@ -3127,7 +3109,10 @@ async def main():
     asyncio.create_task(periodic_cleanup_with_bot())
     asyncio.create_task(reminder_loop(bot))
     asyncio.create_task(pending_reminder_loop(bot))
-    await dp.start_polling(bot, drop_pending_updates=True)
+    try:
+        await dp.start_polling(bot, drop_pending_updates=True)
+    finally:
+        await close_db()
 
 
 if __name__ == "__main__":
