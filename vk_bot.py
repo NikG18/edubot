@@ -41,7 +41,7 @@ TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY", "")
 
 # -------------------- Бот и диспетчер состояний --------------------
 bot = Bot(token=BOT_TOKEN)
-state_dispenser = BuiltinStateDispenser
+state_dispenser = BuiltinStateDispenser()
 
 # -------------------- Группы состояний (FSM) --------------------
 class BookingStates(BaseStateGroup):
