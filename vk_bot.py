@@ -10,7 +10,7 @@ from vkbottle import (
     Bot, Keyboard, KeyboardButtonColor, Text, OpenLink,
     BaseStateGroup, ABCStateDispenser
 )
-from vkbottle.bot import Message, MessageEvent, PayloadRule
+from vkbottle.bot import Message, MessageEvent
 from vkbottle.bot import rules
 
 # Импорт всех функций из базы данных
