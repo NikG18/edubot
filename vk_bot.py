@@ -24,7 +24,7 @@ from database import (
     get_user_email, set_user_email,
     add_lesson_to_balance, calculate_auto_commission,
     set_pending_email_request, get_pending_email_request, delete_pending_email_request,
-    close_db, cleanup_old_bookings, WEEKDAYS, WEEKDAY_NAMES
+    close_db, cleanup_old_bookings, WEEKDAYS, WEEKDAY_NAMES, get_tutor_by_vk_id
 )
 from payments import create_payment, check_payment
 
@@ -69,7 +69,7 @@ class AdminStates(BaseStateGroup):
     waiting_name = "waiting_name"
     waiting_photo = "waiting_photo"
     waiting_description = "waiting_description"
-    waiting_telegram_id = "waiting_telegram_id"   # здесь VK ID
+    waiting_vk_id = "waiting_vk_id"   # здесь VK ID
     waiting_subject_name = "waiting_subject_name"
     waiting_subject_price = "waiting_subject_price"
     waiting_edit_choice = "waiting_edit_choice"
@@ -1380,16 +1380,17 @@ async def admin_add_description(message: Message):
         desc = ""
     await state_dispenser.update_data(message.from_user_id, description=desc)
     await message.answer("Введите VK ID репетитора (число или 0, если нет):")
-    await state_dispenser.set(message.from_user_id, AdminStates.waiting_telegram_id)
+    await state_dispenser.set(message.from_user_id, AdminStates.waiting_vk_id)
 
-@bot.on.private_message(state=AdminStates.waiting_telegram_id)
-async def admin_add_telegram_id(message: Message):
+
+@bot.on.private_message(state=AdminStates.waiting_vk_id)
+async def admin_add_vk_id(message: Message):
     try:
-        tid_val = int(message.text.strip())
+        vk_id = int(message.text.strip())
     except ValueError:
         await message.answer("Введите целое число или 0.")
         return
-    await state_dispenser.update_data(message.from_user_id, telegram_id=tid_val if tid_val != 0 else None)
+    await state_dispenser.update_data(message.from_user_id, vk_id=vk_id if vk_id != 0 else None)
     await message.answer("Введите процент комиссии (целое число, по умолчанию 25):")
     await state_dispenser.set(message.from_user_id, AdminStates.waiting_commission)
 
@@ -1456,6 +1457,7 @@ async def finish_adding_subjects(event: MessageEvent):
         description=data["description"],
         commission_percent=data.get("commission_percent", 25),
         inn=data.get("inn", "")
+        vk_id=data.get("vk_id")  
     )
     subjects = data.get("subjects", {})
     for subj_name, subj_price in subjects.items():
@@ -1494,7 +1496,7 @@ async def edit_tutor_choice(event: MessageEvent):
     kb.row()
     kb.add(Text("Изменить описание", payload={"cmd": "edit_desc"}))
     kb.row()
-    kb.add(Text("Изменить VK ID", payload={"cmd": "edit_telegram_id"}))
+    kb.add(Text("Изменить VK ID", payload={"cmd": "edit_vk_id"}))
     kb.row()
     kb.add(Text("📚 Управление предметами", payload={"cmd": "manage_subjects"}))
     kb.row()
@@ -1513,7 +1515,7 @@ async def edit_field_choice(event: MessageEvent):
     prompts = {
         "name": "Введите новое имя:",
         "desc": "Введите новое описание:",
-        "telegram_id": "Введите новый VK ID (число или 0, чтобы удалить):",
+        "vk_id": "Введите новый VK ID (число или 0, чтобы удалить):",
         "commission": "Введите новый процент комиссии (целое число):",
         "inn": "Введите новый ИНН (или '-', чтобы удалить):"
     }
@@ -1593,7 +1595,7 @@ async def back_to_edit_tutor(event: MessageEvent):
     kb.row()
     kb.add(Text("Изменить описание", payload={"cmd": "edit_desc"}))
     kb.row()
-    kb.add(Text("Изменить VK ID", payload={"cmd": "edit_telegram_id"}))
+    kb.add(Text("Изменить VK ID", payload={"cmd": "edit_vk_id"}))
     kb.row()
     kb.add(Text("📚 Управление предметами", payload={"cmd": "manage_subjects"}))
     kb.row()
@@ -2577,7 +2579,11 @@ async def process_payment_email(message: Message):
 
     await create_and_send_payment(message, booking, email, booking_id)
     await delete_pending_email_request(message.from_user_id)
+async def get_tutor_by_vk_id(vk_id: int) -> Optional[int]:
+    return await get_tutor_by_vk_id(vk_id)  # вызов из БД
+
 # ==================== Запуск ====================
+
 async def main():
     await init_db()
     # Запуск фоновых задач
