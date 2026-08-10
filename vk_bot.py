@@ -8,7 +8,7 @@ from typing import Optional, Dict, List, Union
 
 from vkbottle import (
     Bot, Keyboard, KeyboardButtonColor, Text, OpenLink,
-    BaseStateGroup, StateDispenser
+    BaseStateGroup, ABCStateDispenser
 )
 from vkbottle.bot import Message, MessageEvent, PayloadRule
 from vkbottle.bot import rules
@@ -41,7 +41,7 @@ TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY", "")
 
 # -------------------- Бот и диспетчер состояний --------------------
 bot = Bot(token=BOT_TOKEN)
-state_dispenser = StateDispenser()
+state_dispenser = ABCStateDispenser()
 
 # -------------------- Группы состояний (FSM) --------------------
 class BookingStates(BaseStateGroup):
