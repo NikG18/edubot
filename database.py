@@ -106,9 +106,9 @@ async def init_db():
             booking_id INTEGER NOT NULL
         );
         """)
-    await conn.execute("""
+        await conn.execute("""
         ALTER TABLE tutors ADD COLUMN IF NOT EXISTS vk_id BIGINT;
-    """)
+        """)
 async def close_db():
     global pool
     if pool:
