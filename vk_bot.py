@@ -2675,10 +2675,12 @@ async def process_payment_email(message: Message):
 # ==================== УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК CALLBACK-КОМАНД ====================
 @bot.on.raw_event(MessageEvent)
 async def universal_callback_handler(event: MessageEvent):
+    logging.info(f"🔔 Получен callback: {event.payload}")
     cmd = event.payload.get("cmd", "")
+    logging.info(f"🔔 Команда: {cmd}")
     if not cmd:
         return
-
+    
     # Подтверждение события – обязательно для всех callback-кнопок
     await bot.api.messages.send_message_event_answer(
         event_id=event.event_id,
