@@ -9,7 +9,7 @@ TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 
 # Для боевого API
-API_BASE = "https://rest-api-test.tinkoff.ru/v2/"
+API_BASE = "https://securepay.tinkoff.ru/v2/"
 
 def generate_token(params: dict) -> str:
     data = {k: v for k, v in sorted(params.items()) if k not in ("Token", "Receipt")}
@@ -56,16 +56,16 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
             "Tax": "none"
         }]
     }
-   # if inn:
-    #    receipt["AgentSign"] = "agent"
-    #    receipt["AgentData"] = {
-     #       "AgentPhone": "+70000000000",
-      #      "SupplierInfo": {
-       #         "Name": tutor_name,
-        #        "Inn": inn,
-         #       "Phones": ["+70000000001"]
-          #  }
-       # }
+    if inn:
+        receipt["AgentSign"] = "agent"
+        receipt["AgentData"] = {
+            "AgentPhone": "+70000000000",
+            "SupplierInfo": {
+                "Name": tutor_name,
+                "Inn": inn,
+                "Phones": ["+70000000001"]
+            }
+        }
 
     params = {
         "Amount": amount_kop,
