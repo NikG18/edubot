@@ -8,7 +8,7 @@ from typing import Optional, Dict, List, Union
 
 from vkbottle import (
     Bot, Keyboard, KeyboardButtonColor, Text, OpenLink,
-    BaseStateGroup, BuiltinStateDispenser
+    BaseStateGroup, BuiltinStateDispenser, Callback
 )
 from vkbottle.bot import Message, MessageEvent
 from vkbottle.bot import rules
@@ -217,9 +217,9 @@ async def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_
     tutors = await get_all_tutors()
     kb = Keyboard(inline=True)
     for tid, tdata in tutors.items():
-        kb.add(Text(tdata["name"], payload={"cmd": f"{callback_prefix}_{tid}"}))
+        kb.add(Callback(tdata["name"], payload={"cmd": f"{callback_prefix}_{tid}"}))
         kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": back_callback}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": back_callback}))
     return kb.get_json()
 
 
@@ -228,13 +228,13 @@ async def make_subjects_keyboard(tutor_id: int, back_callback: str = "back_to_me
     tutor = tutors.get(tutor_id)
     if not tutor:
         kb = Keyboard(inline=True)
-        kb.add(Text("🔙 Назад", payload={"cmd": back_callback}))
+        kb.add(Callback("🔙 Назад", payload={"cmd": back_callback}))
         return kb.get_json()
     kb = Keyboard(inline=True)
     for subj in tutor["subjects"]:
-        kb.add(Text(subj, payload={"cmd": f"subject_{tutor_id}_{subj}"}))
+        kb.add(Callback(subj, payload={"cmd": f"subject_{tutor_id}_{subj}"}))
         kb.row()
-    kb.add(Text("🔙 Назад к репетиторам", payload={"cmd": back_callback}))
+    kb.add(Callback("🔙 Назад к репетиторам", payload={"cmd": back_callback}))
     return kb.get_json()
 
 
@@ -387,9 +387,9 @@ async def show_tutor_info(event: MessageEvent):
     for subj, price in tutor["subjects"].items():
         text += f"• {subj} — {price} руб.\n"
     keyboard = Keyboard(inline=True)
-    keyboard.add(Text("🎓 Записаться на пробное занятие", payload={"cmd": "trials", "tutor_id": tid}))
+    keyboard.add(Callback("🎓 Записаться на пробное занятие", payload={"cmd": "trials", "tutor_id": tid}))
     keyboard.row()
-    keyboard.add(Text("🔙 Назад к списку", payload={"cmd": "back_to_tutors"}))
+    keyboard.add(Callback("🔙 Назад к списку", payload={"cmd": "back_to_tutors"}))
     await edit_event_message(event, text, keyboard=keyboard.get_json())
 
 
@@ -416,9 +416,9 @@ async def start_trials_booking(event: MessageEvent):
 
     keyboard = Keyboard(inline=True)
     for subj in subjects:
-        keyboard.add(Text(subj, payload={"cmd": "trial_subject", "subject": subj}))
+        keyboard.add(Callback(subj, payload={"cmd": "trial_subject", "subject": subj}))
         keyboard.row()
-    keyboard.add(Text("🔙 Отмена", payload={"cmd": "back_to_tutors"}))
+    keyboard.add(Callback("🔙 Отмена", payload={"cmd": "back_to_tutors"}))
     await edit_event_message(event, "Выберите предмет для пробного занятия:", keyboard=keyboard.get_json())
 
 
@@ -435,7 +435,7 @@ async def show_trial_dates(event: MessageEvent, tid: int):
     available_dates = await get_available_dates(tid, days_ahead=7)
     if not available_dates:
         keyboard = Keyboard(inline=True)
-        keyboard.add(Text("🔙 К анкете", payload={"cmd": "tutor_info", "tutor_id": tid}))
+        keyboard.add(Callback("🔙 К анкете", payload={"cmd": "tutor_info", "tutor_id": tid}))
         await edit_event_message(event, "На ближайшие 7 дней у репетитора нет свободных слотов.", keyboard=keyboard.get_json())
         return
 
@@ -443,12 +443,12 @@ async def show_trial_dates(event: MessageEvent, tid: int):
     for d in available_dates:
         dt = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
-        buttons.append(Text(label, payload={"cmd": "trial_date", "date": d}))
+        buttons.append(Callback(label, payload={"cmd": "trial_date", "date": d}))
     kb = Keyboard(inline=True)
     for btn in buttons:
         kb.add(btn)
         kb.row()
-    kb.add(Text("🔙 К анкете", payload={"cmd": "tutor_info", "tutor_id": tid}))
+    kb.add(Callback("🔙 К анкете", payload={"cmd": "tutor_info", "tutor_id": tid}))
     await edit_event_message(event, "Выберите дату пробного занятия:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TrialBookingStates.waiting_date)
 
@@ -461,15 +461,15 @@ async def trial_date_chosen(event: MessageEvent):
     slots = await get_available_slots(tid, date_str)
     if not slots:
         kb = Keyboard(inline=True)
-        kb.add(Text("🔙 К выбору даты", payload={"cmd": "back_to_trial_dates"}))
+        kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_trial_dates"}))
         await edit_event_message(event, "На эту дату нет свободного времени.", keyboard=kb.get_json())
         return
 
     kb = Keyboard(inline=True)
     for s in slots:
-        kb.add(Text(s, payload={"cmd": "trial_slot", "slot": s}))
+        kb.add(Callback(s, payload={"cmd": "trial_slot", "slot": s}))
         kb.row()
-    kb.add(Text("🔙 К выбору даты", payload={"cmd": "back_to_trial_dates"}))
+    kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_trial_dates"}))
     await edit_event_message(event, "Выберите время:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TrialBookingStates.waiting_time)
 
@@ -496,9 +496,9 @@ async def trial_slot_chosen(event: MessageEvent):
         f"🕒 Время: {slot}\n\nПодтвердить запись?"
     )
     keyboard = Keyboard(inline=True)
-    keyboard.add(Text("✅ Подтвердить", payload={"cmd": "confirm_trial"}))
+    keyboard.add(Callback("✅ Подтвердить", payload={"cmd": "confirm_trial"}))
     keyboard.row()
-    keyboard.add(Text("🔙 К выбору времени", payload={"cmd": "back_to_trial_dates"}))
+    keyboard.add(Callback("🔙 К выбору времени", payload={"cmd": "back_to_trial_dates"}))
     await edit_event_message(event, text, keyboard=keyboard.get_json())
     await state_dispenser.set(event.user_id, TrialBookingStates.waiting_confirmation)
 
@@ -528,8 +528,8 @@ async def confirm_trial_booking(event: MessageEvent):
     tutor = tutors.get(tid)
     if tutor and tutor.get("vk_id"):
         keyboard = Keyboard(inline=True)
-        keyboard.add(Text("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
-        keyboard.add(Text("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
+        keyboard.add(Callback("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
+        keyboard.add(Callback("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
         try:
             await bot.api.messages.send(
                 user_id=tutor["vk_id"],
@@ -559,7 +559,7 @@ async def lesson_info(message: Message):
 
     text = TUTOR_INFO_TEXT if (is_tutor and not is_admin) else STUDENT_INFO_TEXT
     keyboard = Keyboard(inline=True)
-    keyboard.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    keyboard.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer(text, keyboard=keyboard.get_json())
 
 
@@ -639,7 +639,7 @@ async def subject_chosen(event: MessageEvent):
     dates = await get_available_dates(tid)
     if not dates:
         kb = Keyboard(inline=True)
-        kb.add(Text("🔙 Назад к репетиторам", payload={"cmd": "back_to_tutors_booking"}))
+        kb.add(Callback("🔙 Назад к репетиторам", payload={"cmd": "back_to_tutors_booking"}))
         await edit_event_message(event, "У этого преподавателя пока нет свободных дат. Попробуйте позже или свяжитесь с преподавателем.",
                                  keyboard=kb.get_json())
         return
@@ -648,9 +648,9 @@ async def subject_chosen(event: MessageEvent):
     for d in dates:
         dt = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
-        kb.add(Text(label, payload={"cmd": f"date_{d}"}))
+        kb.add(Callback(label, payload={"cmd": f"date_{d}"}))
         kb.row()
-    kb.add(Text("🔙 Назад к репетиторам", payload={"cmd": "back_to_tutors_booking"}))
+    kb.add(Callback("🔙 Назад к репетиторам", payload={"cmd": "back_to_tutors_booking"}))
     await edit_event_message(event, "Выберите дату:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, BookingStates.waiting_date)
 
@@ -663,15 +663,15 @@ async def choose_date(event: MessageEvent):
     slots = await get_available_slots(tid, date_str)
     if not slots:
         kb = Keyboard(inline=True)
-        kb.add(Text("🔙 К выбору даты", payload={"cmd": "back_to_date"}))
+        kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_date"}))
         await edit_event_message(event, "На эту дату нет свободного времени.", keyboard=kb.get_json())
         return
 
     kb = Keyboard(inline=True)
     for s in slots:
-        kb.add(Text(s, payload={"cmd": f"slot_{s}"}))
+        kb.add(Callback(s, payload={"cmd": f"slot_{s}"}))
         kb.row()
-    kb.add(Text("🔙 К выбору даты", payload={"cmd": "back_to_date"}))
+    kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_date"}))
     await edit_event_message(event, "Выберите время:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, BookingStates.waiting_time)
 
@@ -686,9 +686,9 @@ async def back_to_date(event: MessageEvent):
     for d in dates:
         dt = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
-        kb.add(Text(label, payload={"cmd": f"date_{d}"}))
+        kb.add(Callback(label, payload={"cmd": f"date_{d}"}))
         kb.row()
-    kb.add(Text("🔙 Назад к репетиторам", payload={"cmd": "back_to_tutors_booking"}))
+    kb.add(Callback("🔙 Назад к репетиторам", payload={"cmd": "back_to_tutors_booking"}))
     await edit_event_message(event, "Выберите дату:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, BookingStates.waiting_date)
 
@@ -712,11 +712,11 @@ async def choose_slot(event: MessageEvent):
             f"Дата: {data['date']}\n"
             f"Время: {slot}\n\nВсё верно?")
     kb = Keyboard(inline=True)
-    kb.add(Text("✅ Подтвердить запись", payload={"cmd": "confirm_booking"}))
+    kb.add(Callback("✅ Подтвердить запись", payload={"cmd": "confirm_booking"}))
     kb.row()
-    kb.add(Text("✏️ Изменить время", payload={"cmd": "back_to_date"}))
+    kb.add(Callback("✏️ Изменить время", payload={"cmd": "back_to_date"}))
     kb.row()
-    kb.add(Text("❌ Отменить запись", payload={"cmd": "cancel_booking"}))
+    kb.add(Callback("❌ Отменить запись", payload={"cmd": "cancel_booking"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, BookingStates.waiting_confirmation)
 
@@ -746,8 +746,8 @@ async def confirm_booking(event: MessageEvent):
     tutor = tutors.get(tid)
     if tutor and tutor.get("vk_id"):
         kb = Keyboard(inline=True)
-        kb.add(Text("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
-        kb.add(Text("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
+        kb.add(Callback("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
+        kb.add(Callback("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
         try:
             await bot.api.messages.send(
                 user_id=tutor["vk_id"],
@@ -792,9 +792,9 @@ async def my_records(message: Message):
 
     if not user_bookings:
         kb = Keyboard(inline=True)
-        kb.add(Text("📊 Статистика", payload={"cmd": "student_stats"}))
+        kb.add(Callback("📊 Статистика", payload={"cmd": "student_stats"}))
         kb.row()
-        kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+        kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
         await message.answer("У вас пока нет активных записей.", keyboard=kb.get_json())
         return
 
@@ -813,15 +813,15 @@ async def my_records(message: Message):
             + ("✅ Можно отменить/перенести" if can_act else "⚠️ Действия невозможны")
         )
         if can_act:
-            kb.add(Text(f"🔄 Перенести: {tutor['name']} {b['date']} {b['time_slot']}",
+            kb.add(Callback(f"🔄 Перенести: {tutor['name']} {b['date']} {b['time_slot']}",
                         payload={"cmd": f"reschedule_student_{bid}"}))
             kb.row()
-            kb.add(Text(f"❌ Отменить: {tutor['name']} {b['date']} {b['time_slot']}",
+            kb.add(Callback(f"❌ Отменить: {tutor['name']} {b['date']} {b['time_slot']}",
                         payload={"cmd": f"cancel_student_{bid}"}))
             kb.row()
-    kb.add(Text("📊 Статистика", payload={"cmd": "student_stats"}))
+    kb.add(Callback("📊 Статистика", payload={"cmd": "student_stats"}))
     kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer("\n".join(text_lines), keyboard=kb.get_json())
 
 
@@ -855,7 +855,7 @@ async def cancel_student_booking(event: MessageEvent):
         except:
             pass
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 К моим записям", payload={"cmd": "back_to_my_records"}))
+    kb.add(Callback("🔙 К моим записям", payload={"cmd": "back_to_my_records"}))
     await edit_event_message(event, "✅ Запись отменена.", keyboard=kb.get_json())
 
 
@@ -877,7 +877,7 @@ async def show_student_stats(event: MessageEvent):
         f"🎫 Абонементы:\n{sub_text}"
     )
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 К моим записям", payload={"cmd": "back_to_my_records"}))
+    kb.add(Callback("🔙 К моим записям", payload={"cmd": "back_to_my_records"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
 
 
@@ -888,9 +888,9 @@ async def back_to_my_records(event: MessageEvent):
                      b["user_id"] == user_id and b["status"] in ("pending", "confirmed")]
     if not user_bookings:
         kb = Keyboard(inline=True)
-        kb.add(Text("📊 Статистика", payload={"cmd": "student_stats"}))
+        kb.add(Callback("📊 Статистика", payload={"cmd": "student_stats"}))
         kb.row()
-        kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+        kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
         await edit_event_message(event, "У вас пока нет активных записей.", keyboard=kb.get_json())
         return
     text_lines = ["Ваши записи:\n"]
@@ -904,15 +904,15 @@ async def back_to_my_records(event: MessageEvent):
         text_lines.append(f"👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n📅 {b['date']} 🕒 {b['time_slot']} {status_text}\n" + (
             "✅ Можно отменить/перенести" if can_act else "⚠️ Действия невозможны"))
         if can_act:
-            kb.add(Text(f"🔄 Перенести: {tutor['name']} {b['date']} {b['time_slot']}",
+            kb.add(Callback(f"🔄 Перенести: {tutor['name']} {b['date']} {b['time_slot']}",
                         payload={"cmd": f"reschedule_student_{bid}"}))
             kb.row()
-            kb.add(Text(f"❌ Отменить: {tutor['name']} {b['date']} {b['time_slot']}",
+            kb.add(Callback(f"❌ Отменить: {tutor['name']} {b['date']} {b['time_slot']}",
                         payload={"cmd": f"cancel_student_{bid}"}))
             kb.row()
-    kb.add(Text("📊 Статистика", payload={"cmd": "student_stats"}))
+    kb.add(Callback("📊 Статистика", payload={"cmd": "student_stats"}))
     kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "\n".join(text_lines), keyboard=kb.get_json())
 
 
@@ -948,9 +948,9 @@ async def student_reschedule_start(event: MessageEvent):
     for d in dates:
         dt_date = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt_date.weekday()]]})"
-        kb.add(Text(label, payload={"cmd": f"reschedule_date_{d}"}))
+        kb.add(Callback(label, payload={"cmd": f"reschedule_date_{d}"}))
         kb.row()
-    kb.add(Text("🔙 Отмена", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите новую дату:", keyboard=kb.get_json())
 
 
@@ -963,14 +963,14 @@ async def student_reschedule_date(event: MessageEvent):
     slots = await get_available_slots(tid, date_str, exclude_booking_id=old_bid)
     if not slots:
         kb = Keyboard(inline=True)
-        kb.add(Text("🔙 К выбору даты", payload={"cmd": "back_to_reschedule_date"}))
+        kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_reschedule_date"}))
         await edit_event_message(event, "На эту дату нет свободных слотов.", keyboard=kb.get_json())
         return
     kb = Keyboard(inline=True)
     for s in slots:
-        kb.add(Text(s, payload={"cmd": f"reschedule_slot_{s}"}))
+        kb.add(Callback(s, payload={"cmd": f"reschedule_slot_{s}"}))
         kb.row()
-    kb.add(Text("🔙 К выбору даты", payload={"cmd": "back_to_reschedule_date"}))
+    kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_reschedule_date"}))
     await edit_event_message(event, "Выберите новое время:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, StudentRescheduleStates.waiting_time)
 
@@ -983,9 +983,9 @@ async def back_to_reschedule_date(event: MessageEvent):
     for d in dates:
         dt_date = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt_date.weekday()]]})"
-        kb.add(Text(label, payload={"cmd": f"reschedule_date_{d}"}))
+        kb.add(Callback(label, payload={"cmd": f"reschedule_date_{d}"}))
         kb.row()
-    kb.add(Text("🔙 Отмена", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите новую дату:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, StudentRescheduleStates.waiting_date)
 
@@ -1002,9 +1002,9 @@ async def student_reschedule_slot(event: MessageEvent):
         f"Новая дата/время: {data['new_date']} {slot}\n\nПодтвердить перенос?"
     )
     kb = Keyboard(inline=True)
-    kb.add(Text("✅ Подтвердить перенос", payload={"cmd": "confirm_student_reschedule"}))
+    kb.add(Callback("✅ Подтвердить перенос", payload={"cmd": "confirm_student_reschedule"}))
     kb.row()
-    kb.add(Text("🔙 Назад к выбору времени", payload={"cmd": "back_to_reschedule_date"}))
+    kb.add(Callback("🔙 Назад к выбору времени", payload={"cmd": "back_to_reschedule_date"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, StudentRescheduleStates.waiting_confirmation)
 
@@ -1035,8 +1035,8 @@ async def confirm_student_reschedule(event: MessageEvent):
     )
     if tutor_tg:
         kb = Keyboard(inline=True)
-        kb.add(Text("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
-        kb.add(Text("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
+        kb.add(Callback("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
+        kb.add(Callback("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
         try:
             await bot.api.messages.send(user_id=tutor_tg, message=notify_tutor, keyboard=kb.get_json(), random_id=0)
         except:
@@ -1057,43 +1057,43 @@ async def confirm_student_reschedule(event: MessageEvent):
 @bot.on.private_message(text="💳 Оплата")
 async def oplata(message: Message):
     kb = Keyboard(inline=True)
-    kb.add(Text("📱 Оплата по QR-коду", payload={"cmd": "qr"}))
+    kb.add(Callback("📱 Оплата по QR-коду", payload={"cmd": "qr"}))
     kb.row()
-    kb.add(Text("💳 Оплата банковской картой", payload={"cmd": "card"}))
+    kb.add(Callback("💳 Оплата банковской картой", payload={"cmd": "card"}))
     kb.row()
-    kb.add(Text("📲 Перевод СБП по номеру телефона", payload={"cmd": "sbp"}))
+    kb.add(Callback("📲 Перевод СБП по номеру телефона", payload={"cmd": "sbp"}))
     kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer("Какой способ оплаты вам удобнее?", keyboard=kb.get_json())
 
 
 async def back_to_pay(event: MessageEvent):
     kb = Keyboard(inline=True)
-    kb.add(Text("📱 Оплата по QR-коду", payload={"cmd": "qr"}))
+    kb.add(Callback("📱 Оплата по QR-коду", payload={"cmd": "qr"}))
     kb.row()
-    kb.add(Text("💳 Оплата банковской картой", payload={"cmd": "card"}))
+    kb.add(Callback("💳 Оплата банковской картой", payload={"cmd": "card"}))
     kb.row()
-    kb.add(Text("📲 Перевод СБП по номеру телефона", payload={"cmd": "sbp"}))
+    kb.add(Callback("📲 Перевод СБП по номеру телефона", payload={"cmd": "sbp"}))
     kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Какой способ оплаты вам удобнее?", keyboard=kb.get_json())
 
 
 async def qr(event: MessageEvent):
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 Назад к списку", payload={"cmd": "back_to_pay"}))
+    kb.add(Callback("🔙 Назад к списку", payload={"cmd": "back_to_pay"}))
     await edit_event_message(event, "📱 Сканируйте QR-код для оплаты в приложении вашего банка", keyboard=kb.get_json())
 
 
 async def card(event: MessageEvent):
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 Назад к списку", payload={"cmd": "back_to_pay"}))
+    kb.add(Callback("🔙 Назад к списку", payload={"cmd": "back_to_pay"}))
     await edit_event_message(event, "💳 Переходите по ссылке и следуйте дальнейшим инструкциям", keyboard=kb.get_json())
 
 
 async def sbp(event: MessageEvent):
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 Назад к списку", payload={"cmd": "back_to_pay"}))
+    kb.add(Callback("🔙 Назад к списку", payload={"cmd": "back_to_pay"}))
     await edit_event_message(event,
                              "📲 Перевод выполняйте, указывая предмет и дату занятия, по номеру +7(933)120-96-03 на Т-банк",
                              keyboard=kb.get_json())
@@ -1103,41 +1103,41 @@ async def sbp(event: MessageEvent):
 @bot.on.private_message(text="📖 Учебные материалы")
 async def material(message: Message):
     kb = Keyboard(inline=True)
-    kb.add(Text("📘 Учебные пособия", payload={"cmd": "book"}))
+    kb.add(Callback("📘 Учебные пособия", payload={"cmd": "book"}))
     kb.row()
-    kb.add(Text("🎥 Авторские видео", payload={"cmd": "vid"}))
+    kb.add(Callback("🎥 Авторские видео", payload={"cmd": "vid"}))
     kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer("Вы ищете пособия или видео?", keyboard=kb.get_json())
 
 
 async def back_to_mat(event: MessageEvent):
     kb = Keyboard(inline=True)
-    kb.add(Text("📘 Учебные пособия", payload={"cmd": "book"}))
+    kb.add(Callback("📘 Учебные пособия", payload={"cmd": "book"}))
     kb.row()
-    kb.add(Text("🎥 Авторские видео", payload={"cmd": "vid"}))
+    kb.add(Callback("🎥 Авторские видео", payload={"cmd": "vid"}))
     kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Вы ищете пособия или видео?", keyboard=kb.get_json())
 
 
 async def book(event: MessageEvent):
     kb = Keyboard(inline=True)
-    kb.add(Text("🧪 Химия", payload={"cmd": "bookh"}))
+    kb.add(Callback("🧪 Химия", payload={"cmd": "bookh"}))
     kb.row()
-    kb.add(Text("⚛️ Физика", payload={"cmd": "bookf"}))
+    kb.add(Callback("⚛️ Физика", payload={"cmd": "bookf"}))
     kb.row()
-    kb.add(Text("🔙 Назад к списку", payload={"cmd": "back_to_mat"}))
+    kb.add(Callback("🔙 Назад к списку", payload={"cmd": "back_to_mat"}))
     await edit_event_message(event, "📘 Учебники и таблицы", keyboard=kb.get_json())
 
 
 async def vid(event: MessageEvent):
     kb = Keyboard(inline=True)
-    kb.add(Text("🧪 Химия", payload={"cmd": "videh"}))
+    kb.add(Callback("🧪 Химия", payload={"cmd": "videh"}))
     kb.row()
-    kb.add(Text("⚛️ Физика", payload={"cmd": "videf"}))
+    kb.add(Callback("⚛️ Физика", payload={"cmd": "videf"}))
     kb.row()
-    kb.add(Text("🔙 Назад к списку", payload={"cmd": "back_to_mat"}))
+    kb.add(Callback("🔙 Назад к списку", payload={"cmd": "back_to_mat"}))
     await edit_event_message(event, "🎥 Видеоматериалы (записи реакций и явлений)", keyboard=kb.get_json())
 
 
@@ -1174,7 +1174,7 @@ async def choose_msg_tutor(event: MessageEvent):
         return
     await state_dispenser.update_data(event.user_id, msg_tutor_id=tid, msg_tutor_name=tutor["name"])
     kb = Keyboard(inline=True)
-    kb.add(Text("❌ Отмена", payload={"cmd": "cancel_msg_to_tutor"}))
+    kb.add(Callback("❌ Отмена", payload={"cmd": "cancel_msg_to_tutor"}))
     await edit_event_message(event, f"Вы пишете преподавателю {tutor['name']}.\nВведите ваше сообщение:",
                              keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, ContactStates.waiting_message)
@@ -1185,9 +1185,9 @@ async def cancel_msg_to_tutor(event: MessageEvent):
     kb = Keyboard(inline=True)
     tutors = await get_all_tutors()
     for tid, tdata in tutors.items():
-        kb.add(Text(tdata["name"], payload={"cmd": f"msg_tutor_{tid}"}))
+        kb.add(Callback(tdata["name"], payload={"cmd": f"msg_tutor_{tid}"}))
         kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите преподавателя, которому хотите написать:", keyboard=kb.get_json())
 
 
@@ -1208,7 +1208,7 @@ async def send_message_to_tutor(message: Message):
     )
 
     kb = Keyboard(inline=True)
-    kb.add(Text("↩️ Ответить", payload={"cmd": f"reply_{message.from_id}"}))
+    kb.add(Callback("↩️ Ответить", payload={"cmd": f"reply_{message.from_id}"}))
     try:
         await bot.api.messages.send(user_id=ADMIN_VK_ID, message=forward_msg, keyboard=kb.get_json(), random_id=0)
     except:
@@ -1270,9 +1270,9 @@ async def tutor_contact_student_start(message: Message):
 
     kb = Keyboard(inline=True)
     for uid, name in students.items():
-        kb.add(Text(name, payload={"cmd": f"tutorcontactstudent_{uid}"}))
+        kb.add(Callback(name, payload={"cmd": f"tutorcontactstudent_{uid}"}))
         kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer("Выберите ученика:", keyboard=kb.get_json())
     await state_dispenser.set(message.from_id, TutorContactStudentStates.choosing_student)
 
@@ -1287,7 +1287,7 @@ async def tutor_contact_student_chosen(event: MessageEvent):
             student_username = b["username"]
             break
     kb = Keyboard(inline=True)
-    kb.add(Text("❌ Отмена", payload={"cmd": "cancel_tutor_msg_to_student"}))
+    kb.add(Callback("❌ Отмена", payload={"cmd": "cancel_tutor_msg_to_student"}))
     await edit_event_message(event, f"Вы пишете ученику {student_username}. Введите сообщение:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorContactStudentStates.waiting_message)
 
@@ -1297,13 +1297,13 @@ async def cancel_tutor_msg_to_student(event: MessageEvent):
     tid = await get_tutor_by_vk_id(event.user_id)
     if tid:
         kb = Keyboard(inline=True)
-        kb.add(Text("📋 Мои ученики", payload={"cmd": f"tutor_students_{tid}"}))
+        kb.add(Callback("📋 Мои ученики", payload={"cmd": f"tutor_students_{tid}"}))
         kb.row()
-        kb.add(Text("⚙️ Настроить расписание", payload={"cmd": f"tutor_schedule_{tid}"}))
+        kb.add(Callback("⚙️ Настроить расписание", payload={"cmd": f"tutor_schedule_{tid}"}))
         kb.row()
-        kb.add(Text("📊 Статистика", payload={"cmd": f"tutor_stats_{tid}"}))
+        kb.add(Callback("📊 Статистика", payload={"cmd": f"tutor_stats_{tid}"}))
         kb.row()
-        kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+        kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
         await edit_event_message(event, "Панель преподавателя:", keyboard=kb.get_json())
     else:
         await edit_event_message(event, "Главное меню:", keyboard=await get_main_menu(event.user_id))
@@ -1332,7 +1332,7 @@ async def tutor_send_message_to_student(message: Message):
 @bot.on.private_message(text="🆘 Поддержка")
 async def support_start(message: Message):
     kb = Keyboard(inline=True)
-    kb.add(Text("❌ Отмена", payload={"cmd": "cancel_support"}))
+    kb.add(Callback("❌ Отмена", payload={"cmd": "cancel_support"}))
     await message.answer("Опишите вашу проблему или вопрос. Администратор свяжется с вами.", keyboard=kb.get_json())
     await state_dispenser.set(message.from_id, SupportUserStates.waiting_message)
 
@@ -1353,7 +1353,7 @@ async def support_message_to_admin(message: Message):
 
     forward_msg = f"🆘 Сообщение в поддержку от {username} (ID: {uid}):\n\n{text}"
     kb = Keyboard(inline=True)
-    kb.add(Text("↩️ Ответить", payload={"cmd": f"support_reply_{uid}"}))
+    kb.add(Callback("↩️ Ответить", payload={"cmd": f"support_reply_{uid}"}))
     try:
         await bot.api.messages.send(user_id=ADMIN_VK_ID, message=forward_msg, keyboard=kb.get_json(), random_id=0)
     except:
@@ -1394,30 +1394,30 @@ async def admin_panel(message: Message):
         await message.answer("⛔ Доступ запрещён.")
         return
     kb = Keyboard(inline=True)
-    kb.add(Text("➕ Добавить репетитора", payload={"cmd": "admin_add"}))
+    kb.add(Callback("➕ Добавить репетитора", payload={"cmd": "admin_add"}))
     kb.row()
-    kb.add(Text("✏️ Редактировать репетитора", payload={"cmd": "admin_edit_list"}))
+    kb.add(Callback("✏️ Редактировать репетитора", payload={"cmd": "admin_edit_list"}))
     kb.row()
-    kb.add(Text("❌ Удалить репетитора", payload={"cmd": "admin_delete_list"}))
+    kb.add(Callback("❌ Удалить репетитора", payload={"cmd": "admin_delete_list"}))
     kb.row()
-    kb.add(Text("📊 Статистика", payload={"cmd": "admin_stats"}))
+    kb.add(Callback("📊 Статистика", payload={"cmd": "admin_stats"}))
     kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer("Админ-панель управления репетиторами", keyboard=kb.get_json())
 
 
 async def open_admin_panel(event: MessageEvent):
     await state_dispenser.delete(event.user_id)
     kb = Keyboard(inline=True)
-    kb.add(Text("➕ Добавить репетитора", payload={"cmd": "admin_add"}))
+    kb.add(Callback("➕ Добавить репетитора", payload={"cmd": "admin_add"}))
     kb.row()
-    kb.add(Text("✏️ Редактировать репетитора", payload={"cmd": "admin_edit_list"}))
+    kb.add(Callback("✏️ Редактировать репетитора", payload={"cmd": "admin_edit_list"}))
     kb.row()
-    kb.add(Text("❌ Удалить репетитора", payload={"cmd": "admin_delete_list"}))
+    kb.add(Callback("❌ Удалить репетитора", payload={"cmd": "admin_delete_list"}))
     kb.row()
-    kb.add(Text("📊 Статистика", payload={"cmd": "admin_stats"}))
+    kb.add(Callback("📊 Статистика", payload={"cmd": "admin_stats"}))
     kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Админ-панель управления репетиторами", keyboard=kb.get_json())
 
 
@@ -1516,9 +1516,9 @@ async def admin_add_subject_price(message: Message):
     await state_dispenser.update_data(message.from_id, subjects=subjects)
 
     kb = Keyboard(inline=True)
-    kb.add(Text("✅ Да, добавить ещё", payload={"cmd": "add_another_subject"}))
+    kb.add(Callback("✅ Да, добавить ещё", payload={"cmd": "add_another_subject"}))
     kb.row()
-    kb.add(Text("❌ Нет, закончить", payload={"cmd": "finish_adding_subjects"}))
+    kb.add(Callback("❌ Нет, закончить", payload={"cmd": "finish_adding_subjects"}))
     await message.answer(f"Предмет «{temp_subject}» с ценой {price} руб. добавлен. Добавить ещё предмет?",
                          keyboard=kb.get_json())
 
@@ -1544,7 +1544,7 @@ async def finish_adding_subjects(event: MessageEvent):
         await add_subject(new_id, subj_name, subj_price)
 
     kb = Keyboard(inline=True)
-    kb.add(Text("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
+    kb.add(Callback("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
     await edit_event_message(event, f"✅ Репетитор «{data['name']}» успешно добавлен (ID {new_id}).", keyboard=kb.get_json())
     await state_dispenser.delete(event.user_id)
 
@@ -1555,14 +1555,14 @@ async def admin_edit_list(event: MessageEvent):
     tutors = await get_all_tutors()
     if not tutors:
         kb = Keyboard(inline=True)
-        kb.add(Text("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
+        kb.add(Callback("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
         await edit_event_message(event, "Нет репетиторов для редактирования.", keyboard=kb.get_json())
         return
     kb = Keyboard(inline=True)
     for tid, tdata in tutors.items():
-        kb.add(Text(tdata["name"], payload={"cmd": f"edit_tutor_{tid}"}))
+        kb.add(Callback(tdata["name"], payload={"cmd": f"edit_tutor_{tid}"}))
         kb.row()
-    kb.add(Text("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
+    kb.add(Callback("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
     await edit_event_message(event, "Выберите репетитора для редактирования:", keyboard=kb.get_json())
 
 
@@ -1573,19 +1573,19 @@ async def edit_tutor_choice(event: MessageEvent):
     tutor = tutors[tid]
     info = f"Редактирование: {tutor['name']}\n\nЧто хотите изменить?"
     kb = Keyboard(inline=True)
-    kb.add(Text("Изменить имя", payload={"cmd": "edit_name"}))
+    kb.add(Callback("Изменить имя", payload={"cmd": "edit_name"}))
     kb.row()
-    kb.add(Text("Изменить описание", payload={"cmd": "edit_desc"}))
+    kb.add(Callback("Изменить описание", payload={"cmd": "edit_desc"}))
     kb.row()
-    kb.add(Text("Изменить VK ID", payload={"cmd": "edit_vk_id"}))
+    kb.add(Callback("Изменить VK ID", payload={"cmd": "edit_vk_id"}))
     kb.row()
-    kb.add(Text("📚 Управление предметами", payload={"cmd": "manage_subjects"}))
+    kb.add(Callback("📚 Управление предметами", payload={"cmd": "manage_subjects"}))
     kb.row()
-    kb.add(Text("💰 Изменить комиссию", payload={"cmd": "edit_commission"}))
+    kb.add(Callback("💰 Изменить комиссию", payload={"cmd": "edit_commission"}))
     kb.row()
-    kb.add(Text("🔄 Режим комиссии", payload={"cmd": "toggle_commission_mode"}))
+    kb.add(Callback("🔄 Режим комиссии", payload={"cmd": "toggle_commission_mode"}))
     kb.row()
-    kb.add(Text("🔙 К списку", payload={"cmd": "admin_edit_list"}))
+    kb.add(Callback("🔙 К списку", payload={"cmd": "admin_edit_list"}))
     await edit_event_message(event, info, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.waiting_edit_choice)
 
@@ -1643,7 +1643,7 @@ async def process_new_value(message: Message):
             return
     await update_tutor(tid, **kwargs)
     kb = Keyboard(inline=True)
-    kb.add(Text("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
+    kb.add(Callback("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
     await message.answer("✅ Изменения сохранены.", keyboard=kb.get_json())
     await state_dispenser.delete(message.from_id)
 
@@ -1661,11 +1661,11 @@ async def manage_subjects(event: MessageEvent):
         text += f"• {subj} — {price} руб.\n"
     kb = Keyboard(inline=True)
     for subj in tutor["subjects"]:
-        kb.add(Text(f"✏️ {subj}", payload={"cmd": f"editsubj_{subj}"}))
+        kb.add(Callback(f"✏️ {subj}", payload={"cmd": f"editsubj_{subj}"}))
         kb.row()
-    kb.add(Text("➕ Добавить предмет", payload={"cmd": "add_subject"}))
+    kb.add(Callback("➕ Добавить предмет", payload={"cmd": "add_subject"}))
     kb.row()
-    kb.add(Text("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
+    kb.add(Callback("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.managing_subjects)
 
@@ -1680,19 +1680,19 @@ async def back_to_edit_tutor(event: MessageEvent):
     tutor = tutors[tid]
     info = f"Редактирование: {tutor['name']}\n\nЧто хотите изменить?"
     kb = Keyboard(inline=True)
-    kb.add(Text("Изменить имя", payload={"cmd": "edit_name"}))
+    kb.add(Callback("Изменить имя", payload={"cmd": "edit_name"}))
     kb.row()
-    kb.add(Text("Изменить описание", payload={"cmd": "edit_desc"}))
+    kb.add(Callback("Изменить описание", payload={"cmd": "edit_desc"}))
     kb.row()
-    kb.add(Text("Изменить VK ID", payload={"cmd": "edit_vk_id"}))
+    kb.add(Callback("Изменить VK ID", payload={"cmd": "edit_vk_id"}))
     kb.row()
-    kb.add(Text("📚 Управление предметами", payload={"cmd": "manage_subjects"}))
+    kb.add(Callback("📚 Управление предметами", payload={"cmd": "manage_subjects"}))
     kb.row()
-    kb.add(Text("💰 Изменить комиссию", payload={"cmd": "edit_commission"}))
+    kb.add(Callback("💰 Изменить комиссию", payload={"cmd": "edit_commission"}))
     kb.row()
-    kb.add(Text("🔄 Режим комиссии", payload={"cmd": "toggle_commission_mode"}))
+    kb.add(Callback("🔄 Режим комиссии", payload={"cmd": "toggle_commission_mode"}))
     kb.row()
-    kb.add(Text("🔙 К списку", payload={"cmd": "admin_edit_list"}))
+    kb.add(Callback("🔙 К списку", payload={"cmd": "admin_edit_list"}))
     await edit_event_message(event, info, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.waiting_edit_choice)
 
@@ -1735,11 +1735,11 @@ async def process_adding_subject_price(message: Message):
         text += f"• {subj} — {price} руб.\n"
     kb = Keyboard(inline=True)
     for subj in tutor["subjects"]:
-        kb.add(Text(f"✏️ {subj}", payload={"cmd": f"editsubj_{subj}"}))
+        kb.add(Callback(f"✏️ {subj}", payload={"cmd": f"editsubj_{subj}"}))
         kb.row()
-    kb.add(Text("➕ Добавить предмет", payload={"cmd": "add_subject"}))
+    kb.add(Callback("➕ Добавить предмет", payload={"cmd": "add_subject"}))
     kb.row()
-    kb.add(Text("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
+    kb.add(Callback("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
     await message.answer(text, keyboard=kb.get_json())
     await state_dispenser.set(message.from_id, AdminStates.managing_subjects)
 
@@ -1748,13 +1748,13 @@ async def edit_subject_menu(event: MessageEvent):
     subj_name = event.payload["cmd"].split("_", 1)[1]
     await state_dispenser.update_data(event.user_id, edit_subject_name=subj_name)
     kb = Keyboard(inline=True)
-    kb.add(Text("✏️ Изменить название", payload={"cmd": "editsubj_name"}))
+    kb.add(Callback("✏️ Изменить название", payload={"cmd": "editsubj_name"}))
     kb.row()
-    kb.add(Text("💰 Изменить цену", payload={"cmd": "editsubj_price"}))
+    kb.add(Callback("💰 Изменить цену", payload={"cmd": "editsubj_price"}))
     kb.row()
-    kb.add(Text("❌ Удалить предмет", payload={"cmd": "editsubj_delete"}))
+    kb.add(Callback("❌ Удалить предмет", payload={"cmd": "editsubj_delete"}))
     kb.row()
-    kb.add(Text("🔙 Назад к списку предметов", payload={"cmd": "back_to_subjects_list"}))
+    kb.add(Callback("🔙 Назад к списку предметов", payload={"cmd": "back_to_subjects_list"}))
     await edit_event_message(event, f"Предмет: {subj_name}\nВыберите действие:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.editing_subject_choice)
 
@@ -1769,11 +1769,11 @@ async def back_to_subjects_list(event: MessageEvent):
         text += f"• {subj} — {price} руб.\n"
     kb = Keyboard(inline=True)
     for subj in tutor["subjects"]:
-        kb.add(Text(f"✏️ {subj}", payload={"cmd": f"editsubj_{subj}"}))
+        kb.add(Callback(f"✏️ {subj}", payload={"cmd": f"editsubj_{subj}"}))
         kb.row()
-    kb.add(Text("➕ Добавить предмет", payload={"cmd": "add_subject"}))
+    kb.add(Callback("➕ Добавить предмет", payload={"cmd": "add_subject"}))
     kb.row()
-    kb.add(Text("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
+    kb.add(Callback("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.managing_subjects)
 
@@ -1798,11 +1798,11 @@ async def process_new_subject_name(message: Message):
         text += f"• {subj} — {price} руб.\n"
     kb = Keyboard(inline=True)
     for subj in tutor["subjects"]:
-        kb.add(Text(f"✏️ {subj}", payload={"cmd": f"editsubj_{subj}"}))
+        kb.add(Callback(f"✏️ {subj}", payload={"cmd": f"editsubj_{subj}"}))
         kb.row()
-    kb.add(Text("➕ Добавить предмет", payload={"cmd": "add_subject"}))
+    kb.add(Callback("➕ Добавить предмет", payload={"cmd": "add_subject"}))
     kb.row()
-    kb.add(Text("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
+    kb.add(Callback("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
     await message.answer(text, keyboard=kb.get_json())
     await state_dispenser.set(message.from_id, AdminStates.managing_subjects)
     await state_dispenser.update_data(message.from_id, edit_subject_name=None)
@@ -1832,11 +1832,11 @@ async def process_new_subject_price(message: Message):
         text += f"• {subj} — {price} руб.\n"
     kb = Keyboard(inline=True)
     for subj in tutor["subjects"]:
-        kb.add(Text(f"✏️ {subj}", payload={"cmd": f"editsubj_{subj}"}))
+        kb.add(Callback(f"✏️ {subj}", payload={"cmd": f"editsubj_{subj}"}))
         kb.row()
-    kb.add(Text("➕ Добавить предмет", payload={"cmd": "add_subject"}))
+    kb.add(Callback("➕ Добавить предмет", payload={"cmd": "add_subject"}))
     kb.row()
-    kb.add(Text("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
+    kb.add(Callback("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
     await message.answer(text, keyboard=kb.get_json())
     await state_dispenser.set(message.from_id, AdminStates.managing_subjects)
 
@@ -1845,9 +1845,9 @@ async def delete_subject_confirm(event: MessageEvent):
     data = await state_dispenser.get(event.user_id)
     subj = data.get("edit_subject_name")
     kb = Keyboard(inline=True)
-    kb.add(Text("✅ Да, удалить", payload={"cmd": "confirm_delete_subject"}))
+    kb.add(Callback("✅ Да, удалить", payload={"cmd": "confirm_delete_subject"}))
     kb.row()
-    kb.add(Text("❌ Отмена", payload={"cmd": "back_to_subjects_list"}))
+    kb.add(Callback("❌ Отмена", payload={"cmd": "back_to_subjects_list"}))
     await edit_event_message(event, f"Удалить предмет «{subj}»?", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.deleting_subject_confirm)
 
@@ -1865,11 +1865,11 @@ async def confirm_delete_subject(event: MessageEvent):
         text += f"• {subj} — {price} руб.\n"
     kb = Keyboard(inline=True)
     for subj in tutor["subjects"]:
-        kb.add(Text(f"✏️ {subj}", payload={"cmd": f"editsubj_{subj}"}))
+        kb.add(Callback(f"✏️ {subj}", payload={"cmd": f"editsubj_{subj}"}))
         kb.row()
-    kb.add(Text("➕ Добавить предмет", payload={"cmd": "add_subject"}))
+    kb.add(Callback("➕ Добавить предмет", payload={"cmd": "add_subject"}))
     kb.row()
-    kb.add(Text("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
+    kb.add(Callback("🔙 Назад к редактированию", payload={"cmd": "back_to_edit_tutor"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.managing_subjects)
 
@@ -1897,14 +1897,14 @@ async def admin_delete_list(event: MessageEvent):
     tutors = await get_all_tutors()
     if not tutors:
         kb = Keyboard(inline=True)
-        kb.add(Text("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
+        kb.add(Callback("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
         await edit_event_message(event, "Нет репетиторов для удаления.", keyboard=kb.get_json())
         return
     kb = Keyboard(inline=True)
     for tid, tdata in tutors.items():
-        kb.add(Text(tdata["name"], payload={"cmd": f"del_tutor_{tid}"}))
+        kb.add(Callback(tdata["name"], payload={"cmd": f"del_tutor_{tid}"}))
         kb.row()
-    kb.add(Text("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
+    kb.add(Callback("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
     await edit_event_message(event, "Выберите репетитора для удаления:", keyboard=kb.get_json())
 
 
@@ -1914,9 +1914,9 @@ async def delete_tutor_confirm(event: MessageEvent):
     tutor = tutors[tid]
     await state_dispenser.update_data(event.user_id, del_tutor_id=tid)
     kb = Keyboard(inline=True)
-    kb.add(Text("✅ Да, удалить", payload={"cmd": "confirm_delete"}))
+    kb.add(Callback("✅ Да, удалить", payload={"cmd": "confirm_delete"}))
     kb.row()
-    kb.add(Text("❌ Отмена", payload={"cmd": "admin_delete_list"}))
+    kb.add(Callback("❌ Отмена", payload={"cmd": "admin_delete_list"}))
     await edit_event_message(event, f"Удалить репетитора «{tutor['name']}»?", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, AdminStates.waiting_delete_confirm)
 
@@ -1928,7 +1928,7 @@ async def confirm_delete(event: MessageEvent):
     name = tutors[tid]["name"]
     await delete_tutor(tid)
     kb = Keyboard(inline=True)
-    kb.add(Text("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
+    kb.add(Callback("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
     await edit_event_message(event, f"✅ Репетитор «{name}» удалён.", keyboard=kb.get_json())
     await state_dispenser.delete(event.user_id)
 
@@ -1937,11 +1937,11 @@ async def confirm_delete(event: MessageEvent):
 
 async def admin_stats_menu(event: MessageEvent):
     kb = Keyboard(inline=True)
-    kb.add(Text("👨‍🏫 Статистика по репетиторам", payload={"cmd": "admin_stats_tutors"}))
+    kb.add(Callback("👨‍🏫 Статистика по репетиторам", payload={"cmd": "admin_stats_tutors"}))
     kb.row()
-    kb.add(Text("👤 Статистика по ученикам", payload={"cmd": "admin_stats_students"}))
+    kb.add(Callback("👤 Статистика по ученикам", payload={"cmd": "admin_stats_students"}))
     kb.row()
-    kb.add(Text("🔙 В админ-панель", payload={"cmd": "admin_panel_open"}))
+    kb.add(Callback("🔙 В админ-панель", payload={"cmd": "admin_panel_open"}))
     await edit_event_message(event, "📊 Административная статистика\nВыберите раздел:", keyboard=kb.get_json())
 
 
@@ -1968,9 +1968,9 @@ async def admin_stats_tutors_overview(event: MessageEvent):
     months = sorted(set((d.year, d.month) for d in [now - timedelta(days=30 * i) for i in range(12)]), reverse=True)
     kb = Keyboard(inline=True)
     for y, m in months:
-        kb.add(Text(f"{y}-{m:02d}", payload={"cmd": f"admin_stats_tutors_month_{y}_{m}"}))
+        kb.add(Callback(f"{y}-{m:02d}", payload={"cmd": f"admin_stats_tutors_month_{y}_{m}"}))
         kb.row()
-    kb.add(Text("🔙 К разделам статистики", payload={"cmd": "admin_stats"}))
+    kb.add(Callback("🔙 К разделам статистики", payload={"cmd": "admin_stats"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
 
 
@@ -1997,7 +1997,7 @@ async def admin_stats_tutors_month(event: MessageEvent):
     lines.append(f"   Общая комиссия: {total_commission:.2f} руб.")
     text = "\n".join(lines)
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 К общей статистике", payload={"cmd": "admin_stats_tutors"}))
+    kb.add(Callback("🔙 К общей статистике", payload={"cmd": "admin_stats_tutors"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
 
 
@@ -2014,7 +2014,7 @@ async def admin_stats_students(event: MessageEvent):
             lines.append("")
         text = "\n".join(lines)
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 К разделам статистики", payload={"cmd": "admin_stats"}))
+    kb.add(Callback("🔙 К разделам статистики", payload={"cmd": "admin_stats"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
 
 
@@ -2027,30 +2027,30 @@ async def tutor_panel(message: Message):
         await message.answer("⛔ Вы не зарегистрированы как преподаватель.")
         return
     kb = Keyboard(inline=True)
-    kb.add(Text("👤 Моя анкета", payload={"cmd": f"tutor_profile_{tutor_id}"}))
+    kb.add(Callback("👤 Моя анкета", payload={"cmd": f"tutor_profile_{tutor_id}"}))
     kb.row()
-    kb.add(Text("📋 Мои ученики", payload={"cmd": f"tutor_students_{tutor_id}"}))
+    kb.add(Callback("📋 Мои ученики", payload={"cmd": f"tutor_students_{tutor_id}"}))
     kb.row()
-    kb.add(Text("⚙️ Настроить расписание", payload={"cmd": f"tutor_schedule_{tutor_id}"}))
+    kb.add(Callback("⚙️ Настроить расписание", payload={"cmd": f"tutor_schedule_{tutor_id}"}))
     kb.row()
-    kb.add(Text("📊 Статистика", payload={"cmd": f"tutor_stats_{tutor_id}"}))
+    kb.add(Callback("📊 Статистика", payload={"cmd": f"tutor_stats_{tutor_id}"}))
     kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer("Панель преподавателя:", keyboard=kb.get_json())
 
 
 async def back_to_tutor_panel(event: MessageEvent):
     tid = int(event.payload["cmd"].split("_")[-1])
     kb = Keyboard(inline=True)
-    kb.add(Text("👤 Моя анкета", payload={"cmd": f"tutor_profile_{tid}"}))
+    kb.add(Callback("👤 Моя анкета", payload={"cmd": f"tutor_profile_{tid}"}))
     kb.row()
-    kb.add(Text("📋 Мои ученики", payload={"cmd": f"tutor_students_{tid}"}))
+    kb.add(Callback("📋 Мои ученики", payload={"cmd": f"tutor_students_{tid}"}))
     kb.row()
-    kb.add(Text("⚙️ Настроить расписание", payload={"cmd": f"tutor_schedule_{tid}"}))
+    kb.add(Callback("⚙️ Настроить расписание", payload={"cmd": f"tutor_schedule_{tid}"}))
     kb.row()
-    kb.add(Text("📊 Статистика", payload={"cmd": f"tutor_stats_{tid}"}))
+    kb.add(Callback("📊 Статистика", payload={"cmd": f"tutor_stats_{tid}"}))
     kb.row()
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Панель преподавателя:", keyboard=kb.get_json())
 
 
@@ -2069,7 +2069,7 @@ async def show_tutor_own_profile(event: MessageEvent):
     for subj, price in tutor["subjects"].items():
         text += f"• {subj} — {price} руб.\n"
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 Назад в панель", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
+    kb.add(Callback("🔙 Назад в панель", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
 
 
@@ -2084,7 +2084,7 @@ async def show_students(event: MessageEvent):
             students[uid]["bookings"].append((bid, b))
     if not students:
         kb = Keyboard(inline=True)
-        kb.add(Text("🔙 Назад", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
+        kb.add(Callback("🔙 Назад", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
         await edit_event_message(event, "У вас пока нет активных записей.", keyboard=kb.get_json())
         return
 
@@ -2097,18 +2097,18 @@ async def show_students(event: MessageEvent):
             status_emoji = "⏳" if b["status"] == "pending" else "✅"
             text += f"  {status_emoji} {b['date']} {b['time_slot']} – {b['subject']}\n"
             if b["status"] == "pending":
-                kb.add(Text(f"✅ Подтвердить {b['username']} {b['date']} {b['time_slot']}",
+                kb.add(Callback(f"✅ Подтвердить {b['username']} {b['date']} {b['time_slot']}",
                             payload={"cmd": f"tutor_confirm_{bid}"}))
-                kb.add(Text(f"❌ Отклонить", payload={"cmd": f"tutor_reject_{bid}"}))
+                kb.add(Callback(f"❌ Отклонить", payload={"cmd": f"tutor_reject_{bid}"}))
                 kb.row()
             elif b["status"] == "confirmed":
                 dt = datetime.strptime(b["date"] + " " + b["time_slot"].split("-")[0], "%d.%m.%Y %H:%M")
                 if (dt - datetime.now()) > timedelta(hours=24):
-                    kb.add(Text(f"❌ Отменить", payload={"cmd": f"tutor_cancel_{bid}"}))
-                    kb.add(Text(f"🔄 Перенести", payload={"cmd": f"tutor_reschedule_{bid}"}))
+                    kb.add(Callback(f"❌ Отменить", payload={"cmd": f"tutor_cancel_{bid}"}))
+                    kb.add(Callback(f"🔄 Перенести", payload={"cmd": f"tutor_reschedule_{bid}"}))
                     kb.row()
         text += "\n"
-    kb.add(Text("🔙 Назад", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
+    kb.add(Callback("🔙 Назад", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
 
 
@@ -2147,7 +2147,7 @@ async def tutor_reject_booking(event: MessageEvent):
                                 random_id=0)
     tid = booking["tutor_id"]
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 К списку учеников", payload={"cmd": f"tutor_students_{tid}"}))
+    kb.add(Callback("🔙 К списку учеников", payload={"cmd": f"tutor_students_{tid}"}))
     await edit_event_message(event, "❌ Заявка отклонена.", keyboard=kb.get_json())
 
 
@@ -2170,7 +2170,7 @@ async def tutor_cancel_booking(event: MessageEvent):
     await bot.api.messages.send(user_id=student_id, message=msg, random_id=0)
     tid = booking["tutor_id"]
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 К списку учеников", payload={"cmd": f"tutor_students_{tid}"}))
+    kb.add(Callback("🔙 К списку учеников", payload={"cmd": f"tutor_students_{tid}"}))
     await edit_event_message(event, "✅ Занятие отменено.", keyboard=kb.get_json())
 
 
@@ -2203,9 +2203,9 @@ async def tutor_reschedule_start(event: MessageEvent):
     for d in dates:
         dt_date = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt_date.weekday()]]})"
-        kb.add(Text(label, payload={"cmd": f"t_reschedule_date_{d}"}))
+        kb.add(Callback(label, payload={"cmd": f"t_reschedule_date_{d}"}))
         kb.row()
-    kb.add(Text("🔙 Отмена", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите новую дату:", keyboard=kb.get_json())
 
 
@@ -2218,14 +2218,14 @@ async def tutor_reschedule_date(event: MessageEvent):
     slots = await get_available_slots(tid, date_str, exclude_booking_id=old_bid)
     if not slots:
         kb = Keyboard(inline=True)
-        kb.add(Text("🔙 К выбору даты", payload={"cmd": "back_tutor_reschedule_date"}))
+        kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_tutor_reschedule_date"}))
         await edit_event_message(event, "На эту дату нет свободных слотов.", keyboard=kb.get_json())
         return
     kb = Keyboard(inline=True)
     for s in slots:
-        kb.add(Text(s, payload={"cmd": f"t_reschedule_slot_{s}"}))
+        kb.add(Callback(s, payload={"cmd": f"t_reschedule_slot_{s}"}))
         kb.row()
-    kb.add(Text("🔙 К выбору даты", payload={"cmd": "back_tutor_reschedule_date"}))
+    kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_tutor_reschedule_date"}))
     await edit_event_message(event, "Выберите новое время:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorRescheduleStates.waiting_time)
 
@@ -2238,9 +2238,9 @@ async def back_tutor_reschedule_date(event: MessageEvent):
     for d in dates:
         dt_date = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt_date.weekday()]]})"
-        kb.add(Text(label, payload={"cmd": f"t_reschedule_date_{d}"}))
+        kb.add(Callback(label, payload={"cmd": f"t_reschedule_date_{d}"}))
         kb.row()
-    kb.add(Text("🔙 Отмена", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите новую дату:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorRescheduleStates.waiting_date)
 
@@ -2257,9 +2257,9 @@ async def tutor_reschedule_slot(event: MessageEvent):
         f"Новое: {data['new_date']} {slot}\n\nПодтвердить перенос?"
     )
     kb = Keyboard(inline=True)
-    kb.add(Text("✅ Подтвердить", payload={"cmd": "confirm_tutor_reschedule"}))
+    kb.add(Callback("✅ Подтвердить", payload={"cmd": "confirm_tutor_reschedule"}))
     kb.row()
-    kb.add(Text("🔙 Назад", payload={"cmd": "back_tutor_reschedule_date"}))
+    kb.add(Callback("🔙 Назад", payload={"cmd": "back_tutor_reschedule_date"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorRescheduleStates.waiting_confirmation)
 
@@ -2289,7 +2289,7 @@ async def confirm_tutor_reschedule(event: MessageEvent):
     await bot.api.messages.send(user_id=event.user_id, message=tutor_msg, random_id=0)
 
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 К списку учеников", payload={"cmd": f"tutor_students_{tid}"}))
+    kb.add(Callback("🔙 К списку учеников", payload={"cmd": f"tutor_students_{tid}"}))
     await edit_event_message(event, "Перенос выполнен.", keyboard=kb.get_json())
     await state_dispenser.delete(event.user_id)
 
@@ -2313,9 +2313,9 @@ async def schedule_main(event: MessageEvent):
         text += f"{icon} {WEEKDAY_NAMES[day]}: {info}\n"
     kb = Keyboard(inline=True)
     for day in WEEKDAYS:
-        kb.add(Text(f"✏️ {WEEKDAY_NAMES[day]}", payload={"cmd": f"sched_day_{day}"}))
+        kb.add(Callback(f"✏️ {WEEKDAY_NAMES[day]}", payload={"cmd": f"sched_day_{day}"}))
         kb.row()
-    kb.add(Text("🔙 Назад", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
+    kb.add(Callback("🔙 Назад", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.choose_day)
 
@@ -2334,19 +2334,19 @@ async def edit_day(event: MessageEvent):
     text += "\n".join(f"• {s}" for s in slots) if slots else "Нет слотов."
 
     kb = Keyboard(inline=True)
-    kb.add(Text("➕ Добавить слот", payload={"cmd": "add_slot"}))
+    kb.add(Callback("➕ Добавить слот", payload={"cmd": "add_slot"}))
     kb.row()
-    kb.add(Text("📅 Заполнить промежуток", payload={"cmd": "add_range"}))
+    kb.add(Callback("📅 Заполнить промежуток", payload={"cmd": "add_range"}))
     kb.row()
     if slots:
-        kb.add(Text("❌ Удалить слот", payload={"cmd": "del_slot"}))
+        kb.add(Callback("❌ Удалить слот", payload={"cmd": "del_slot"}))
         kb.row()
     if blocked:
-        kb.add(Text("🔓 Разблокировать день", payload={"cmd": f"unblock_day_{day}"}))
+        kb.add(Callback("🔓 Разблокировать день", payload={"cmd": f"unblock_day_{day}"}))
     else:
-        kb.add(Text("🔒 Заблокировать день", payload={"cmd": f"block_day_{day}"}))
+        kb.add(Callback("🔒 Заблокировать день", payload={"cmd": f"block_day_{day}"}))
     kb.row()
-    kb.add(Text("🔙 К дням недели", payload={"cmd": "back_to_schedule"}))
+    kb.add(Callback("🔙 К дням недели", payload={"cmd": "back_to_schedule"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.manage_day_slots)
 
@@ -2363,9 +2363,9 @@ async def back_to_schedule(event: MessageEvent):
         text += f"{icon} {WEEKDAY_NAMES[day]}: {', '.join(slots) if slots else 'нет'}\n"
     kb = Keyboard(inline=True)
     for day in WEEKDAYS:
-        kb.add(Text(f"✏️ {WEEKDAY_NAMES[day]}", payload={"cmd": f"sched_day_{day}"}))
+        kb.add(Callback(f"✏️ {WEEKDAY_NAMES[day]}", payload={"cmd": f"sched_day_{day}"}))
         kb.row()
-    kb.add(Text("🔙 Назад", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
+    kb.add(Callback("🔙 Назад", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.choose_day)
 
@@ -2419,24 +2419,24 @@ async def process_add_slot(message: Message):
     slots = sched.get(day, [])
     text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + "\n".join(f"• {s}" for s in slots)
     kb = Keyboard(inline=True)
-    kb.add(Text("➕ Добавить слот", payload={"cmd": "add_slot"}))
+    kb.add(Callback("➕ Добавить слот", payload={"cmd": "add_slot"}))
     kb.row()
-    kb.add(Text("📅 Заполнить промежуток", payload={"cmd": "add_range"}))
+    kb.add(Callback("📅 Заполнить промежуток", payload={"cmd": "add_range"}))
     kb.row()
-    kb.add(Text("❌ Удалить слот", payload={"cmd": "del_slot"}))
+    kb.add(Callback("❌ Удалить слот", payload={"cmd": "del_slot"}))
     kb.row()
-    kb.add(Text("🔙 К дням недели", payload={"cmd": "back_to_schedule"}))
+    kb.add(Callback("🔙 К дням недели", payload={"cmd": "back_to_schedule"}))
     await message.answer(text, keyboard=kb.get_json())
     await state_dispenser.set(message.from_id, TutorScheduleStates.manage_day_slots)
 
 
 async def add_range_start(event: MessageEvent):
     kb = Keyboard(inline=True)
-    kb.add(Text("60 минут", payload={"cmd": "dur_60"}))
+    kb.add(Callback("60 минут", payload={"cmd": "dur_60"}))
     kb.row()
-    kb.add(Text("90 минут", payload={"cmd": "dur_90"}))
+    kb.add(Callback("90 минут", payload={"cmd": "dur_90"}))
     kb.row()
-    kb.add(Text("🔙 Отмена", payload={"cmd": "back_to_schedule"}))
+    kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_schedule"}))
     await edit_event_message(event, "Выберите длительность занятия:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.range_duration)
 
@@ -2445,26 +2445,26 @@ async def range_duration_chosen(event: MessageEvent):
     duration = int(event.payload["cmd"].split("_")[1])
     await state_dispenser.update_data(event.user_id, range_duration=duration)
     kb = Keyboard(inline=True)
-    kb.add(Text("Без перерыва", payload={"cmd": "brk_0"}))
+    kb.add(Callback("Без перерыва", payload={"cmd": "brk_0"}))
     kb.row()
-    kb.add(Text("10 минут", payload={"cmd": "brk_10"}))
+    kb.add(Callback("10 минут", payload={"cmd": "brk_10"}))
     kb.row()
-    kb.add(Text("15 минут", payload={"cmd": "brk_15"}))
+    kb.add(Callback("15 минут", payload={"cmd": "brk_15"}))
     kb.row()
-    kb.add(Text("20 минут", payload={"cmd": "brk_20"}))
+    kb.add(Callback("20 минут", payload={"cmd": "brk_20"}))
     kb.row()
-    kb.add(Text("🔙 Назад", payload={"cmd": "add_range_back"}))
+    kb.add(Callback("🔙 Назад", payload={"cmd": "add_range_back"}))
     await edit_event_message(event, "Нужен ли перерыв между занятиями?", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.range_break)
 
 
 async def range_break_back(event: MessageEvent):
     kb = Keyboard(inline=True)
-    kb.add(Text("60 минут", payload={"cmd": "dur_60"}))
+    kb.add(Callback("60 минут", payload={"cmd": "dur_60"}))
     kb.row()
-    kb.add(Text("90 минут", payload={"cmd": "dur_90"}))
+    kb.add(Callback("90 минут", payload={"cmd": "dur_90"}))
     kb.row()
-    kb.add(Text("🔙 Отмена", payload={"cmd": "back_to_schedule"}))
+    kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_schedule"}))
     await edit_event_message(event, "Выберите длительность занятия:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.range_duration)
 
@@ -2522,13 +2522,13 @@ async def process_add_range(message: Message):
     slots = sched.get(day, [])
     text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + "\n".join(f"• {s}" for s in slots)
     kb = Keyboard(inline=True)
-    kb.add(Text("➕ Добавить слот", payload={"cmd": "add_slot"}))
+    kb.add(Callback("➕ Добавить слот", payload={"cmd": "add_slot"}))
     kb.row()
-    kb.add(Text("📅 Заполнить промежуток", payload={"cmd": "add_range"}))
+    kb.add(Callback("📅 Заполнить промежуток", payload={"cmd": "add_range"}))
     kb.row()
-    kb.add(Text("❌ Удалить слот", payload={"cmd": "del_slot"}))
+    kb.add(Callback("❌ Удалить слот", payload={"cmd": "del_slot"}))
     kb.row()
-    kb.add(Text("🔙 К дням недели", payload={"cmd": "back_to_schedule"}))
+    kb.add(Callback("🔙 К дням недели", payload={"cmd": "back_to_schedule"}))
     await message.answer(text, keyboard=kb.get_json())
     await state_dispenser.set(message.from_id, TutorScheduleStates.manage_day_slots)
 
@@ -2544,9 +2544,9 @@ async def del_slot_start(event: MessageEvent):
         return
     kb = Keyboard(inline=True)
     for s in slots:
-        kb.add(Text(s, payload={"cmd": f"delslot_{s}"}))
+        kb.add(Callback(s, payload={"cmd": f"delslot_{s}"}))
         kb.row()
-    kb.add(Text("🔙 Назад", payload={"cmd": "back_to_schedule"}))
+    kb.add(Callback("🔙 Назад", payload={"cmd": "back_to_schedule"}))
     await edit_event_message(event, "Выберите слот для удаления:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.delete_slot)
 
@@ -2562,14 +2562,14 @@ async def confirm_del_slot(event: MessageEvent):
     slots = sched.get(day, [])
     text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + "\n".join(f"• {s}" for s in slots) if slots else "Нет слотов."
     kb = Keyboard(inline=True)
-    kb.add(Text("➕ Добавить слот", payload={"cmd": "add_slot"}))
+    kb.add(Callback("➕ Добавить слот", payload={"cmd": "add_slot"}))
     kb.row()
-    kb.add(Text("📅 Заполнить промежуток", payload={"cmd": "add_range"}))
+    kb.add(Callback("📅 Заполнить промежуток", payload={"cmd": "add_range"}))
     kb.row()
     if slots:
-        kb.add(Text("❌ Удалить слот", payload={"cmd": "del_slot"}))
+        kb.add(Callback("❌ Удалить слот", payload={"cmd": "del_slot"}))
         kb.row()
-    kb.add(Text("🔙 К дням недели", payload={"cmd": "back_to_schedule"}))
+    kb.add(Callback("🔙 К дням недели", payload={"cmd": "back_to_schedule"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.manage_day_slots)
 
@@ -2594,9 +2594,9 @@ async def tutor_stats_menu(event: MessageEvent):
     months = sorted(set((d.year, d.month) for d in [now - timedelta(days=30 * i) for i in range(12)]), reverse=True)
     kb = Keyboard(inline=True)
     for y, m in months:
-        kb.add(Text(f"{y}-{m:02d}", payload={"cmd": f"tutor_stats_month_{tid}_{y}_{m}"}))
+        kb.add(Callback(f"{y}-{m:02d}", payload={"cmd": f"tutor_stats_month_{tid}_{y}_{m}"}))
         kb.row()
-    kb.add(Text("🔙 Назад", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
+    kb.add(Callback("🔙 Назад", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
 
 
@@ -2617,7 +2617,7 @@ async def tutor_stats_month(event: MessageEvent):
         f"• Доход после комиссии: {fin['net_income']:.2f} руб."
     )
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 К общей статистике", payload={"cmd": f"tutor_stats_{tid}"}))
+    kb.add(Callback("🔙 К общей статистике", payload={"cmd": f"tutor_stats_{tid}"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
 
 
@@ -2646,7 +2646,7 @@ async def help(message: Message):
         "• Если у вас нет доступа к нужному разделу, обратитесь в поддержку."
     )
     kb = Keyboard(inline=True)
-    kb.add(Text("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
     await message.answer(help_text, keyboard=kb.get_json())
 
 
@@ -2995,7 +2995,7 @@ async def send_pending_reminders():
             lines.append(f"• {b['username']}: {b['subject']}, {b['date']} {b['time_slot']}")
         text = "\n".join(lines)
         keyboard = Keyboard(inline=True)
-        keyboard.add(Text("📋 Мои ученики", payload={"cmd": f"tutor_students_{tid}"}))
+        keyboard.add(Callback("📋 Мои ученики", payload={"cmd": f"tutor_students_{tid}"}))
         try:
             await bot.api.messages.send(user_id=tutor["vk_id"], message=text, keyboard=keyboard.get_json(), random_id=0)
         except Exception as e:
