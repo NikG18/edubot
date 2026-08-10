@@ -8,6 +8,14 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://botuser:ваш_па�
 
 pool = None
 
+
+WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+WEEKDAY_NAMES = {
+    "monday": "Пн", "tuesday": "Вт", "wednesday": "Ср",
+    "thursday": "Чт", "friday": "Пт", "saturday": "Сб", "sunday": "Вс"
+}
+
+
 # ------------------------------------------------------------
 # Инициализация и создание таблиц
 # ------------------------------------------------------------
