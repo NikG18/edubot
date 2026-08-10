@@ -2604,7 +2604,7 @@ async def main():
     asyncio.create_task(periodic_cleanup())
     asyncio.create_task(reminder_loop())
     asyncio.create_task(pending_reminder_loop())
-    await bot.run_forever()
+    await bot.run_polling()
 
 async def periodic_cleanup():
     while True:
