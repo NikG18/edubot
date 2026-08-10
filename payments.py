@@ -56,16 +56,16 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
             "Tax": "none"
         }]
     }
-    if inn:
-        receipt["AgentSign"] = "agent"
-        receipt["AgentData"] = {
-            "AgentPhone": "+70000000000",
-            "SupplierInfo": {
-                "Name": tutor_name,
-                "Inn": inn,
-                "Phones": ["+70000000001"]
-            }
-        }
+   # if inn:
+    #    receipt["AgentSign"] = "agent"
+    #    receipt["AgentData"] = {
+     #       "AgentPhone": "+70000000000",
+      #      "SupplierInfo": {
+       #         "Name": tutor_name,
+        #        "Inn": inn,
+         #       "Phones": ["+70000000001"]
+          #  }
+       # }
 
     params = {
         "Amount": amount_kop,
