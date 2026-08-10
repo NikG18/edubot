@@ -2708,33 +2708,14 @@ async def send_pending_reminders():
 
 
 # ==================== УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК CALLBACK-КОМАНД ====================
-@bot.on.event("message_event")
-async def universal_callback_handler(event):
-    # event здесь — объект MessageEvent
-    user_id = event.user_id
+@bot.on.raw_event(MessageEvent)
+async def universal_callback_handler(event: MessageEvent):
+    # Логирование для проверки получения событий
+    logging.info(f"Получен MessageEvent: payload={event.payload}")
     cmd = event.payload.get("cmd", "")
-    if hasattr(event, 'user_id'):
-        user_id = event.user_id
-    elif isinstance(event, dict) and 'user_id' in event:
-        user_id = event['user_id']
-    elif hasattr(event, 'object') and hasattr(event.object, 'user_id'):
-        user_id = event.object.user_id
-
-    if not user_id:
-        return
-    # Это сырой обработчик всех событий, приходящих от Long Poll
-    # Интересуют только сообщения и события callback-кнопок
-    if isinstance(event, Message):
-        # Обычные сообщения обрабатываются другими хендлерами, здесь ничего не делаем
-        return
-    # Попытка опознать MessageEvent вручную
-    if not hasattr(event, 'payload'):
-        return
-    cmd = getattr(event, 'payload', {}).get('cmd', '')
     if not cmd:
         return
-    user_id = getattr(event, 'user_id', None)
-
+    user_id = event.user_id
 
     # --- Навигация и общие действия ---
     if cmd == "back_to_menu":
