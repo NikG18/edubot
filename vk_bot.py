@@ -182,7 +182,6 @@ async def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_
         kb.add(Text(tdata["name"], payload={"cmd": f"{callback_prefix}_{tid}"}))
         kb.row()
     kb.add(Text("🔙 Назад в меню", payload={"cmd": back_callback}))
-    logging.info(keyboard)
     return kb.get_json()
 
 async def make_subjects_keyboard(tutor_id: int, back_callback: str = "back_to_menu") -> str:
