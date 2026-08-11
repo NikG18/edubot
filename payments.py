@@ -12,7 +12,8 @@ TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 API_BASE = "https://securepay.tinkoff.ru/v2/"
 
 def generate_token(params: dict) -> str:
-    data = {k: v for k, v in sorted(params.items()) if k not in ("Token", "Receipt")}
+    # Исключаем только Token, Receipt должен участвовать в подписи
+    data = {k: v for k, v in sorted(params.items()) if k != "Token"}
     values = []
     for v in data.values():
         if isinstance(v, dict):
@@ -27,11 +28,21 @@ async def api_call(endpoint: str, params: dict) -> dict:
     params["TerminalKey"] = TINKOFF_TERMINAL_KEY
     params["Token"] = generate_token(params)
 
+    logging.info(f"Request to {url}")
+    logging.info(f"Params: {json.dumps(params, indent=2)}")
+    logging.info(f"Generated Token: {params['Token']}")
+
     async with aiohttp.ClientSession() as session:
         try:
             async with session.post(url, json=params, ssl=False) as resp:
-                data = await resp.json()
-                return data
+                text = await resp.text()
+                logging.info(f"Response status: {resp.status}")
+                logging.info(f"Response body: {text[:500]}")
+                if resp.status == 200:
+                    return json.loads(text)
+                else:
+                    logging.error(f"API error {endpoint}: {resp.status} {text[:200]}")
+                    return {}
         except Exception as e:
             logging.error(f"Tinkoff API error ({endpoint}): {e}")
             return {}
