@@ -90,8 +90,8 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
     params = {
         "Amount": amount_kop,
         "OrderId": f"booking_{booking_id}",
-        "Description": description,
-        "Receipt": receipt,
+        "Description": description
+      #  "Receipt": receipt,
     }
 
     resp = await api_call("Init", params)
