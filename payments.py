@@ -12,19 +12,17 @@ TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 API_BASE = "https://securepay.tinkoff.ru/v2/"
 
 def generate_token(params: dict) -> str:
-    # Исключаем Token, всё остальное участвует в подписи
-    sorted_params = {k: v for k, v in sorted(params.items()) if k != "Token"}
+    # Исключаем Token и Receipt (согласно документации)
+    data = {k: v for k, v in sorted(params.items()) if k not in ("Token", "Receipt")}
     
-    # Формируем RequestString
     values = []
-    for v in sorted_params.values():
+    for v in data.values():
         if isinstance(v, dict):
             values.append(json.dumps(v, separators=(',', ':')))
         else:
             values.append(str(v))
     request_string = ''.join(values)
     
-    # Двойное хеширование с Password и TerminalKey
     password = TINKOFF_SECRET_KEY
     terminal_key = TINKOFF_TERMINAL_KEY
     
