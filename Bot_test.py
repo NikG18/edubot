@@ -2822,6 +2822,7 @@ async def create_and_send_payment(source, bot, booking, email, booking_id):
         percent = tutor.get("commission_percent", 25)
     inn = tutor.get("inn", "").strip()
     if not inn:
+        inn = None
         await source.message.edit_text("Запись к репетитору не доступна. Напишите в поддержку!")
 
     description = f"Занятие: {booking['subject']} с {tutor['name']} {booking['date']} {booking['time_slot']}"
