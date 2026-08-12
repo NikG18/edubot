@@ -79,10 +79,10 @@ async def create_payment(booking_id: int, amount_kop: int, description: str, tut
             "Tax": "none"
         }]
     }
-    if inn:
+  #  if inn:
         
-        receipt["AgentSign"] = "agent"
-        receipt["AgentData"] = {"AgentPhone": "+79331209603","SupplierInfo": {"Name": tutor_name,"Inn": inn,"Phones": ["+79331209603"]}}
+      #  receipt["AgentSign"] = "agent"
+    #    receipt["AgentData"] = {"AgentPhone": "+79331209603","SupplierInfo": {"Name": tutor_name,"Inn": inn,"Phones": ["+79331209603"]}}
 
     params = {
        # "TerminalKey": TINKOFF_TERMINAL_KEY,
