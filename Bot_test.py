@@ -2885,6 +2885,7 @@ async def tutor_confirm_booking(call: CallbackQuery, bot: Bot, state: FSMContext
     bid = int(call.data.split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
+    tid = booking["tutor_id"]
     if not booking or booking["status"] != "pending":
         await call.message.edit_text("Заявка уже обработана.")
         return
@@ -3214,3 +3215,4 @@ async def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())
+    
