@@ -3225,11 +3225,64 @@ async def reminder_loop(bot: Bot):
         await asyncio.sleep(60)
 
 
+
+async def process_payment_status(bot: Bot, booking_id: int, status: str, payment_id: str = None):
+    bookings = await get_all_bookings()
+    booking = bookings.get(booking_id)
+    if not booking or booking["status"] != "confirmed":
+        return  # уже обработано или не требует действий
+
+    user_id = booking["user_id"]
+    payment_msg_id = booking.get("payment_msg_id")
+    tutor_id = booking["tutor_id"]
+
+    if status in ("CONFIRMED", "AUTHORIZED"):
+        await update_booking(booking_id, status="paid")
+        await add_lesson_to_balance(user_id, tutor_id, booking["subject"])
+
+        if payment_msg_id:
+            try:
+                await bot.delete_message(chat_id=user_id, message_id=payment_msg_id)
+            except Exception as e:
+                logging.warning(f"Не удалось удалить сообщение {payment_msg_id}: {e}")
+
+        await bot.send_message(user_id, "✅ Оплата получена! Занятие подтверждено.")
+
+        tutors = await get_all_tutors()
+        tutor = tutors.get(tutor_id)
+        if tutor and tutor.get("telegram_id"):
+            try:
+                await bot.send_message(
+                    tutor["telegram_id"],
+                    f"✅ Оплата за занятие {booking['date']} {booking['time_slot']} получена."
+                )
+            except Exception as e:
+                logging.warning(f"Не удалось уведомить преподавателя {tutor_id}: {e}")
+
+    elif status in ("REJECTED", "CANCELED"):
+        await update_booking(booking_id, status="cancelled")
+
+        if payment_msg_id:
+            try:
+                await bot.delete_message(chat_id=user_id, message_id=payment_msg_id)
+            except Exception as e:
+                logging.warning(f"Не удалось удалить сообщение {payment_msg_id}: {e}")
+
+        await bot.send_message(user_id, "❌ Платёж не прошёл. Запись отменена.")
+        # можно также уведомить преподавателя
+#Затем:
+
+#В webhook_server.py вызываете await process_payment_status(bot, booking_id, status)
+
+#В check_pending_payments в main.py для каждого платежа, который не confirmed, получаете статус из check_payment и также вызываете process_payment_status
+
+
+
 # ==================== ЗАПУСК ====================
 async def main():
     await init_db()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    webhook_app = create_webhook_app()
+    webhook_app = create_webhook_app(bot)
     runner = web.AppRunner(webhook_app)
     await runner.setup()
     site = web.TCPSite(runner, 'localhost', 8765)  # Порт можно передать через env
