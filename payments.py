@@ -16,7 +16,7 @@ def generate_token(params: dict) -> str:
     params1 = dict(params)
     params1["TerminalKey"] = TINKOFF_TERMINAL_KEY
     params1["Password"] = TINKOFF_SECRET_KEY
-    excluded_keys = {"Token", "DATA", "Shops", "Receipts", "PaymentMethods"} #"Receipt"
+    excluded_keys = {"Token", "DATA", "Shops", "Receipts", "Receipt", "PaymentMethods"} #"Receipt"
     data = {k: v for k, v in sorted(params1.items())
             if k not in excluded_keys and not k.startswith("DATA.")}
     values = []
