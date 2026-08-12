@@ -11,12 +11,13 @@ TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 # Для боевого API
 API_BASE = "https://securepay.tinkoff.ru/v2/"
 
+
 def generate_token(params: dict) -> str:
     excluded_keys = {"Token", "Receipt", "DATA", "Shops", "Receipts", "PaymentMethods"}
     # сортируем и отфильтровываем по ключу, исключая также поля с префиксом DATA.
     data = {k: v for k, v in sorted(params.items())
             if k not in excluded_keys and not k.startswith("DATA.")}
-    
+
     values = []
     for v in data.values():
         if isinstance(v, dict):
@@ -24,17 +25,19 @@ def generate_token(params: dict) -> str:
         else:
             values.append(str(v))
     request_string = ''.join(values)
-    
-    password = TINKOFF_SECRET_KEY
-    terminal_key = TINKOFF_TERMINAL_KEY
-    first_hash = hashlib.sha256((password + terminal_key + request_string).encode()).hexdigest()
-    token = hashlib.sha256((password + terminal_key + first_hash).encode()).hexdigest()
+
+    #password = TINKOFF_SECRET_KEY
+    #terminal_key = TINKOFF_TERMINAL_KEY
+    first_hash = hashlib.sha256((request_string).encode()).hexdigest()
+    token = hashlib.sha256((first_hash).encode()).hexdigest()
     return token
+
 
 async def api_call(endpoint: str, params: dict) -> dict:
     url = API_BASE + endpoint
     logging.info(f"Используемый TerminalKey: {TINKOFF_TERMINAL_KEY}")
-    logging.info(f"Используемый SecretKey (первые/последние 4 символа): {TINKOFF_SECRET_KEY[:4]}...{TINKOFF_SECRET_KEY[-4:]}")
+    logging.info(
+        f"Используемый SecretKey (первые/последние 4 символа): {TINKOFF_SECRET_KEY[:4]}...{TINKOFF_SECRET_KEY[-4:]}")
     params["TerminalKey"] = TINKOFF_TERMINAL_KEY
     params["Token"] = generate_token(params)
 
@@ -57,11 +60,13 @@ async def api_call(endpoint: str, params: dict) -> dict:
             logging.error(f"Tinkoff API error ({endpoint}): {e}")
             return {}
 
+
 async def get_tutor_inn(tutor_id: int) -> str:
     async with aiosqlite.connect("bot.db") as db:
         cursor = await db.execute("SELECT inn FROM tutors WHERE id=?", (tutor_id,))
         row = await cursor.fetchone()
         return row[0] if row else ""
+
 
 async def create_payment(booking_id: int, amount_kop: int, description: str,
                          tutor_id: int, tutor_name: str, customer_email: str) -> tuple:
@@ -77,22 +82,24 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
             "Tax": "none"
         }]
     }
-#    if inn:
- #       receipt["AgentSign"] = "agent"
-  #      receipt["AgentData"] = {
-   #         "AgentPhone": "+70000000000",
+    #    if inn:
+    #       receipt["AgentSign"] = "agent"
+    #      receipt["AgentData"] = {
+    #         "AgentPhone": "+70000000000",
     #        "SupplierInfo": {
-     #           "Name": tutor_name,
-      #          "Inn": inn,
-       #         "Phones": ["+70000000001"]
-        #    }
-        #}
+    #           "Name": tutor_name,
+    #          "Inn": inn,
+    #         "Phones": ["+70000000001"]
+    #    }
+    # }
 
     params = {
+        "TerminalKey": TINKOFF_TERMINAL_KEY,
         "Amount": amount_kop,
         "OrderId": f"booking_{booking_id}",
-        "Description": description
-      #  "Receipt": receipt,
+        "Description": description,
+        "Password": TINKOFF_SECRET_KEY
+        #  "Receipt": receipt,
     }
 
     resp = await api_call("Init", params)
@@ -101,6 +108,7 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
     else:
         logging.error(f"Init failed: {resp.get('Details')}")
         return None, None
+
 
 async def check_payment(payment_id: str) -> dict:
     params = {"PaymentId": payment_id}
