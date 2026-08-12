@@ -8,9 +8,7 @@ import aiohttp
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 
-# Для боевого API
 API_BASE = "https://securepay.tinkoff.ru/v2/"
-
 
 def generate_token(params: dict) -> str:
     excluded_keys = {"Token", "Receipt", "DATA", "Shops", "Receipts", "PaymentMethods"}
