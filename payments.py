@@ -14,10 +14,8 @@ API_BASE = "https://securepay.tinkoff.ru/v2/"
 
 def generate_token(params: dict) -> str:
     excluded_keys = {"Token", "Receipt", "DATA", "Shops", "Receipts", "PaymentMethods"}
-    # сортируем и отфильтровываем по ключу, исключая также поля с префиксом DATA.
     data = {k: v for k, v in sorted(params.items())
             if k not in excluded_keys and not k.startswith("DATA.")}
-
     values = []
     for v in data.values():
         if isinstance(v, dict):
@@ -26,10 +24,10 @@ def generate_token(params: dict) -> str:
             values.append(str(v))
     request_string = ''.join(values)
 
-    #password = TINKOFF_SECRET_KEY
-    #terminal_key = TINKOFF_TERMINAL_KEY
-    first_hash = hashlib.sha256((request_string).encode()).hexdigest()
-    token = hashlib.sha256((first_hash).encode()).hexdigest()
+    password = TINKOFF_SECRET_KEY
+    terminal_key = TINKOFF_TERMINAL_KEY
+    first_hash = hashlib.sha256((password + terminal_key + request_string).encode()).hexdigest()
+    token = hashlib.sha256((password + terminal_key + first_hash).encode()).hexdigest()
     return token
 
 
@@ -97,8 +95,7 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
         "TerminalKey": TINKOFF_TERMINAL_KEY,
         "Amount": amount_kop,
         "OrderId": f"booking_{booking_id}",
-        "Description": description,
-        "Password": TINKOFF_SECRET_KEY
+        "Description": description
         #  "Receipt": receipt,
     }
 
