@@ -890,7 +890,7 @@ async def my_records(message: types.Message, state: FSMContext):
     bookings = await get_all_bookings()
     user_bookings = []
     for bid, b in bookings.items():
-        if b["user_id"] == user_id and b["status"] in ("pending", "confirmed"):
+        if b["user_id"] == user_id and b["status"] in ("pending", "confirmed", "paid"):
             user_bookings.append((bid, b))
 
     keyboard_buttons = []
@@ -1449,7 +1449,7 @@ async def tutor_contact_student_start(message: types.Message, state: FSMContext)
 
     buttons = []
     for uid, name in students.items():
-        buttons.append([InlineKeyboardButton(text=name, callback_data=f"tutorcontactstudent_{uid}")])
+        buttons.append([InlineKeyboardButton(text=name, callback_data=f"tutor_contact_student_{uid}")])
     buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
     await message.answer("Выберите ученика:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await state.set_state(TutorContactStudentStates.choosing_student)
@@ -1865,7 +1865,6 @@ async def edit_commission_start(call: CallbackQuery, state: FSMContext):
     await state.update_data(edit_field="commission")
     await call.message.edit_text("Введите новый процент комиссии (целое число):")
     await state.set_state(AdminStates.waiting_new_value)
-    # ВАЖНО: здесь использовалась необъявленная переменная field, но мы оставляем как есть, только заменили вызов answer
 
 @dp.callback_query(F.data == "toggle_commission_mode", StateFilter("*"))
 async def toggle_commission_mode(call: CallbackQuery, state: FSMContext):
@@ -2804,6 +2803,7 @@ async def create_and_send_payment(source, bot, booking, email, booking_id):
     bid = booking_id
     tutors = await get_all_tutors()
     tutor = tutors.get(booking["tutor_id"])
+    inn = tutor.get("inn", "").strip()
     if not tutor:
         if isinstance(source, types.CallbackQuery):
             await source.message.edit_text("Репетитор не найден.")
@@ -2820,11 +2820,10 @@ async def create_and_send_payment(source, bot, booking, email, booking_id):
         percent, _ = await calculate_auto_commission(booking["tutor_id"], now.year, now.month)
     else:
         percent = tutor.get("commission_percent", 25)
-    inn = tutor.get("inn", "").strip()
     if not inn:
         inn = None
         await source.message.edit_text("Запись к репетитору не доступна. Напишите в поддержку!")
-
+        return
     description = f"Занятие: {booking['subject']} с {tutor['name']} {booking['date']} {booking['time_slot']}"
     payment_url, payment_id = await create_payment(
         booking_id=bid,
@@ -2832,7 +2831,8 @@ async def create_and_send_payment(source, bot, booking, email, booking_id):
         description=description,
         tutor_id=booking["tutor_id"],
         tutor_name=tutor["name"],
-        customer_email=email
+        customer_email=email,
+        inn = inn
     )
     if not payment_url:
         await bot.send_message(booking["user_id"], "Ошибка создания платежа. Обратитесь в поддержку.")
@@ -2860,7 +2860,6 @@ async def create_and_send_payment(source, bot, booking, email, booking_id):
         await update_booking(bid, payment_msg_id=sent_msg.message_id)
     except Exception as e:
         logging.error(f"Не удалось отправить ссылку на оплату ученику {booking['user_id']}: {e}")
-    await bot.send_message(booking["user_id"], student_msg, reply_markup=pay_keyboard)
 
     # Уведомление преподавателю
     if tutor.get("telegram_id"):
@@ -2909,8 +2908,8 @@ async def tutor_confirm_booking(call: CallbackQuery, bot: Bot, state: FSMContext
             "📧 Для завершения записи и получения чека введите ваш адрес электронной почты:"
         )
         # Очищаем состояние ученика, чтобы он мог ответить
-        user_state = dp.fsm.resolve_context(bot, user_id=user_id, chat_id=user_id)
-        await user_state.clear()
+        #user_state = dp.fsm.resolve_context(bot, user_id=user_id, chat_id=user_id)
+        #await user_state.clear()
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📋 К списку учеников", callback_data=f"tutor_students_{tid}")]
         ])
@@ -3099,7 +3098,7 @@ async def send_reminders(bot: Bot):
     now = datetime.now()
     bookings = await get_all_bookings()
     for bid, b in bookings.items():
-        if b.get("status") != "confirmed":
+        if b.get("status") != "paid":
             continue
         if b.get("reminded"):
             continue
@@ -3110,7 +3109,7 @@ async def send_reminders(bot: Bot):
         except ValueError:
             continue
         diff = dt - now
-        if timedelta(minutes=59) < diff <= timedelta(hours=1):
+        if diff <= timedelta(hours=1) and not b.get("reminded"):
             student_id = b["user_id"]
             tutor_id = b["tutor_id"]
             tutors = await get_all_tutors()
