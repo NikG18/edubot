@@ -9,7 +9,8 @@ TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 TINKOFF_WEBHOOK_URL = "https://nikg18.alwaysdata.net/tinkoff-webhook"
 # Для боевого API
 API_BASE = "https://securepay.tinkoff.ru/v2/"
-
+ssl_context = ssl.create_default_context(cafile=certifi.where())
+connector = aiohttp.TCPConnector(ssl=ssl_context)
 
 def generate_token(params: dict) -> str:
     params1 = dict(params)
