@@ -35,8 +35,7 @@ def generate_token(params: dict) -> str:
 async def api_call(endpoint: str, params: dict) -> dict:
     url = API_BASE + endpoint
     logging.info(f"Используемый TerminalKey: {TINKOFF_TERMINAL_KEY}")
-    logging.info(
-        f"Используемый SecretKey (первые/последние 4 символа): {TINKOFF_SECRET_KEY[:4]}...{TINKOFF_SECRET_KEY[-4:]}")
+    logging.info(f"Используемый SecretKey (первые/последние 4 символа): {TINKOFF_SECRET_KEY[:4]}...{TINKOFF_SECRET_KEY[-4:]}")
     params["TerminalKey"] = TINKOFF_TERMINAL_KEY
     params["Token"] = generate_token(params)
 
@@ -72,7 +71,7 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
     inn = await get_tutor_inn(tutor_id)
     receipt = {
         "Email": customer_email,
-        "Taxation": "usn_income",
+        "Taxation": "ausn_income",
         "Items": [{
             "Name": description[:64],
             "Price": amount_kop,
@@ -97,7 +96,7 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
         "Amount": amount_kop,
         "OrderId": f"booking_{booking_id}",
         "Description": description
-        #  "Receipt": receipt,
+        "Receipt": receipt,
     }
 
     resp = await api_call("Init", params)
