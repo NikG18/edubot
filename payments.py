@@ -67,7 +67,6 @@ async def get_tutor_inn(tutor_id: int) -> str:
 
 
 async def create_payment(booking_id: int, amount_kop: int, description: str, tutor_id: int, tutor_name: str, customer_email: str) -> tuple:
-    
     inn = await get_tutor_inn(tutor_id)
     receipt = {
         "Email": customer_email,
@@ -89,7 +88,7 @@ async def create_payment(booking_id: int, amount_kop: int, description: str, tut
        # "TerminalKey": TINKOFF_TERMINAL_KEY,
         "Amount": amount_kop,
         "OrderId": f"booking_{booking_id}",
-        "Description": description
+        "Description": description,
         "Receipt": receipt,
     }
 
