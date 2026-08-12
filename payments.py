@@ -16,7 +16,7 @@ def generate_token(params: dict) -> str:
     params1 = dict(params)
     params1["TerminalKey"] = TINKOFF_TERMINAL_KEY
     params1["Password"] = TINKOFF_SECRET_KEY
-    excluded_keys = {"Token", "Receipt", "DATA", "Shops", "Receipts", "PaymentMethods"}
+    excluded_keys = {"Token", "DATA", "Shops", "Receipts", "PaymentMethods"} #"Receipt"
     data = {k: v for k, v in sorted(params1.items())
             if k not in excluded_keys and not k.startswith("DATA.")}
     values = []
@@ -34,8 +34,8 @@ async def api_call(endpoint: str, params: dict) -> dict:
     url = API_BASE + endpoint
     params["TerminalKey"] = TINKOFF_TERMINAL_KEY
     params["Token"] = generate_token(params)
-
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), timeout=timeout) as session:
         try:
             async with session.post(url, json=params) as resp:
                 text = await resp.text()
