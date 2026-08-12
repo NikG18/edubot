@@ -55,7 +55,7 @@ async def get_tutor_inn(tutor_id: int) -> str:
         return row[0] if row else ""
 
 
-async def create_payment(booking_id: int, amount_kop: int, description: str, tutor_id: int, tutor_name: str, customer_email: str, inn: str) -> tuple:
+async def create_payment(booking_id: int, amount_kop: int, description: str, tutor_id: int, tutor_name: str, customer_email: str, inn: str = None) -> tuple:
     inn = await get_tutor_inn(tutor_id)
     receipt = {
         "Email": customer_email,
