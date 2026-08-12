@@ -4,6 +4,7 @@ import hashlib
 import logging
 import aiohttp
 import certifi
+import ssl
 
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
