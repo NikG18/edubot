@@ -70,13 +70,13 @@ async def create_payment(booking_id: int, amount_kop: int, description: str, tut
     inn = await get_tutor_inn(tutor_id)
     receipt = {
         "Email": customer_email,
-        "Taxation": "ausn_income",
+        "Taxation": "usn_income",
         "Items": [{
             "Name": description[:64],
             "Price": amount_kop,
             "Quantity": 1,
             "Amount": amount_kop,
-            "Tax": "none"
+            "Tax": "None"
         }]
     }
   #  if inn:
