@@ -34,9 +34,8 @@ async def api_call(endpoint: str, params: dict) -> dict:
     url = API_BASE + endpoint
     params["TerminalKey"] = TINKOFF_TERMINAL_KEY
     params["Token"] = generate_token(params)
-    ssl_context = ssl.create_default_context(cafile=certifi.where())
-    connector = aiohttp.TCPConnector(ssl=ssl_context)
-    async with aiohttp.ClientSession(connector=connector) as session:
+
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
         try:
             async with session.post(url, json=params) as resp:
                 text = await resp.text()
