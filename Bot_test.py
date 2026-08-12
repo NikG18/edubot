@@ -60,7 +60,7 @@ if not BOT_TOKEN:
 
 TINKOFF_TERMINAL_KEY = os.environ["TINKOFF_TERMINAL_KEY"]
 TINKOFF_SECRET_KEY  = os.environ["TINKOFF_SECRET_KEY"]
-TINKOFF_WEBHOOK_URL = os.environ.get("TINKOFF_WEBHOOK_URL")
+
 
 
 
@@ -298,7 +298,7 @@ async def get_available_slots(tutor_id: int, date_str: str, exclude_booking_id: 
     busy = []
     bookings = await get_all_bookings()
     for bid, b in bookings.items():
-        if b["tutor_id"] == tutor_id and b["date"] == date_str and b["status"] in ("pending", "confirmed"):
+        if b["tutor_id"] == tutor_id and b["date"] == date_str and b["status"] in ("pending", "confirmed", "paid"):
             if exclude_booking_id and bid == exclude_booking_id:
                 continue
             busy.append(b["time_slot"])
@@ -911,6 +911,8 @@ async def my_records(message: types.Message, state: FSMContext):
                 can_act = False
             elif b["status"] == "confirmed":
                 status_text = " (подтверждено)"
+            elif b["status"] == "paid":
+                status_text = " (Оплачено)"
             act_note = "✅ Можно отменить/перенести" if can_act else "⚠️ Менее 24 часов: действия невозможны"
             text_lines.append(
                 f"👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n📅 {date_str} (МСК) 🕒 {time_str}{status_text}\n{act_note}"
@@ -943,6 +945,9 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
     booking = bookings.get(bid)
     if not booking:
         await call.message.edit_text("Запись не найдена.")
+        return
+    if booking["status"] == "paid":
+        await call.message.edit_text("Для отмены оплаченного занятия обратитесь в поддержку для возврата.")
         return
 
     if booking.get("channel_msg_id") and RECORDS_CHANNEL_ID:
@@ -1012,7 +1017,7 @@ async def back_to_my_records(call: CallbackQuery, state: FSMContext):
     bookings = await get_all_bookings()
     user_bookings = []
     for bid, b in bookings.items():
-        if b["user_id"] == user_id and b["status"] in ("pending", "confirmed"):
+        if b["user_id"] == user_id and b["status"] in ("pending", "confirmed", "paid"):
             user_bookings.append((bid, b))
 
     keyboard_buttons = []
@@ -1029,17 +1034,19 @@ async def back_to_my_records(call: CallbackQuery, state: FSMContext):
             can_act = (dt - now) > timedelta(hours=24)
             status_text = ""
             if b["status"] == "pending":
-                status_text = " (ожидает подтверждения)"
+                status_text = " (Ожидает подтверждения)"
                 can_act = False
             elif b["status"] == "confirmed":
-                status_text = " (подтверждено)"
+                status_text = " (Подтверждено)"
+            elif b["status"] == "paid":
+                status_text = " (Оплачено)"
             act_note = "✅ Можно отменить/перенести" if can_act else "⚠️ Менее 24 часов: действия невозможны"
             text_lines.append(
                 f"👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n📅 {date_str} (МСК) 🕒 {time_str}{status_text}\n{act_note}"
             )
             if can_act:
                 row = []
-                if b["status"] == "confirmed":
+                if b["status"] == "paid":
                     row.append(InlineKeyboardButton(
                         text=f"🔄 Перенести: {tutor['name']} {date_str} {time_str}",
                         callback_data=f"reschedule_student_{bid}"
@@ -2199,7 +2206,7 @@ async def show_students(call: CallbackQuery, bot: Bot):
     tutors = await get_all_tutors()
     students = {}
     for bid, b in bookings.items():
-        if b["tutor_id"] == tid and b["status"] in ("pending", "confirmed"):
+        if b["tutor_id"] == tid and b["status"] in ("pending", "confirmed", "paid"):
             uid = b["user_id"]
             students.setdefault(uid, {"username": b["username"], "bookings": []})
             students[uid]["bookings"].append((bid, b))
