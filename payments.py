@@ -6,7 +6,7 @@ import aiohttp
 
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
-
+TINKOFF_WEBHOOK_URL = "https://nikg18.alwaysdata.net/tinkoff-webhook"
 # Для боевого API
 API_BASE = "https://securepay.tinkoff.ru/v2/"
 
@@ -84,6 +84,7 @@ async def create_payment(booking_id: int, amount_kop: int, description: str, tut
         "OrderId": f"booking_{booking_id}",
         "Description": description,
         "Receipt": receipt,
+        "NotificationURL": os.environ.get("TINKOFF_WEBHOOK_URL", "")
     }
 
     resp = await api_call("Init", params)
