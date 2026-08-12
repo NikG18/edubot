@@ -580,17 +580,31 @@ async def get_tutor_by_vk_id(vk_id: int) -> Optional[int]:
         return row["id"] if row else None
 
 async def cleanup_old_bookings():
-    today = datetime.now().strftime("%d.%m.%Y")
+    now = datetime.now()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "UPDATE bookings SET status='completed' WHERE status IN ('pending','confirmed') AND date < $1 RETURNING id",
-            today
+            "SELECT id, date, time_slot FROM bookings WHERE status = 'paid'"
         )
-        count = len(rows)
-        if count > 0:
+        completed_ids = []
+        for row in rows:
+            try:
+                # Парсим дату и время начала
+                dt_str = f"{row['date']} {row['time_slot'].split('-')[0].replace('.', ':')}"
+                dt = datetime.strptime(dt_str, "%d.%m.%Y %H:%M")
+                if dt < now:
+                    completed_ids.append(row['id'])
+            except ValueError:
+                logging.warning(f"Некорректный формат даты/времени у брони {row['id']}")
+                continue
+
+        if completed_ids:
+            await conn.execute(
+                "UPDATE bookings SET status='completed' WHERE id = ANY($1::int[])",
+                completed_ids
+            )
+            count = len(completed_ids)
             logging.info(f"Старые записи переведены в completed. Обновлено: {count}")
-            now = datetime.now()
+            # Пересчитываем статистику для затронутых преподавателей (можно оптимизировать)
             tutors = await get_all_tutors()
             for tid in tutors:
                 await recalculate_monthly_stats(tid, now.year, now.month)
-
