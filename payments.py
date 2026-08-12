@@ -25,9 +25,7 @@ def generate_token(params: dict) -> str:
             values.append(json.dumps(v, separators=(',', ':')))
         else:
             values.append(str(v))
-    print(values)
     request_string = ''.join(values)
-    print(request_string)
     token = hashlib.sha256((request_string).encode('utf-8')).hexdigest()
     return token
 
