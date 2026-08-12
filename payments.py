@@ -33,6 +33,8 @@ def generate_token(params: dict) -> str:
 
 async def api_call(endpoint: str, params: dict) -> dict:
     url = API_BASE + endpoint
+    logging.info(f"Используемый TerminalKey: {TINKOFF_TERMINAL_KEY}")
+    logging.info(f"Используемый SecretKey (первые/последние 4 символа): {TINKOFF_SECRET_KEY[:4]}...{TINKOFF_SECRET_KEY[-4:]}")
     params["TerminalKey"] = TINKOFF_TERMINAL_KEY
     params["Token"] = generate_token(params)
 
