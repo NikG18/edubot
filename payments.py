@@ -8,10 +8,15 @@ import aiohttp
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 
+# Для боевого API
 API_BASE = "https://securepay.tinkoff.ru/v2/"
+
 
 def generate_token(params: dict) -> str:
     excluded_keys = {"Token", "Receipt", "DATA", "Shops", "Receipts", "PaymentMethods"}
+    terminal_key= TINKOFF_TERMINAL_KEY
+    password= TINKOFF_SECRET_KEY
+    params = params+terminal_key+password
     data = {k: v for k, v in sorted(params.items())
             if k not in excluded_keys and not k.startswith("DATA.")}
     values = []
@@ -21,11 +26,7 @@ def generate_token(params: dict) -> str:
         else:
             values.append(str(v))
     request_string = ''.join(values)
-
-    password = TINKOFF_SECRET_KEY
-    terminal_key = TINKOFF_TERMINAL_KEY
-    first_hash = hashlib.sha256((password + terminal_key + request_string).encode()).hexdigest()
-    token = hashlib.sha256((password + terminal_key + first_hash).encode()).hexdigest()
+    token = hashlib.sha256((request_string).encode()).hexdigest()
     return token
 
 
@@ -90,7 +91,7 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
     # }
 
     params = {
-        "TerminalKey": TINKOFF_TERMINAL_KEY,
+       # "TerminalKey": TINKOFF_TERMINAL_KEY,
         "Amount": amount_kop,
         "OrderId": f"booking_{booking_id}",
         "Description": description
