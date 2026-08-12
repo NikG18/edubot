@@ -3203,7 +3203,7 @@ async def main():
     await runner.setup()
     site = web.TCPSite(runner, 'localhost', 8080)  # Порт можно передать через env
     await site.start()
-    logging.info("Webhook server started on port 8080")
+    logging.info("Webhook server started on port 8765")
     async def periodic_cleanup_with_bot():
         while True:
             await cleanup_old_bookings()
