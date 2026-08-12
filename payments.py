@@ -66,8 +66,8 @@ async def get_tutor_inn(tutor_id: int) -> str:
         return row[0] if row else ""
 
 
-async def create_payment(booking_id: int, amount_kop: int, description: str,
-                         tutor_id: int, tutor_name: str, customer_email: str) -> tuple:
+async def create_payment(booking_id: int, amount_kop: int, description: str, tutor_id: int, tutor_name: str, customer_email: str) -> tuple:
+    
     inn = await get_tutor_inn(tutor_id)
     receipt = {
         "Email": customer_email,
@@ -80,16 +80,16 @@ async def create_payment(booking_id: int, amount_kop: int, description: str,
             "Tax": "none"
         }]
     }
-    #    if inn:
-    #       receipt["AgentSign"] = "agent"
-    #      receipt["AgentData"] = {
-    #         "AgentPhone": "+70000000000",
-    #        "SupplierInfo": {
-    #           "Name": tutor_name,
-    #          "Inn": inn,
-    #         "Phones": ["+70000000001"]
-    #    }
-    # }
+    if inn:
+           receipt["AgentSign"] = "agent"
+          receipt["AgentData"] = {
+             "AgentPhone": "+70000000000",
+            "SupplierInfo": {
+               "Name": tutor_name,
+              "Inn": inn,
+             "Phones": ["+70000000001"]
+        }
+     }
 
     params = {
        # "TerminalKey": TINKOFF_TERMINAL_KEY,
