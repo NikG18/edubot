@@ -21,7 +21,7 @@ from database import (
     get_tutor_by_telegram_id, get_student_subscriptions, get_tutor_financials, get_all_tutors_stats,
     get_students_stats, get_all_tutors_stats_by_month, get_students_stats_by_month,
     block_day, unblock_day, is_day_blocked, recalculate_monthly_stats, get_user_email, set_user_email,
-    add_lesson_to_balance, calculate_auto_commission, set_pending_email_request, 
+    add_lesson_to_balance, calculate_auto_commission, set_pending_email_request,
     get_pending_email_request, delete_pending_email_request, close_db, cleanup_old_bookings
 )
 from aiogram.exceptions import TelegramBadRequest
@@ -913,16 +913,18 @@ async def my_records(message: types.Message, state: FSMContext):
             text_lines.append(
                 f"👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n📅 {date_str} (МСК) 🕒 {time_str}{status_text}\n{act_note}"
             )
-            if can_act and b["status"] == "confirmed":
-                keyboard_buttons.append([InlineKeyboardButton(
-                    text=f"🔄 Перенести: {tutor['name']} {date_str} {time_str}",
-                    callback_data=f"reschedule_student_{bid}"
-                )])
             if can_act:
-                keyboard_buttons.append([InlineKeyboardButton(
+                row = []
+                if b["status"] == "confirmed":
+                    row.append(InlineKeyboardButton(
+                        text=f"🔄 Перенести: {tutor['name']} {date_str} {time_str}",
+                        callback_data=f"reschedule_student_{bid}"
+                    ))
+                row.append(InlineKeyboardButton(
                     text=f"❌ Отменить: {tutor['name']} {date_str} {time_str}",
                     callback_data=f"cancel_student_{bid}"
-                )])
+                ))
+                keyboard_buttons.append(row)
     else:
         text_lines.append("У вас пока нет активных записей.\n")
 
@@ -1000,10 +1002,66 @@ async def show_student_stats(call: CallbackQuery):
 
 
 @dp.callback_query(F.data == "back_to_my_records")
-async def back_to_my_records(call: CallbackQuery):
-    await call.message.edit_text("Возврат в главное меню...")
-    await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
+async def back_to_my_records(call: CallbackQuery, state: FSMContext):
+    """Возвращает ученика к просмотру его активных записей."""
     await safe_answer(call)
+    await state.clear()
+    user_id = call.from_user.id
+    bookings = await get_all_bookings()
+    user_bookings = []
+    for bid, b in bookings.items():
+        if b["user_id"] == user_id and b["status"] in ("pending", "confirmed"):
+            user_bookings.append((bid, b))
+
+    keyboard_buttons = []
+    text_lines = []
+    if user_bookings:
+        text_lines.append("📋 Ваши записи:\n")
+        tutors = await get_all_tutors()
+        for bid, b in user_bookings:
+            tutor = tutors.get(b["tutor_id"], {"name": "Неизвестный"})
+            date_str = b["date"]
+            time_str = b["time_slot"]
+            dt = parse_booking_time(b)
+            now = datetime.now()
+            can_act = (dt - now) > timedelta(hours=24)
+            status_text = ""
+            if b["status"] == "pending":
+                status_text = " (ожидает подтверждения)"
+                can_act = False
+            elif b["status"] == "confirmed":
+                status_text = " (подтверждено)"
+            act_note = "✅ Можно отменить/перенести" if can_act else "⚠️ Менее 24 часов: действия невозможны"
+            text_lines.append(
+                f"👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n📅 {date_str} (МСК) 🕒 {time_str}{status_text}\n{act_note}"
+            )
+            if can_act:
+                row = []
+                if b["status"] == "confirmed":
+                    row.append(InlineKeyboardButton(
+                        text=f"🔄 Перенести: {tutor['name']} {date_str} {time_str}",
+                        callback_data=f"reschedule_student_{bid}"
+                    ))
+                row.append(InlineKeyboardButton(
+                    text=f"❌ Отменить: {tutor['name']} {date_str} {time_str}",
+                    callback_data=f"cancel_student_{bid}"
+                ))
+                keyboard_buttons.append(row)
+    else:
+        text_lines.append("У вас пока нет активных записей.\n")
+
+    keyboard_buttons.append([InlineKeyboardButton(text="📊 Статистика", callback_data="student_stats")])
+    keyboard_buttons.append([InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_to_menu")])
+
+    try:
+        await call.message.edit_text("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons))
+    except TelegramBadRequest:
+        # Если предыдущее сообщение не текстовое (например, фото) – удаляем и отправляем новое
+        try:
+            await call.message.delete()
+        except TelegramBadRequest:
+            pass
+        await call.message.answer("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons))
 
 
 # ==================== ПЕРЕНОС УЧЕНИКОМ ====================
@@ -2760,6 +2818,9 @@ async def create_and_send_payment(source, bot, booking, email, booking_id):
         percent, _ = await calculate_auto_commission(booking["tutor_id"], now.year, now.month)
     else:
         percent = tutor.get("commission_percent", 25)
+    inn = tutor.get("inn", "").strip()
+    if not inn:
+        await source.message.edit_text("Запись к репетитору не доступна. Напишите в поддержку!")
 
     description = f"Занятие: {booking['subject']} с {tutor['name']} {booking['date']} {booking['time_slot']}"
     payment_url, payment_id = await create_payment(
@@ -2790,6 +2851,12 @@ async def create_and_send_payment(source, bot, booking, email, booking_id):
     pay_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Оплатить", url=payment_url)]
     ])
+    try:
+        sent_msg = await bot.send_message(booking["user_id"], student_msg, reply_markup=pay_keyboard)
+        # Сохраняем ID сообщения, чтобы потом удалить его при подтверждении/отмене
+        await update_booking(bid, payment_msg_id=sent_msg.message_id)
+    except Exception as e:
+        logging.error(f"Не удалось отправить ссылку на оплату ученику {booking['user_id']}: {e}")
     await bot.send_message(booking["user_id"], student_msg, reply_markup=pay_keyboard)
 
     # Уведомление преподавателю
@@ -2840,6 +2907,10 @@ async def tutor_confirm_booking(call: CallbackQuery, bot: Bot, state: FSMContext
         # Очищаем состояние ученика, чтобы он мог ответить
         user_state = dp.fsm.resolve_context(bot, user_id=user_id, chat_id=user_id)
         await user_state.clear()
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 К списку учеников", callback_data=f"tutor_students_{tid}")]
+        ])
+        await call.message.edit_text("✅ Заявка подтверждена. Ожидаем email ученика для чека...", reply_markup=keyboard)
         # Сохранять bid в FSM преподавателя больше не нужно
 
 
@@ -2854,17 +2925,42 @@ async def check_pending_payments(bot: Bot):
         if payment_state.get("Success") and payment_state.get("Status") in ("CONFIRMED", "AUTHORIZED"):
             # Оплата прошла
             await update_booking(bid, status="paid")
-            await bot.send_message(b["user_id"], "✅ Оплата получена! Занятие подтверждено.")
+            user_id = b["user_id"]
+            payment_msg_id = b.get("payment_msg_id")
+
+            # Удаляем сообщение со ссылкой на оплату
+            if payment_msg_id:
+                try:
+                    await bot.delete_message(chat_id=user_id, message_id=payment_msg_id)
+                except Exception as e:
+                    logging.warning(f"Не удалось удалить сообщение {payment_msg_id}: {e}")
+
+            # Отправляем новое сообщение об успехе
+            await bot.send_message(user_id, "✅ Оплата получена! Занятие подтверждено.")
+
             # Начисляем занятие на баланс
-            await add_lesson_to_balance(b["user_id"], b["tutor_id"], b["subject"])
+            await add_lesson_to_balance(user_id, b["tutor_id"], b["subject"])
+
+            # Уведомление преподавателю
             tutors = await get_all_tutors()
             tutor = tutors.get(b["tutor_id"])
             if tutor and tutor.get("telegram_id"):
                 await bot.send_message(tutor["telegram_id"],
                                        f"✅ Оплата за занятие {b['date']} {b['time_slot']} получена.")
+
         elif payment_state.get("Status") in ("REJECTED", "CANCELED"):
+            # Платёж не прошёл
             await update_booking(bid, status="cancelled")
-            await bot.send_message(b["user_id"], "❌ Платёж не прошёл. Запись отменена.")
+            user_id = b["user_id"]
+            payment_msg_id = b.get("payment_msg_id")
+
+            if payment_msg_id:
+                try:
+                    await bot.delete_message(chat_id=user_id, message_id=payment_msg_id)
+                except Exception as e:
+                    logging.warning(f"Не удалось удалить сообщение {payment_msg_id}: {e}")
+
+            await bot.send_message(user_id, "❌ Платёж не прошёл. Запись отменена.")
 
 @dp.callback_query(F.data.startswith("tutor_reject_"))
 async def tutor_reject_booking(call: CallbackQuery, bot: Bot):
