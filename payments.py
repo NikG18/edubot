@@ -47,16 +47,7 @@ async def api_call(endpoint: str, params: dict) -> dict:
             logging.error(f"Tinkoff API error ({endpoint}): {e}")
             return {}
 
-
-async def get_tutor_inn(tutor_id: int) -> str:
-    async with aiosqlite.connect("bot.db") as db:
-        cursor = await db.execute("SELECT inn FROM tutors WHERE id=?", (tutor_id,))
-        row = await cursor.fetchone()
-        return row[0] if row else ""
-
-
 async def create_payment(booking_id: int, amount_kop: int, description: str, tutor_id: int, tutor_name: str, customer_email: str, inn: str = None) -> tuple:
-    inn = await get_tutor_inn(tutor_id)
     receipt = {
         "Email": customer_email,
         "Taxation": "usn_income",
