@@ -68,7 +68,7 @@ async def create_payment(booking_id: int, amount_kop: int, description: str, tut
             "Tax": "none"
         }]
     }
-     if inn:
+    if inn:
         receipt["Items"][0]["AgentSign"] = "agent"
         receipt["Items"][0]["AgentData"] = {
             "AgentPhone": "+79331209603",          # твой телефон как агента
