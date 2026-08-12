@@ -2,7 +2,6 @@ import os
 import json
 import hashlib
 import logging
-import aiosqlite
 import aiohttp
 
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
@@ -56,7 +55,7 @@ async def get_tutor_inn(tutor_id: int) -> str:
         return row[0] if row else ""
 
 
-async def create_payment(booking_id: int, amount_kop: int, description: str, tutor_id: int, tutor_name: str, customer_email: str) -> tuple:
+async def create_payment(booking_id: int, amount_kop: int, description: str, tutor_id: int, tutor_name: str, customer_email: str, inn: str) -> tuple:
     inn = await get_tutor_inn(tutor_id)
     receipt = {
         "Email": customer_email,
@@ -69,11 +68,16 @@ async def create_payment(booking_id: int, amount_kop: int, description: str, tut
             "Tax": "none"
         }]
     }
-  #  if inn:
-        
-      #  receipt["AgentSign"] = "agent"
-    #    receipt["AgentData"] = {"AgentPhone": "+79331209603","SupplierInfo": {"Name": tutor_name,"Inn": inn,"Phones": ["+79331209603"]}}
-
+     if inn:
+        receipt["Items"][0]["AgentSign"] = "agent"
+        receipt["Items"][0]["AgentData"] = {
+            "AgentPhone": "+79331209603",          # твой телефон как агента
+            "SupplierInfo": {
+                "Name": tutor_name,
+                "Inn": inn,
+                "Phones": []
+            }
+        }
     params = {
        # "TerminalKey": TINKOFF_TERMINAL_KEY,
         "Amount": amount_kop,
