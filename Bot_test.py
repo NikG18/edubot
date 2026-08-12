@@ -3201,7 +3201,7 @@ async def main():
     webhook_app = create_webhook_app()
     runner = web.AppRunner(webhook_app)
     await runner.setup()
-    site = web.TCPSite(runner, 'localhost', 8080)  # Порт можно передать через env
+    site = web.TCPSite(runner, 'localhost', 8765)  # Порт можно передать через env
     await site.start()
     logging.info("Webhook server started on port 8765")
     async def periodic_cleanup_with_bot():
