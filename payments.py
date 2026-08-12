@@ -13,11 +13,11 @@ API_BASE = "https://securepay.tinkoff.ru/v2/"
 
 
 def generate_token(params: dict) -> str:
+    params1 = dict(params)
+    params1["TerminalKey"] = TINKOFF_TERMINAL_KEY
+    params1["Password"] = TINKOFF_SECRET_KEY
     excluded_keys = {"Token", "Receipt", "DATA", "Shops", "Receipts", "PaymentMethods"}
-    terminal_key= TINKOFF_TERMINAL_KEY
-    password= TINKOFF_SECRET_KEY
-    params = params+terminal_key+password
-    data = {k: v for k, v in sorted(params.items())
+    data = {k: v for k, v in sorted(params1.items())
             if k not in excluded_keys and not k.startswith("DATA.")}
     values = []
     for v in data.values():
@@ -25,8 +25,10 @@ def generate_token(params: dict) -> str:
             values.append(json.dumps(v, separators=(',', ':')))
         else:
             values.append(str(v))
+    print(values)
     request_string = ''.join(values)
-    token = hashlib.sha256((request_string).encode()).hexdigest()
+    print(request_string)
+    token = hashlib.sha256((request_string).encode('utf-8')).hexdigest()
     return token
 
 
