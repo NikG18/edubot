@@ -61,7 +61,7 @@ if not BOT_TOKEN:
 TINKOFF_TERMINAL_KEY = os.environ["TINKOFF_TERMINAL_KEY"]
 TINKOFF_SECRET_KEY  = os.environ["TINKOFF_SECRET_KEY"]
 
-
+TINKOFF_WEBHOOK_URL = os.environ.get("TINKOFF_WEBHOOK_URL")
 
 
 dp = Dispatcher()
@@ -1046,7 +1046,7 @@ async def back_to_my_records(call: CallbackQuery, state: FSMContext):
             )
             if can_act:
                 row = []
-                if b["status"] == "paid":
+                if b["status"] == "paid" or b["status"] == "confirmed":
                     row.append(InlineKeyboardButton(
                         text=f"🔄 Перенести: {tutor['name']} {date_str} {time_str}",
                         callback_data=f"reschedule_student_{bid}"
