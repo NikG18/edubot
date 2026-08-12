@@ -8,7 +8,7 @@ import ssl
 
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
-TINKOFF_WEBHOOK_URL = "https://nikg18.alwaysdata.net/tinkoff-webhook"
+TINKOFF_WEBHOOK_URL = "https://repeated-crock-dissuade.ngrok-free.dev/tinkoff-webhook"
 # Для боевого API
 API_BASE = "https://securepay.tinkoff.ru/v2/"
 
