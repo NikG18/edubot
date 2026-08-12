@@ -74,7 +74,7 @@ async def create_payment(booking_id: int, amount_kop: int, description: str, tut
             "Price": amount_kop,
             "Quantity": 1,
             "Amount": amount_kop,
-            "Tax": "None"
+            "Tax": "none"
         }]
     }
   #  if inn:
