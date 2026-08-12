@@ -3,14 +3,13 @@ import json
 import hashlib
 import logging
 import aiohttp
+import certifi
 
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 TINKOFF_WEBHOOK_URL = "https://nikg18.alwaysdata.net/tinkoff-webhook"
 # Для боевого API
 API_BASE = "https://securepay.tinkoff.ru/v2/"
-ssl_context = ssl.create_default_context(cafile=certifi.where())
-connector = aiohttp.TCPConnector(ssl=ssl_context)
 
 def generate_token(params: dict) -> str:
     params1 = dict(params)
@@ -34,8 +33,9 @@ async def api_call(endpoint: str, params: dict) -> dict:
     url = API_BASE + endpoint
     params["TerminalKey"] = TINKOFF_TERMINAL_KEY
     params["Token"] = generate_token(params)
-
-    async with aiohttp.ClientSession() as session:
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    connector = aiohttp.TCPConnector(ssl=ssl_context)
+    async with aiohttp.ClientSession(connector=connector) as session:
         try:
             async with session.post(url, json=params) as resp:
                 text = await resp.text()
