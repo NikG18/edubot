@@ -26,6 +26,8 @@ from database import (
 )
 from aiogram.exceptions import TelegramBadRequest
 from payments import create_payment, check_payment
+from webhook_server import create_webhook_app
+from aiohttp import web
 
 async def safe_answer(call: CallbackQuery, text: str = None, show_alert: bool = False):
     """
@@ -3196,7 +3198,12 @@ async def reminder_loop(bot: Bot):
 async def main():
     await init_db()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-
+    webhook_app = create_webhook_app()
+    runner = web.AppRunner(webhook_app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)  # Порт можно передать через env
+    await site.start()
+    logging.info("Webhook server started on port 8080")
     async def periodic_cleanup_with_bot():
         while True:
             await cleanup_old_bookings()
@@ -3209,6 +3216,7 @@ async def main():
     try:
         await dp.start_polling(bot, drop_pending_updates=True)
     finally:
+        await runner.cleanup()
         await close_db()
 
 
