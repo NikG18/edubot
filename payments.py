@@ -63,7 +63,7 @@ async def create_payment(booking_id: int, amount_kop: int, description: str, tut
     if inn:
         #receipt["Items"][0]["AgentSign"] = "agent"
         receipt["Items"][0]["AgentData"] = {
-            "AgentSign": = "agent"
+            "AgentSign": "agent",
             "AgentPhone": "+79331209603",          # твой телефон как агента
             "SupplierInfo": {
                 "Name": tutor_name,
