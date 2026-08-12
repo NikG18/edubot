@@ -2909,10 +2909,17 @@ async def tutor_confirm_booking(call: CallbackQuery, bot: Bot, state: FSMContext
     else:
         # Сохраняем booking_id для ученика
         await set_pending_email_request(user_id, bid)
+        student_fsm = dp.fsm.get_context(bot, chat_id=user_id, user_id=user_id)
+        await student_fsm.set_state(PaymentStates.waiting_email)
+        await student_fsm.update_data(pending_booking_id=bid)
         await call.message.edit_text("Заявка подтверждена. Запрашиваем email ученика для чека...")
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_email_request")]
+        ])
         await bot.send_message(
             user_id,
-            "📧 Для завершения записи и получения чека введите ваш адрес электронной почты:"
+            "📧 Для завершения записи и получения чека введите ваш адрес электронной почты:",
+            reply_markup=keyboard
         )
         # Очищаем состояние ученика, чтобы он мог ответить
         #user_state = dp.fsm.resolve_context(bot, user_id=user_id, chat_id=user_id)
@@ -3066,31 +3073,48 @@ async def help(message: types.Message):
 
 
 
-@dp.message()
-async def process_payment_email(message: Message, bot: Bot, state: FSMContext):
-    # Проверяем, ждём ли мы email от этого пользователя
-    booking_id = await get_pending_email_request(message.from_user.id)
+@dp.message(StateFilter(PaymentStates.waiting_email))
+async def process_payment_email_state(message: Message, state: FSMContext, bot: Bot):
+    user_id = message.from_user.id
+    data = await state.get_data()
+    booking_id = data.get("pending_booking_id")
     if not booking_id:
-        return  # нет запроса – пропускаем, давая работать другим обработчикам
+        # fallback на таблицу, если вдруг состояние не содержит id
+        booking_id = await get_pending_email_request(user_id)
+        if not booking_id:
+            await message.answer("Ошибка: запрос на email не найден.")
+            await state.clear()
+            return
 
     email = message.text.strip()
-    if "@" not in email or "." not in email:
-        # Сообщение явно не email (например, кнопка) – просто игнорируем, не мешая
-        return
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+        await message.answer("Введите корректный email (например, name@example.com):")
+        return  # остаёмся в состоянии ожидания
 
-    # Сохраняем email
-    await set_user_email(message.from_user.id, email)
+    await set_user_email(user_id, email)
+    await delete_pending_email_request(user_id)
 
     bookings = await get_all_bookings()
     booking = bookings.get(booking_id)
     if not booking:
         await message.answer("Ошибка: запись не найдена.")
-        await delete_pending_email_request(message.from_user.id)
+        await state.clear()
         return
 
-    # Создаём платёж
     await create_and_send_payment(message, bot, booking, email, booking_id)
-    await delete_pending_email_request(message.from_user.id)
+    await state.clear()
+
+@dp.callback_query(F.data == "cancel_email_request", StateFilter(PaymentStates.waiting_email))
+async def cancel_email_request(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    user_id = call.from_user.id
+    await delete_pending_email_request(user_id)
+    await state.clear()
+    try:
+        await call.message.edit_text("❌ Ввод email отменён.")
+    except TelegramBadRequest:
+        pass
+    await call.message.answer("Главное меню:", reply_markup=await get_main_menu(user_id))
 
 
 
