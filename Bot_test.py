@@ -1275,7 +1275,7 @@ async def pay_booking_list(call: CallbackQuery):
         await call.message.edit_text("У вас нет неоплаченных занятий.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_payment_menu")]
     ])
-))
+)
         return
     tutors = await get_all_tutors()
     text = "Выберите занятие для оплаты:\n"
@@ -1480,7 +1480,7 @@ async def create_subscription_payment(source, bot, user_id, tutor_id, subject, c
         await source.message.edit_text("Ошибка: у репетитора не указан ИНН.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_payment_menu")]
     ])
-))
+)
 
         return
     description = f"Абонемент: {count} занятий по {subject} у {tutor['name']}"
@@ -2608,7 +2608,7 @@ async def tutor_reschedule_start(call: CallbackQuery, state: FSMContext):
         await call.message.edit_text("Нет доступных дат для переноса.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_menu")]
     ])
-))
+)
         return
     buttons = [[InlineKeyboardButton(
         text=f"{d} ({WEEKDAY_NAMES[WEEKDAYS[datetime.strptime(d, '%d.%m.%Y').weekday()]]})",
