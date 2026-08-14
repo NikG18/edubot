@@ -1112,7 +1112,7 @@ async def student_reschedule_start(call: CallbackQuery, state: FSMContext):
         await call.message.edit_text("У преподавателя нет свободных дат для переноса.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_menu")]
     ])
-))
+)
         return
     buttons = []
     for d in dates:
