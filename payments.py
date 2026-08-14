@@ -48,7 +48,7 @@ async def api_call(endpoint: str, params: dict) -> dict:
             logging.error(f"Tinkoff API error ({endpoint}): {e}")
             return {}
 
-async def create_payment(booking_id: int, amount_kop: int, description: str, tutor_id: int, tutor_name: str, customer_email: str, inn: str = None) -> tuple:
+async def create_payment(booking_id: int, amount_kop: int, description: str, tutor_id: int, tutor_name: str, customer_email: str, inn: str = None, order_id_prefix: str = "booking") -> tuple:
     receipt = {
         "Email": customer_email,
         "Taxation": "usn_income",
@@ -74,7 +74,7 @@ async def create_payment(booking_id: int, amount_kop: int, description: str, tut
     params = {
        # "TerminalKey": TINKOFF_TERMINAL_KEY,
         "Amount": amount_kop,
-        "OrderId": f"booking_{booking_id}",
+        "OrderId": f"{order_id_prefix}_{booking_id}",
         "Description": description,
         "Receipt": receipt,
         "NotificationURL": os.environ.get("TINKOFF_WEBHOOK_URL", "")
@@ -89,5 +89,10 @@ async def create_payment(booking_id: int, amount_kop: int, description: str, tut
 
 
 async def check_payment(payment_id: str) -> dict:
-    params = {"PaymentId": payment_id}
-    return await api_call("GetState", params)
+    result = await api_call("GetState", {"PaymentId": payment_id})
+    if not result:
+        logging.warning(f"CheckPayment: пустой ответ для payment_id={payment_id}")
+        return {}
+    if not result.get("Success", False):
+        logging.warning(f"CheckPayment: API вернул ошибку для {payment_id}: {result.get('Details')}")
+    return result
