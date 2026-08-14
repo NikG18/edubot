@@ -954,7 +954,10 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
         await call.message.edit_text("Запись не найдена.")
         return
     if booking["status"] == "paid":
-        await call.message.edit_text("Для отмены оплаченного занятия обратитесь в поддержку для возврата.")
+        await call.message.edit_text("Для отмены оплаченного занятия обратитесь в поддержку для возврата.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 К моим записям", callback_data="back_to_my_records")]
+    ])
+))
         return
 
     if booking.get("channel_msg_id") and RECORDS_CHANNEL_ID:
@@ -1106,7 +1109,10 @@ async def student_reschedule_start(call: CallbackQuery, state: FSMContext):
     )
     dates = await get_available_dates(booking["tutor_id"])
     if not dates:
-        await call.message.edit_text("У преподавателя нет свободных дат для переноса.")
+        await call.message.edit_text("У преподавателя нет свободных дат для переноса.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_menu")]
+    ])
+))
         return
     buttons = []
     for d in dates:
@@ -1266,8 +1272,10 @@ async def pay_booking_list(call: CallbackQuery):
     unpaid = [(bid, b) for bid, b in bookings.items()
               if b["user_id"] == user_id and b["status"] == "confirmed"]
     if not unpaid:
-        await call.message.edit_text("У вас нет неоплаченных занятий.")
-        await back_to_pay
+        await call.message.edit_text("У вас нет неоплаченных занятий.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_payment_menu")]
+    ])
+))
         return
     tutors = await get_all_tutors()
     text = "Выберите занятие для оплаты:\n"
@@ -1311,6 +1319,7 @@ async def pay_single_booking(call: CallbackQuery, bot: Bot):
     # Создаём платёж заново (или используем существующий)
     await create_and_send_payment(call, bot, booking, email, bid)
     await call.message.edit_text("Ссылка на оплату отправлена.")
+    await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
 
 # ---------- Покупка абонемента ----------
 @dp.callback_query(F.data == "buy_subscription")
@@ -1468,7 +1477,11 @@ async def create_subscription_payment(source, bot, user_id, tutor_id, subject, c
     tutor = tutors[tutor_id]
     inn = tutor.get("inn", "").strip()
     if not inn:
-        await source.message.edit_text("Ошибка: у репетитора не указан ИНН.")
+        await source.message.edit_text("Ошибка: у репетитора не указан ИНН.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_payment_menu")]
+    ])
+))
+
         return
     description = f"Абонемент: {count} занятий по {subject} у {tutor['name']}"
     amount_kop = int(total * 100)
@@ -2592,7 +2605,10 @@ async def tutor_reschedule_start(call: CallbackQuery, state: FSMContext):
     )
     dates = await get_available_dates(booking["tutor_id"])
     if not dates:
-        await call.message.edit_text("Нет доступных дат для переноса.")
+        await call.message.edit_text("Нет доступных дат для переноса.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_menu")]
+    ])
+))
         return
     buttons = [[InlineKeyboardButton(
         text=f"{d} ({WEEKDAY_NAMES[WEEKDAYS[datetime.strptime(d, '%d.%m.%Y').weekday()]]})",
@@ -3169,6 +3185,12 @@ async def tutor_confirm_booking(call: CallbackQuery, bot: Bot, state: FSMContext
     if email:
         # Сразу создаём платёж, передавая booking как аргумент
         await create_and_send_payment(call, bot, booking, email, bid)
+        await call.message.edit_text(
+            f"✅ Заявка подтверждена. Ссылка на оплату отправлена ученику.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📋 К списку учеников", callback_data=f"tutor_students_{tid}")]
+            ])
+        )
     else:
         # Сохраняем booking_id для ученика
         await set_pending_email_request(user_id, bid)
@@ -3347,6 +3369,7 @@ async def process_payment_email_state(message: Message, state: FSMContext, bot: 
         if not booking_id:
             await message.answer("Ошибка: запрос на email не найден.")
             await state.clear()
+            await message.answer("Главное меню:", reply_markup=await get_main_menu(user_id))
             return
 
     email = message.text.strip()
@@ -3363,11 +3386,12 @@ async def process_payment_email_state(message: Message, state: FSMContext, bot: 
         discount = data.get("buy_discount")
         await create_subscription_payment(message, bot, user_id, tid, subject, count, total, discount, email)
         await message.answer("Платёж для абонемента создан.")
+        await message.answer("Главное меню:", reply_markup=await get_main_menu(user_id))
     else:
         # Оплата занятия
         booking_id = data.get("pending_booking_id")
         if not booking_id:
-            booking_id = await get_pending_email_request(user_id)  # fallback
+            booking_id = await get_pending_email_request(user_id)
         bookings = await get_all_bookings()
         booking = bookings.get(booking_id)
         if not booking:
@@ -3376,6 +3400,7 @@ async def process_payment_email_state(message: Message, state: FSMContext, bot: 
             return
         await create_and_send_payment(message, bot, booking, email, booking_id)
     await state.clear()
+    await message.answer("Главное меню:", reply_markup=await get_main_menu(user_id))
 
 @dp.callback_query(F.data == "cancel_email_request", StateFilter(PaymentStates.waiting_email))
 async def cancel_email_request(call: CallbackQuery, state: FSMContext):
