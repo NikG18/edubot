@@ -23,6 +23,13 @@ def check_signature(request_body: bytes, token: str) -> bool:
     return expected == token
 
 async def handle_tinkoff_webhook(request):
+    body = await request.read()
+    token = request.headers.get("Token", "")
+    expected = hashlib.sha256(body + TINKOFF_SECRET_KEY.encode()).hexdigest()
+    logging.info(f"Received token: {token}")
+    logging.info(f"Expected token: {expected}")
+    logging.info(f"Body: {body[:200]}")
+    logging.info(f"Secret key (первые 4 символа): {TINKOFF_SECRET_KEY[:4]}")
     bot: Bot = request.app.get("bot")
     if bot is None:
         logging.error("Webhook: bot не передан в приложение")
