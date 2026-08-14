@@ -1267,6 +1267,7 @@ async def pay_booking_list(call: CallbackQuery):
               if b["user_id"] == user_id and b["status"] == "confirmed"]
     if not unpaid:
         await call.message.edit_text("У вас нет неоплаченных занятий.")
+        await back_to_pay
         return
     tutors = await get_all_tutors()
     text = "Выберите занятие для оплаты:\n"
