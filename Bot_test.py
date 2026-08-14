@@ -957,7 +957,7 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
         await call.message.edit_text("Для отмены оплаченного занятия обратитесь в поддержку для возврата.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 К моим записям", callback_data="back_to_my_records")]
     ])
-))
+)
         return
 
     if booking.get("channel_msg_id") and RECORDS_CHANNEL_ID:
