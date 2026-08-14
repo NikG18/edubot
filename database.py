@@ -64,7 +64,8 @@ async def init_db():
             channel_msg_id BIGINT DEFAULT NULL,
             amount INTEGER DEFAULT 0,
             commission_percent INTEGER DEFAULT 0,
-            tinkoff_payment_id TEXT
+            tinkoff_payment_id TEXT,
+            payment_msg_id BIGINT
         );
 
         CREATE TABLE IF NOT EXISTS subscriptions (
@@ -74,7 +75,8 @@ async def init_db():
             subject TEXT NOT NULL,
             total_lessons INTEGER NOT NULL DEFAULT 0,
             remaining_lessons INTEGER NOT NULL DEFAULT 0,
-            active INTEGER NOT NULL DEFAULT 1
+            active INTEGER NOT NULL DEFAULT 1,
+            discount_percent INTEGER DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS blocked_days (
@@ -99,18 +101,38 @@ async def init_db():
 
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
-            email TEXT DEFAULT ''
+            email TEXT DEFAULT '',
+            autopay_enabled BOOLEAN DEFAULT FALSE
         );
 
         CREATE TABLE IF NOT EXISTS pending_email_requests (
             user_id BIGINT PRIMARY KEY,
             booking_id INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS pending_subscriptions (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            tutor_id INTEGER NOT NULL REFERENCES tutors(id) ON DELETE CASCADE,
+            subject TEXT NOT NULL,
+            total_lessons INTEGER NOT NULL,
+            discount_percent INTEGER DEFAULT 0,
+            total_price REAL NOT NULL,
+            payment_id TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
         """)
+
+
         await conn.execute("""
         ALTER TABLE tutors ADD COLUMN IF NOT EXISTS vk_id BIGINT;
         """)
         await conn.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_msg_id BIGINT;")
+        await conn.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS amount INTEGER DEFAULT 0;")
+        await conn.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS commission_percent INTEGER DEFAULT 0;")
+        await conn.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS tinkoff_payment_id TEXT;")
+        await conn.execute("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS discount_percent INTEGER DEFAULT 0;")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS autopay_enabled BOOLEAN DEFAULT FALSE;")
+
 async def close_db():
     global pool
     if pool:
@@ -285,12 +307,12 @@ async def delete_subject(tutor_id: int, name: str):
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM subjects WHERE tutor_id = $1 AND name = $2", tutor_id, name)
 
-async def add_subscription(user_id, tutor_id, subject, total_lessons):
+async def add_subscription(user_id, tutor_id, subject, total_lessons, discount_percent=0):
     async with pool.acquire() as conn:
         await conn.execute(
-            "INSERT INTO subscriptions (user_id, tutor_id, subject, total_lessons, remaining_lessons) "
-            "VALUES ($1, $2, $3, $4, $5)",
-            user_id, tutor_id, subject, total_lessons, total_lessons
+            "INSERT INTO subscriptions (user_id, tutor_id, subject, total_lessons, remaining_lessons, discount_percent) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
+            user_id, tutor_id, subject, total_lessons, total_lessons, discount_percent
         )
 
 async def get_student_subscriptions(user_id: int) -> list:
@@ -372,7 +394,11 @@ async def get_all_bookings() -> Dict[int, dict]:
                 "time_slot": row["time_slot"],
                 "status": row["status"],
                 "reminded": bool(row["reminded"]),
-                "channel_msg_id": row["channel_msg_id"]
+                "channel_msg_id": row["channel_msg_id"],
+                "amount": row["amount"],
+                "commission_percent": row["commission_percent"],
+                "tinkoff_payment_id": row["tinkoff_payment_id"],
+                "payment_msg_id": row["payment_msg_id"],
             }
     return bookings
 
@@ -565,6 +591,101 @@ async def add_lesson_to_balance(user_id: int, tutor_id: int, subject: str):
                 "VALUES ($1, $2, $3, 1, 1)",
                 user_id, tutor_id, subject
             )
+
+
+# ------------------------------------------------------------
+# Абонементы (pending и активация)
+# ------------------------------------------------------------
+async def add_pending_subscription(user_id: int, tutor_id: int, subject: str, total_lessons: int, discount_percent: int, total_price: float, payment_id: str) -> int:
+    """Добавляет запись об ожидающем оплату абонементе. Возвращает ID созданной записи."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO pending_subscriptions 
+            (user_id, tutor_id, subject, total_lessons, discount_percent, total_price, payment_id, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+            RETURNING id
+            """,
+            user_id, tutor_id, subject, total_lessons, discount_percent, total_price, payment_id
+        )
+        return row["id"]
+
+async def activate_subscription(payment_id: str) -> bool:
+    """Переносит данные из pending_subscriptions в subscriptions после успешной оплаты."""
+    async with pool.acquire() as conn:
+        pending = await conn.fetchrow(
+            "SELECT * FROM pending_subscriptions WHERE payment_id = $1",
+            payment_id
+        )
+        if not pending:
+            return False
+        # Вставляем в активные подписки
+        await conn.execute(
+            """
+            INSERT INTO subscriptions 
+            (user_id, tutor_id, subject, total_lessons, remaining_lessons, discount_percent, active)
+            VALUES ($1, $2, $3, $4, $4, $5, 1)
+            """,
+            pending["user_id"], pending["tutor_id"], pending["subject"],
+            pending["total_lessons"], pending["discount_percent"]
+        )
+        # Удаляем запись из pending
+        await conn.execute("DELETE FROM pending_subscriptions WHERE id = $1", pending["id"])
+        return True
+
+async def get_pending_subscription_by_payment_id(payment_id: str) -> Optional[dict]:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM pending_subscriptions WHERE payment_id = $1",
+            payment_id
+        )
+        return dict(row) if row else None
+
+async def delete_pending_subscription(payment_id: str):
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM pending_subscriptions WHERE payment_id = $1", payment_id)
+
+# ------------------------------------------------------------
+# Автоплатеж
+# ------------------------------------------------------------
+async def is_autopay_enabled(user_id: int) -> bool:
+    async with pool.acquire() as conn:
+        row = await conn.fetchval(
+            "SELECT autopay_enabled FROM users WHERE user_id = $1",
+            user_id
+        )
+        return bool(row) if row is not None else False
+
+async def set_autopay_enabled(user_id: int, enabled: bool):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO users (user_id, autopay_enabled) VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE SET autopay_enabled = $2
+            """,
+            user_id, enabled
+        )
+
+# ------------------------------------------------------------
+# Списание занятий по абонементу
+# ------------------------------------------------------------
+async def decrement_subscription_lessons(user_id: int, tutor_id: int, subject: str) -> bool:
+    """Уменьшает remaining_lessons на 1, если есть активный абонемент. Возвращает True, если списание успешно."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, remaining_lessons FROM subscriptions WHERE user_id=$1 AND tutor_id=$2 AND subject=$3 AND active=1 AND remaining_lessons>0",
+            user_id, tutor_id, subject
+        )
+        if row:
+            await conn.execute(
+                "UPDATE subscriptions SET remaining_lessons = remaining_lessons - 1 WHERE id=$1",
+                row["id"]
+            )
+            return True
+        return False
+
+
+
 
 # ------------------------------------------------------------
 # Вспомогательная функция
