@@ -6,6 +6,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Union
 
+from vkbottle import GroupEventType
+
 from vkbottle import (
     Bot, Keyboard, KeyboardButtonColor, Text, OpenLink,
     BaseStateGroup, BuiltinStateDispenser, Callback
@@ -31,7 +33,7 @@ from payments import create_payment, check_payment
 
 # -------------------- Конфигурация --------------------
 ADMIN_VK_ID = int(os.environ.get("ADMIN_VK_ID", 0))
-BOT_TOKEN = os.environ.get("VK_BOT_TOKEN")
+BOT_TOKEN = "vk1.a.wjbVHMgAK5VANIWPlDxBo5GA4M_LEdURpeiwRdvY-KAZ3Vn0bQEmd_JAQb1Xw7qoTee_xGG29aJv9oB_vIf_pTfMgOQtkXMxD6sGh-s0bDgymaNosq2CkAldOkAxHGB3A7VLdLAZC4IjTV6VqlzyEkRvptOAsJhgYmkqq_ty2pQDNNY3DXsc1oeN1aSUjH9zh1wAK9bn25Va__zL0JH0CQ"
 if not BOT_TOKEN:
     raise ValueError("VK_BOT_TOKEN не задан!")
 
@@ -323,7 +325,7 @@ async def create_and_send_payment(source, booking, email, booking_id):
     )
     if not payment_url:
         await bot.api.messages.send(user_id=booking["user_id"],
-                                    message="Ошибка создания платежа. Обратитесь в поддержку.", random_id=0)
+                                    message="Ошибка создания платежа. Обратитесь в поддержку.",  )
         return
 
     await update_booking(bid,
@@ -343,14 +345,14 @@ async def create_and_send_payment(source, booking, email, booking_id):
         user_id=booking["user_id"],
         message=student_msg,
         keyboard=pay_keyboard.get_json(),
-        random_id=0
+         
     )
 
     if tutor.get("vk_id"):
         await bot.api.messages.send(
             user_id=tutor["vk_id"],
             message=f"✅ Занятие с {booking['username']} подтверждено. Ожидается оплата.",
-            random_id=0
+             
         )
 
 
@@ -373,7 +375,8 @@ async def info_repetitors(message: Message):
 
 
 async def back_to_tutors(event: MessageEvent):
-    await edit_event_message(event, "Кто из репетиторов вас интересует?", keyboard=await make_tutors_keyboard("tutor_info"))
+    await edit_event_message(event, "Кто из репетиторов вас интересует?",
+                             keyboard=await make_tutors_keyboard("tutor_info"))
 
 
 async def show_tutor_info(event: MessageEvent):
@@ -436,7 +439,8 @@ async def show_trial_dates(event: MessageEvent, tid: int):
     if not available_dates:
         keyboard = Keyboard(inline=True)
         keyboard.add(Callback("🔙 К анкете", payload={"cmd": "tutor_info", "tutor_id": tid}))
-        await edit_event_message(event, "На ближайшие 7 дней у репетитора нет свободных слотов.", keyboard=keyboard.get_json())
+        await edit_event_message(event, "На ближайшие 7 дней у репетитора нет свободных слотов.",
+                                 keyboard=keyboard.get_json())
         return
 
     buttons = []
@@ -535,7 +539,7 @@ async def confirm_trial_booking(event: MessageEvent):
                 user_id=tutor["vk_id"],
                 message=booking_msg,
                 keyboard=keyboard.get_json(),
-                random_id=0
+                 
             )
         except Exception:
             pass
@@ -545,7 +549,7 @@ async def confirm_trial_booking(event: MessageEvent):
         user_id=event.user_id,
         message="Главное меню",
         keyboard=await get_main_menu(event.user_id),
-        random_id=0
+         
     )
     await state_dispenser.delete(event.user_id)
 
@@ -640,7 +644,8 @@ async def subject_chosen(event: MessageEvent):
     if not dates:
         kb = Keyboard(inline=True)
         kb.add(Callback("🔙 Назад к репетиторам", payload={"cmd": "back_to_tutors_booking"}))
-        await edit_event_message(event, "У этого преподавателя пока нет свободных дат. Попробуйте позже или свяжитесь с преподавателем.",
+        await edit_event_message(event,
+                                 "У этого преподавателя пока нет свободных дат. Попробуйте позже или свяжитесь с преподавателем.",
                                  keyboard=kb.get_json())
         return
 
@@ -753,7 +758,7 @@ async def confirm_booking(event: MessageEvent):
                 user_id=tutor["vk_id"],
                 message=booking_msg,
                 keyboard=kb.get_json(),
-                random_id=0
+                 
             )
         except Exception:
             pass
@@ -763,7 +768,7 @@ async def confirm_booking(event: MessageEvent):
         user_id=event.user_id,
         message="Главное меню",
         keyboard=await get_main_menu(event.user_id),
-        random_id=0
+         
     )
     await state_dispenser.delete(event.user_id)
 
@@ -775,7 +780,7 @@ async def cancel_booking(event: MessageEvent):
         user_id=event.user_id,
         message="Главное меню",
         keyboard=await get_main_menu(event.user_id),
-        random_id=0
+         
     )
 
 
@@ -814,10 +819,10 @@ async def my_records(message: Message):
         )
         if can_act:
             kb.add(Callback(f"🔄 Перенести: {tutor['name']} {b['date']} {b['time_slot']}",
-                        payload={"cmd": f"reschedule_student_{bid}"}))
+                            payload={"cmd": f"reschedule_student_{bid}"}))
             kb.row()
             kb.add(Callback(f"❌ Отменить: {tutor['name']} {b['date']} {b['time_slot']}",
-                        payload={"cmd": f"cancel_student_{bid}"}))
+                            payload={"cmd": f"cancel_student_{bid}"}))
             kb.row()
     kb.add(Callback("📊 Статистика", payload={"cmd": "student_stats"}))
     kb.row()
@@ -844,14 +849,14 @@ async def cancel_student_booking(event: MessageEvent):
     tutor_id = booking["tutor_id"]
     tutors = await get_all_tutors()
     tutor_name = tutors.get(tutor_id, {}).get("name", "Неизвестный")
-    await bot.api.messages.send(user_id=student_id, message="✅ Вы отменили занятие.", random_id=0)
+    await bot.api.messages.send(user_id=student_id, message="✅ Вы отменили занятие.",  )
     if tutor_id and (tutor_tg := tutors.get(tutor_id, {}).get("vk_id")):
         msg_tutor = (
             f"❌ Ученик {booking['username']} отменил занятие:\n"
             f"📚 {booking['subject']}\n📅 {booking['date']} 🕒 {booking['time_slot']}"
         )
         try:
-            await bot.api.messages.send(user_id=tutor_tg, message=msg_tutor, random_id=0)
+            await bot.api.messages.send(user_id=tutor_tg, message=msg_tutor,  )
         except:
             pass
     kb = Keyboard(inline=True)
@@ -905,10 +910,10 @@ async def back_to_my_records(event: MessageEvent):
             "✅ Можно отменить/перенести" if can_act else "⚠️ Действия невозможны"))
         if can_act:
             kb.add(Callback(f"🔄 Перенести: {tutor['name']} {b['date']} {b['time_slot']}",
-                        payload={"cmd": f"reschedule_student_{bid}"}))
+                            payload={"cmd": f"reschedule_student_{bid}"}))
             kb.row()
             kb.add(Callback(f"❌ Отменить: {tutor['name']} {b['date']} {b['time_slot']}",
-                        payload={"cmd": f"cancel_student_{bid}"}))
+                            payload={"cmd": f"cancel_student_{bid}"}))
             kb.row()
     kb.add(Callback("📊 Статистика", payload={"cmd": "student_stats"}))
     kb.row()
@@ -1038,18 +1043,18 @@ async def confirm_student_reschedule(event: MessageEvent):
         kb.add(Callback("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
         kb.add(Callback("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
         try:
-            await bot.api.messages.send(user_id=tutor_tg, message=notify_tutor, keyboard=kb.get_json(), random_id=0)
+            await bot.api.messages.send(user_id=tutor_tg, message=notify_tutor, keyboard=kb.get_json(),  )
         except:
             pass
 
     await bot.api.messages.send(user_id=student_id,
                                 message=f"✅ Заявка на перенос отправлена преподавателю. Новое время: {new_date} {new_time}.",
-                                random_id=0)
+                                 )
     await edit_event_message(event, "Перенос выполнен. Ожидайте подтверждения нового времени.")
     await bot.api.messages.send(user_id=event.user_id,
                                 message="Главное меню",
                                 keyboard=await get_main_menu(event.user_id),
-                                random_id=0)
+                                 )
     await state_dispenser.delete(event.user_id)
 
 
@@ -1210,7 +1215,7 @@ async def send_message_to_tutor(message: Message):
     kb = Keyboard(inline=True)
     kb.add(Callback("↩️ Ответить", payload={"cmd": f"reply_{message.from_id}"}))
     try:
-        await bot.api.messages.send(user_id=ADMIN_VK_ID, message=forward_msg, keyboard=kb.get_json(), random_id=0)
+        await bot.api.messages.send(user_id=ADMIN_VK_ID, message=forward_msg, keyboard=kb.get_json(),  )
     except:
         pass
     tutors = await get_all_tutors()
@@ -1218,7 +1223,7 @@ async def send_message_to_tutor(message: Message):
     if tutor and tutor.get("vk_id"):
         try:
             await bot.api.messages.send(user_id=tutor["vk_id"], message=forward_msg, keyboard=kb.get_json(),
-                                        random_id=0)
+                                         )
         except:
             pass
 
@@ -1230,7 +1235,7 @@ async def send_message_to_tutor(message: Message):
 async def process_reply_button(event: MessageEvent):
     student_id = int(event.payload["cmd"].split("_")[1])
     await state_dispenser.update_data(event.user_id, reply_student_id=student_id)
-    await bot.api.messages.send(user_id=event.user_id, message="Введите ваш ответ (текст):", random_id=0)
+    await bot.api.messages.send(user_id=event.user_id, message="Введите ваш ответ (текст):",  )
     await state_dispenser.set(event.user_id, ContactStates.waiting_reply)
 
 
@@ -1240,7 +1245,7 @@ async def send_reply_to_student(message: Message):
     student_id = data["reply_student_id"]
     reply_text = f"📬 Ответ от преподавателя:\n{message.text}"
     try:
-        await bot.api.messages.send(user_id=student_id, message=reply_text, random_id=0)
+        await bot.api.messages.send(user_id=student_id, message=reply_text,  )
         await message.answer("✅ Ответ отправлен ученику.", keyboard=await get_main_menu(message.from_id))
     except:
         await message.answer("⚠️ Не удалось отправить ответ (возможно, ученик заблокировал бота).",
@@ -1320,7 +1325,7 @@ async def tutor_send_message_to_student(message: Message):
 
     forward_msg = f"📨 Сообщение от преподавателя {tutor_name}:\n\n{message.text}"
     try:
-        await bot.api.messages.send(user_id=student_id, message=forward_msg, random_id=0)
+        await bot.api.messages.send(user_id=student_id, message=forward_msg,  )
         await message.answer("✅ Сообщение отправлено ученику.", keyboard=await get_main_menu(message.from_id))
     except:
         await message.answer("⚠️ Не удалось отправить сообщение (возможно, ученик заблокировал бота).",
@@ -1341,7 +1346,7 @@ async def cancel_support(event: MessageEvent):
     await state_dispenser.delete(event.user_id)
     await edit_event_message(event, "Обращение отменено.")
     await bot.api.messages.send(user_id=event.user_id, message="Главное меню",
-                                keyboard=await get_main_menu(event.user_id), random_id=0)
+                                keyboard=await get_main_menu(event.user_id),  )
 
 
 @bot.on.private_message(state=SupportUserStates.waiting_message)
@@ -1355,7 +1360,7 @@ async def support_message_to_admin(message: Message):
     kb = Keyboard(inline=True)
     kb.add(Callback("↩️ Ответить", payload={"cmd": f"support_reply_{uid}"}))
     try:
-        await bot.api.messages.send(user_id=ADMIN_VK_ID, message=forward_msg, keyboard=kb.get_json(), random_id=0)
+        await bot.api.messages.send(user_id=ADMIN_VK_ID, message=forward_msg, keyboard=kb.get_json(),  )
     except:
         pass
     await message.answer("✅ Ваше сообщение отправлено администратору. Ожидайте ответа.",
@@ -1369,7 +1374,7 @@ async def support_reply_start(event: MessageEvent):
         return
     student_id = int(event.payload["cmd"].split("_")[-1])
     await state_dispenser.update_data(event.user_id, support_reply_student_id=student_id)
-    await bot.api.messages.send(user_id=event.user_id, message="Введите ответ пользователю:", random_id=0)
+    await bot.api.messages.send(user_id=event.user_id, message="Введите ответ пользователю:",  )
     await state_dispenser.set(event.user_id, SupportAdminReplyStates.waiting_reply)
 
 
@@ -1379,7 +1384,7 @@ async def support_send_reply(message: Message):
     student_id = data["support_reply_student_id"]
     reply_text = f"📬 Ответ от администратора:\n{message.text}"
     try:
-        await bot.api.messages.send(user_id=student_id, message=reply_text, random_id=0)
+        await bot.api.messages.send(user_id=student_id, message=reply_text,  )
         await message.answer("✅ Ответ отправлен пользователю.", keyboard=await get_main_menu(message.from_id))
     except:
         await message.answer("⚠️ Не удалось отправить ответ (возможно, пользователь заблокировал бота).",
@@ -1545,7 +1550,8 @@ async def finish_adding_subjects(event: MessageEvent):
 
     kb = Keyboard(inline=True)
     kb.add(Callback("📂 В админ-панель", payload={"cmd": "admin_panel_open"}))
-    await edit_event_message(event, f"✅ Репетитор «{data['name']}» успешно добавлен (ID {new_id}).", keyboard=kb.get_json())
+    await edit_event_message(event, f"✅ Репетитор «{data['name']}» успешно добавлен (ID {new_id}).",
+                             keyboard=kb.get_json())
     await state_dispenser.delete(event.user_id)
 
 
@@ -1885,9 +1891,9 @@ async def toggle_commission_mode(event: MessageEvent):
     new_mode = "auto" if current_mode == "manual" else "manual"
     await update_tutor(tid, commission_mode=new_mode)
     await edit_event_message(event,
-        f"Режим комиссии изменён на {'автоматический' if new_mode == 'auto' else 'ручной'}.\n"
-        "При автоматическом режиме процент рассчитывается по прогрессивной шкале."
-    )
+                             f"Режим комиссии изменён на {'автоматический' if new_mode == 'auto' else 'ручной'}.\n"
+                             "При автоматическом режиме процент рассчитывается по прогрессивной шкале."
+                             )
     await edit_tutor_choice(event)  # вернуться в меню редактирования
 
 
@@ -2098,7 +2104,7 @@ async def show_students(event: MessageEvent):
             text += f"  {status_emoji} {b['date']} {b['time_slot']} – {b['subject']}\n"
             if b["status"] == "pending":
                 kb.add(Callback(f"✅ Подтвердить {b['username']} {b['date']} {b['time_slot']}",
-                            payload={"cmd": f"tutor_confirm_{bid}"}))
+                                payload={"cmd": f"tutor_confirm_{bid}"}))
                 kb.add(Callback(f"❌ Отклонить", payload={"cmd": f"tutor_reject_{bid}"}))
                 kb.row()
             elif b["status"] == "confirmed":
@@ -2130,7 +2136,7 @@ async def tutor_confirm_booking(event: MessageEvent):
         await edit_event_message(event, "Заявка подтверждена. Запрашиваем email ученика для чека...")
         await bot.api.messages.send(user_id=user_id,
                                     message="📧 Для завершения записи и получения чека введите ваш адрес электронной почты:",
-                                    random_id=0)
+                                     )
 
 
 async def tutor_reject_booking(event: MessageEvent):
@@ -2144,7 +2150,7 @@ async def tutor_reject_booking(event: MessageEvent):
     await delete_booking(bid)
     await bot.api.messages.send(user_id=user_id,
                                 message="❌ Ваша заявка на занятие была отклонена преподавателем. Вы можете записаться на другое время.",
-                                random_id=0)
+                                 )
     tid = booking["tutor_id"]
     kb = Keyboard(inline=True)
     kb.add(Callback("🔙 К списку учеников", payload={"cmd": f"tutor_students_{tid}"}))
@@ -2167,7 +2173,7 @@ async def tutor_cancel_booking(event: MessageEvent):
     tutors = await get_all_tutors()
     tutor_name = tutors.get(booking["tutor_id"], {}).get("name", "Преподаватель")
     msg = f"❌ Преподаватель {tutor_name} отменил занятие {booking['date']} {booking['time_slot']} по предмету «{booking['subject']}»."
-    await bot.api.messages.send(user_id=student_id, message=msg, random_id=0)
+    await bot.api.messages.send(user_id=student_id, message=msg,  )
     tid = booking["tutor_id"]
     kb = Keyboard(inline=True)
     kb.add(Callback("🔙 К списку учеников", payload={"cmd": f"tutor_students_{tid}"}))
@@ -2283,10 +2289,10 @@ async def confirm_tutor_reschedule(event: MessageEvent):
         f"Предмет: {subject}\n"
         f"Новое время: {new_date} {new_time}"
     )
-    await bot.api.messages.send(user_id=student_id, message=student_msg, random_id=0)
+    await bot.api.messages.send(user_id=student_id, message=student_msg,  )
 
     tutor_msg = f"✅ Вы перенесли занятие с {student_username} на {new_date} {new_time}."
-    await bot.api.messages.send(user_id=event.user_id, message=tutor_msg, random_id=0)
+    await bot.api.messages.send(user_id=event.user_id, message=tutor_msg,  )
 
     kb = Keyboard(inline=True)
     kb.add(Callback("🔙 К списку учеников", payload={"cmd": f"tutor_students_{tid}"}))
@@ -2473,9 +2479,9 @@ async def range_break_chosen(event: MessageEvent):
     break_min = int(event.payload["cmd"].split("_")[1])
     await state_dispenser.update_data(event.user_id, range_break=break_min)
     await edit_event_message(event,
-        "Введите промежуток времени в формате ЧЧ:ММ-ЧЧ:ММ (например, 09:00-15:30).\n"
-        "Бот автоматически разобьёт его на слоты с учётом выбранной длительности и перерыва."
-    )
+                             "Введите промежуток времени в формате ЧЧ:ММ-ЧЧ:ММ (например, 09:00-15:30).\n"
+                             "Бот автоматически разобьёт его на слоты с учётом выбранной длительности и перерыва."
+                             )
     await state_dispenser.set(event.user_id, TutorScheduleStates.add_range)
 
 
@@ -2680,7 +2686,7 @@ async def universal_callback_handler(event: MessageEvent):
     logging.info(f"🔔 Команда: {cmd}")
     if not cmd:
         return
-    
+
     # Подтверждение события – обязательно для всех callback-кнопок
     await bot.api.messages.send_message_event_answer(
         event_id=event.event_id,
@@ -2913,18 +2919,18 @@ async def check_pending_payments():
         if payment_state.get("Success") and payment_state.get("Status") in ("CONFIRMED", "AUTHORIZED"):
             await update_booking(bid, status="paid")
             await bot.api.messages.send(user_id=b["user_id"], message="✅ Оплата получена! Занятие подтверждено.",
-                                        random_id=0)
+                                         )
             await add_lesson_to_balance(b["user_id"], b["tutor_id"], b["subject"])
             tutors = await get_all_tutors()
             tutor = tutors.get(b["tutor_id"])
             if tutor and tutor.get("vk_id"):
                 await bot.api.messages.send(user_id=tutor["vk_id"],
                                             message=f"✅ Оплата за занятие {b['date']} {b['time_slot']} получена.",
-                                            random_id=0)
+                                             )
         elif payment_state.get("Status") in ("REJECTED", "CANCELED"):
             await update_booking(bid, status="cancelled")
             await bot.api.messages.send(user_id=b["user_id"], message="❌ Платёж не прошёл. Запись отменена.",
-                                        random_id=0)
+                                         )
 
 
 async def send_reminders():
@@ -2950,7 +2956,7 @@ async def send_reminders():
                 f"⏰ Напоминание! Через час у вас занятие по предмету «{b['subject']}» "
                 f"с преподавателем {tutor_name}. Время: {b['date']} {b['time_slot']}"
             )
-            await bot.api.messages.send(user_id=student_id, message=student_msg, random_id=0)
+            await bot.api.messages.send(user_id=student_id, message=student_msg,  )
 
             tutor = tutors.get(tutor_id)
             if tutor and tutor.get("vk_id"):
@@ -2959,7 +2965,7 @@ async def send_reminders():
                     f"с учеником {b['username']} (ID: {student_id}). Время: {b['date']} {b['time_slot']}"
                 )
                 try:
-                    await bot.api.messages.send(user_id=tutor["vk_id"], message=tutor_msg, random_id=0)
+                    await bot.api.messages.send(user_id=tutor["vk_id"], message=tutor_msg,  )
                 except:
                     pass
 
@@ -2999,7 +3005,7 @@ async def send_pending_reminders():
         keyboard = Keyboard(inline=True)
         keyboard.add(Callback("📋 Мои ученики", payload={"cmd": f"tutor_students_{tid}"}))
         try:
-            await bot.api.messages.send(user_id=tutor["vk_id"], message=text, keyboard=keyboard.get_json(), random_id=0)
+            await bot.api.messages.send(user_id=tutor["vk_id"], message=text, keyboard=keyboard.get_json(),  )
         except Exception as e:
             logging.warning(f"Не удалось отправить напоминание преподавателю {tid}: {e}")
 
