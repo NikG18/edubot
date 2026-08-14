@@ -22,7 +22,9 @@ from database import (
     get_students_stats, get_all_tutors_stats_by_month, get_students_stats_by_month,
     block_day, unblock_day, is_day_blocked, recalculate_monthly_stats, get_user_email, set_user_email,
     add_lesson_to_balance, calculate_auto_commission, set_pending_email_request,
-    get_pending_email_request, delete_pending_email_request, close_db, cleanup_old_bookings
+    get_pending_email_request, delete_pending_email_request, close_db, cleanup_old_bookings,
+    add_pending_subscription, activate_subscription, get_pending_subscription_by_payment_id ,delete_pending_subscription ,
+    is_autopay_enabled, set_autopay_enabled
 )
 from aiogram.exceptions import TelegramBadRequest
 from payments import create_payment, check_payment
@@ -197,6 +199,11 @@ class TrialBookingStates(StatesGroup):
 class PaymentStates(StatesGroup):
     waiting_email = State()
 
+class BuySubscriptionStates(StatesGroup):
+    choosing_tutor = State()
+    choosing_subject = State()
+    choosing_package = State()
+    waiting_confirmation = State()
 
 # -------------------- ГЛАВНОЕ МЕНЮ --------------------
 async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
@@ -1228,27 +1235,287 @@ async def confirm_student_reschedule(call: CallbackQuery, state: FSMContext, bot
 
 # ==================== ОПЛАТА ====================
 @dp.message(F.text.in_(["💳 Оплата"]))
-async def oplata(message: types.Message):
-    await message.answer("Переходим в раздел...", reply_markup=ReplyKeyboardRemove())
+async def payment_menu(message: types.Message):
+    await message.answer("Переходим в раздел оплаты...", reply_markup=ReplyKeyboardRemove())
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📱 Оплата по QR-коду", callback_data="qr")],
-        [InlineKeyboardButton(text="💳 Оплата банковской картой", callback_data="card")],
-        [InlineKeyboardButton(text="📲 Перевод СБП по номеру телефона", callback_data="sbp")],
+        [InlineKeyboardButton(text="💳 Оплатить занятие", callback_data="pay_booking")],
+        [InlineKeyboardButton(text="📚 Купить абонемент", callback_data="buy_subscription")],
+        [InlineKeyboardButton(text="🔄 Автоплатеж", callback_data="autopay_settings")],
         [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
     ])
-    await message.answer("Какой способ оплаты вам удобнее?", reply_markup=keyboard)
+    await message.answer("Выберите действие:", reply_markup=keyboard)
 
 
-@dp.callback_query(F.data == "back_to_pay")
+@dp.callback_query(F.data == "back_to_payment_menu")
 async def back_to_pay(call: CallbackQuery):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📱 Оплата по QR-коду", callback_data="qr")],
-        [InlineKeyboardButton(text="💳 Оплата банковской картой", callback_data="card")],
-        [InlineKeyboardButton(text="📲 Перевод СБП по номеру телефона", callback_data="sbp")],
+        [InlineKeyboardButton(text="💳 Оплатить занятие", callback_data="pay_booking")],
+        [InlineKeyboardButton(text="📚 Купить абонемент", callback_data="buy_subscription")],
+        [InlineKeyboardButton(text="🔄 Автоплатеж", callback_data="autopay_settings")],
         [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
     ])
-    await call.message.edit_text("Какой способ оплаты вам удобнее?", reply_markup=keyboard)
+    await call.message.edit_text("Выберите действие:", reply_markup=keyboard)
     await safe_answer(call)
+
+
+
+@dp.callback_query(F.data == "pay_booking")
+async def pay_booking_list(call: CallbackQuery):
+    user_id = call.from_user.id
+    bookings = await get_all_bookings()
+    unpaid = [(bid, b) for bid, b in bookings.items()
+              if b["user_id"] == user_id and b["status"] == "confirmed"]
+    if not unpaid:
+        await call.message.edit_text("У вас нет неоплаченных занятий.")
+        return
+    tutors = await get_all_tutors()
+    text = "Выберите занятие для оплаты:\n"
+    keyboard = []
+    for bid, b in unpaid:
+        tutor_name = tutors.get(b["tutor_id"], {}).get("name", "Преподаватель")
+        text += f"\n👨‍🏫 {tutor_name}\n📚 {b['subject']}\n📅 {b['date']} {b['time_slot']}\n"
+        keyboard.append([InlineKeyboardButton(
+            text=f"Оплатить {tutor_name} {b['date']} {b['time_slot']}",
+            callback_data=f"pay_single_{bid}"
+        )])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_payment_menu")])
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+
+@dp.callback_query(F.data.startswith("pay_single_"))
+async def pay_single_booking(call: CallbackQuery, bot: Bot):
+    bid = int(call.data.split("_")[2])
+    bookings = await get_all_bookings()
+    booking = bookings.get(bid)
+    if not booking or booking["status"] != "confirmed":
+        await call.answer("Запись не найдена или уже оплачена.", show_alert=True)
+        return
+    user_id = call.from_user.id
+    email = await get_user_email(user_id)
+    if not email:
+        # Запросить email
+        await set_pending_email_request(user_id, bid)
+        student_fsm = dp.fsm.get_context(bot, chat_id=user_id, user_id=user_id)
+        await student_fsm.set_state(PaymentStates.waiting_email)
+        await student_fsm.update_data(pending_booking_id=bid)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_email_request")]
+        ])
+        await bot.send_message(
+            user_id,
+            "📧 Для завершения записи и получения чека введите ваш адрес электронной почты:",
+            reply_markup=keyboard
+        )
+        await call.message.edit_text("Мы отправили запрос на email.")
+        return
+    # Создаём платёж заново (или используем существующий)
+    await create_and_send_payment(call, bot, booking, email, bid)
+    await call.message.edit_text("Ссылка на оплату отправлена.")
+
+# ---------- Покупка абонемента ----------
+@dp.callback_query(F.data == "buy_subscription")
+async def buy_subscription_start(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    keyboard = await make_tutors_keyboard("buy_tutor", back_callback="back_to_payment_menu")
+    await call.message.edit_text("Выберите репетитора для абонемента:", reply_markup=keyboard)
+    await state.set_state(BuySubscriptionStates.choosing_tutor)
+
+@dp.callback_query(F.data.startswith("buy_tutor_"), StateFilter(BuySubscriptionStates.choosing_tutor))
+async def buy_subscription_tutor(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    tid = int(call.data.split("_")[2])
+    await state.update_data(buy_tutor_id=tid)
+    tutors = await get_all_tutors()
+    tutor = tutors.get(tid)
+    if not tutor:
+        await call.message.edit_text("Репетитор не найден.")
+        return
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+    for subj, price in tutor["subjects"].items():
+        keyboard.inline_keyboard.append([InlineKeyboardButton(text=f"{subj} ({price} руб.)", callback_data=f"buy_subject_{subj}")])
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_buy_tutors")])
+    await call.message.edit_text(f"Выберите предмет для абонемента у {tutor['name']}:", reply_markup=keyboard)
+    await state.set_state(BuySubscriptionStates.choosing_subject)
+
+@dp.callback_query(F.data == "back_to_buy_tutors", StateFilter(BuySubscriptionStates.choosing_subject))
+async def back_to_buy_tutors(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    await buy_subscription_start(call, state)
+
+@dp.callback_query(F.data.startswith("buy_subject_"), StateFilter(BuySubscriptionStates.choosing_subject))
+async def buy_subscription_subject(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    subject = call.data.split("_", 2)[2]
+    await state.update_data(buy_subject=subject)
+    data = await state.get_data()
+    tid = data["buy_tutor_id"]
+    tutors = await get_all_tutors()
+    tutor = tutors[tid]
+    price = tutor["subjects"][subject]
+    text = f"Выберите пакет занятий по предмету «{subject}»:\n"
+    buttons = []
+    packages = [(12, 5), (24, 10), (36, 20)]
+    for count, discount in packages:
+        total = price * count * (1 - discount/100)
+        buttons.append([InlineKeyboardButton(
+            text=f"{count} занятий — скидка {discount}% (итого {total:.0f} руб.)",
+            callback_data=f"buy_package_{count}"
+        )])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_buy_subjects")])
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await state.set_state(BuySubscriptionStates.choosing_package)
+
+@dp.callback_query(F.data == "back_to_buy_subjects", StateFilter(BuySubscriptionStates.choosing_package))
+async def back_to_buy_subjects(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    data = await state.get_data()
+    tid = data["buy_tutor_id"]
+    await buy_subscription_tutor(call, state)  # вернёт к списку предметов
+
+@dp.callback_query(F.data.startswith("buy_package_"), StateFilter(BuySubscriptionStates.choosing_package))
+async def buy_subscription_package(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    count = int(call.data.split("_")[2])
+    data = await state.get_data()
+    tid = data["buy_tutor_id"]
+    subject = data["buy_subject"]
+    tutors = await get_all_tutors()
+    tutor = tutors[tid]
+    price = tutor["subjects"][subject]
+    discount = {12:5, 24:10, 36:20}[count]
+    total = price * count * (1 - discount/100)
+
+    await state.update_data(package=count, total=total, discount=discount)
+
+    # Подтверждение
+    text = (
+        f"Проверьте данные абонемента:\n"
+        f"👨‍🏫 Репетитор: {tutor['name']}\n"
+        f"📚 Предмет: {subject}\n"
+        f"🔢 Количество занятий: {count}\n"
+        f"💸 Скидка: {discount}%\n"
+        f"💰 Итого к оплате: {total:.2f} руб.\n\n"
+        f"Подтверждаете покупку?"
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_buy_subscription")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_buy_packages")]
+    ])
+    await call.message.edit_text(text, reply_markup=keyboard)
+    await state.set_state(BuySubscriptionStates.waiting_confirmation)
+
+@dp.callback_query(F.data == "back_to_buy_packages", StateFilter(BuySubscriptionStates.waiting_confirmation))
+async def back_to_buy_packages(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    data = await state.get_data()
+    # Пересоздаём меню пакетов
+    tid = data["buy_tutor_id"]
+    subject = data["buy_subject"]
+    tutors = await get_all_tutors()
+    tutor = tutors[tid]
+    price = tutor["subjects"][subject]
+    text = f"Выберите пакет занятий по предмету «{subject}»:\n"
+    buttons = []
+    packages = [(12, 5), (24, 10), (36, 20)]
+    for c, d in packages:
+        total = price * c * (1 - d/100)
+        buttons.append([InlineKeyboardButton(
+            text=f"{c} занятий — скидка {d}% (итого {total:.0f} руб.)",
+            callback_data=f"buy_package_{c}"
+        )])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_buy_subjects")])
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await state.set_state(BuySubscriptionStates.choosing_package)
+
+@dp.callback_query(F.data == "confirm_buy_subscription", StateFilter(BuySubscriptionStates.waiting_confirmation))
+async def confirm_buy_subscription(call: CallbackQuery, state: FSMContext, bot: Bot):
+    await safe_answer(call)
+    data = await state.get_data()
+    user_id = call.from_user.id
+    tid = data["buy_tutor_id"]
+    subject = data["buy_subject"]
+    count = data["package"]
+    total = data["total"]
+    discount = data["discount"]
+
+    email = await get_user_email(user_id)
+    if not email:
+        # Сохраняем данные о покупке в state и запрашиваем email
+        await set_pending_email_request(user_id, -1)  # заглушка, для отслеживания что это не бронь
+        student_fsm = dp.fsm.get_context(bot, chat_id=user_id, user_id=user_id)
+        await student_fsm.set_state(PaymentStates.waiting_email)
+        await student_fsm.update_data(subscription_pending=True, buy_tutor_id=tid, buy_subject=subject,
+                                      buy_package=count, buy_total=total, buy_discount=discount)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_email_request")]
+        ])
+        await bot.send_message(
+            user_id,
+            "📧 Для завершения покупки и получения чека введите ваш адрес электронной почты:",
+            reply_markup=keyboard
+        )
+        await call.message.edit_text("Мы отправили запрос на email.")
+        return
+
+    # Создаём платёж для абонемента
+    await create_subscription_payment(call, bot, user_id, tid, subject, count, total, discount, email)
+    await call.message.edit_text("Платёж создан. Ожидаем оплаты.")
+    await state.clear()
+
+async def create_subscription_payment(source, bot, user_id, tutor_id, subject, count, total, discount, email):
+    """Создаёт платёж для абонемента и отправляет ссылку."""
+    tutors = await get_all_tutors()
+    tutor = tutors[tutor_id]
+    inn = tutor.get("inn", "").strip()
+    if not inn:
+        await source.message.edit_text("Ошибка: у репетитора не указан ИНН.")
+        return
+    description = f"Абонемент: {count} занятий по {subject} у {tutor['name']}"
+    amount_kop = int(total * 100)
+    payment_url, payment_id = await create_payment(
+        booking_id=0,  # ID будет заменён на ID из pending_subscriptions, но для order_id используем уникальный
+        amount_kop=amount_kop,
+        description=description,
+        tutor_id=tutor_id,
+        tutor_name=tutor["name"],
+        customer_email=email,
+        inn=inn,
+        order_id_prefix="sub"
+    )
+    if not payment_url:
+        await bot.send_message(user_id, "Ошибка создания платежа. Обратитесь в поддержку.")
+        return
+    # Сохраняем pending subscription в БД
+    pending_id = await add_pending_subscription(user_id, tutor_id, subject, count, discount, total, payment_id)
+    # Отправляем ссылку
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Оплатить", url=payment_url)]
+    ])
+    await bot.send_message(user_id, "Ссылка на оплату абонемента:", reply_markup=keyboard)
+
+# ---------- Автоплатеж ----------
+@dp.callback_query(F.data == "autopay_settings")
+async def autopay_settings(call: CallbackQuery):
+    user_id = call.from_user.id
+    enabled = await is_autopay_enabled(user_id)
+    text = "Автоплатеж — это автоматическая оплата каждого подтверждённого занятия.\nСейчас: " + ("включён ✅" if enabled else "выключен ❌")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Выключить" if enabled else "Включить", callback_data="toggle_autopay")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_payment_menu")]
+    ])
+    await call.message.edit_text(text, reply_markup=keyboard)
+    await safe_answer(call)
+
+@dp.callback_query(F.data == "toggle_autopay")
+async def toggle_autopay(call: CallbackQuery):
+    user_id = call.from_user.id
+    current = await is_autopay_enabled(user_id)
+    new_state = not current
+    await set_autopay_enabled(user_id, new_state)
+    await call.answer("Автоплатеж " + ("включён" if new_state else "выключен"), show_alert=True)
+    await autopay_settings(call)
+
+
+
 
 
 @dp.callback_query(F.data == "qr")
@@ -2806,54 +3073,54 @@ async def confirm_del_slot(call: CallbackQuery, state: FSMContext):
 
 
 async def create_and_send_payment(source, bot, booking, email, booking_id):
-    """Создаёт платёж в Т-Банке и отправляет ученику ссылку на оплату."""
-    bid = booking_id
+    async def _edit_or_answer(text):
+        if isinstance(source, types.Message):
+            await source.answer(text)
+        elif isinstance(source, types.CallbackQuery):
+            try:
+                await source.message.edit_text(text)
+            except TelegramBadRequest:
+                pass
+
     tutors = await get_all_tutors()
     tutor = tutors.get(booking["tutor_id"])
-    inn = tutor.get("inn", "").strip()
     if not tutor:
-        if isinstance(source, types.CallbackQuery):
-            await source.message.edit_text("Репетитор не найден.")
+        await _edit_or_answer("Репетитор не найден.")
         return
+    inn = tutor.get("inn", "").strip()
     price_rub = tutor["subjects"].get(booking["subject"])
     if not price_rub:
-        if isinstance(source, types.CallbackQuery):
-            await source.message.edit_text("Не указана цена предмета.")
+        await _edit_or_answer("Не указана цена предмета.")
         return
     amount_kop = price_rub * 100
-
     now = datetime.now()
     if tutor.get("commission_mode") == "auto":
         percent, _ = await calculate_auto_commission(booking["tutor_id"], now.year, now.month)
     else:
         percent = tutor.get("commission_percent", 25)
     if not inn:
-        inn = None
-        await source.message.edit_text("Запись к репетитору не доступна. Напишите в поддержку!")
+        await _edit_or_answer("Запись к репетитору не доступна. Напишите в поддержку!")
         return
     description = f"Занятие: {booking['subject']} с {tutor['name']} {booking['date']} {booking['time_slot']}"
     payment_url, payment_id = await create_payment(
-        booking_id=bid,
+        booking_id=booking_id,
         amount_kop=amount_kop,
         description=description,
         tutor_id=booking["tutor_id"],
         tutor_name=tutor["name"],
         customer_email=email,
-        inn = inn
+        inn=inn,
+        order_id_prefix="booking"
     )
     if not payment_url:
         await bot.send_message(booking["user_id"], "Ошибка создания платежа. Обратитесь в поддержку.")
         return
-
-    # Обновляем бронирование
-    await update_booking(bid,
+    await update_booking(booking_id,
                          status="confirmed",
                          reminded=0,
                          amount=amount_kop,
                          commission_percent=percent,
                          tinkoff_payment_id=payment_id)
-
-    # Отправляем ученику ссылку
     student_msg = (
         f"✅ Занятие подтверждено! Для завершения записи оплатите {price_rub} руб.:\n"
         f"📚 {booking['subject']}\n📅 {booking['date']} (МСК) {booking['time_slot']}"
@@ -2863,17 +3130,12 @@ async def create_and_send_payment(source, bot, booking, email, booking_id):
     ])
     try:
         sent_msg = await bot.send_message(booking["user_id"], student_msg, reply_markup=pay_keyboard)
-        # Сохраняем ID сообщения, чтобы потом удалить его при подтверждении/отмене
-        await update_booking(bid, payment_msg_id=sent_msg.message_id)
+        await update_booking(booking_id, payment_msg_id=sent_msg.message_id)
     except Exception as e:
         logging.error(f"Не удалось отправить ссылку на оплату ученику {booking['user_id']}: {e}")
-
-    # Уведомление преподавателю
     if tutor.get("telegram_id"):
         await bot.send_message(tutor["telegram_id"],
                                f"✅ Занятие с {booking['username']} подтверждено. Ожидается оплата.")
-
-    # Сообщение в канал (опционально)
     if RECORDS_CHANNEL_ID:
         record_msg = (
             f"🟡 Подтверждено, ожидает оплаты\n"
@@ -2883,7 +3145,7 @@ async def create_and_send_payment(source, bot, booking, email, booking_id):
         )
         try:
             sent_msg = await bot.send_message(RECORDS_CHANNEL_ID, record_msg)
-            await update_booking(bid, channel_msg_id=sent_msg.message_id)
+            await update_booking(booking_id, channel_msg_id=sent_msg.message_id)
         except Exception as e:
             logging.warning(f"Не удалось отправить в канал: {e}")
 
@@ -3091,17 +3353,27 @@ async def process_payment_email_state(message: Message, state: FSMContext, bot: 
         await message.answer("Введите корректный email (например, name@example.com):")
         return  # остаёмся в состоянии ожидания
 
-    await set_user_email(user_id, email)
-    await delete_pending_email_request(user_id)
-
-    bookings = await get_all_bookings()
-    booking = bookings.get(booking_id)
-    if not booking:
-        await message.answer("Ошибка: запись не найдена.")
-        await state.clear()
-        return
-
-    await create_and_send_payment(message, bot, booking, email, booking_id)
+    if data.get("subscription_pending"):
+        # Это покупка абонемента
+        tid = data.get("buy_tutor_id")
+        subject = data.get("buy_subject")
+        count = data.get("buy_package")
+        total = data.get("buy_total")
+        discount = data.get("buy_discount")
+        await create_subscription_payment(message, bot, user_id, tid, subject, count, total, discount, email)
+        await message.answer("Платёж для абонемента создан.")
+    else:
+        # Оплата занятия
+        booking_id = data.get("pending_booking_id")
+        if not booking_id:
+            booking_id = await get_pending_email_request(user_id)  # fallback
+        bookings = await get_all_bookings()
+        booking = bookings.get(booking_id)
+        if not booking:
+            await message.answer("Ошибка: запись не найдена.")
+            await state.clear()
+            return
+        await create_and_send_payment(message, bot, booking, email, booking_id)
     await state.clear()
 
 @dp.callback_query(F.data == "cancel_email_request", StateFilter(PaymentStates.waiting_email))
