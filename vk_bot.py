@@ -37,14 +37,24 @@ class StateDispenserWithUpdate(BuiltinStateDispenser):
         peer = await super().get(user_id)
         if peer is None:
             return None
-        return peer.payload   # возвращаем словарь
+        return peer.payload   # возвращаем словарь с данными
 
     async def update(self, user_id: int, **kwargs):
-        peer = await super().get(user_id)   # получаем StatePeer
+        peer = await super().get(user_id)
         if peer is None:
             raise ValueError("State not set for this user")
         peer.payload.update(kwargs)
         await super().set(user_id, peer.state, **peer.payload)
+
+    async def set(self, user_id: int, state, **kwargs):
+        peer = await super().get(user_id)
+        if peer:
+            # объединяем старые данные с новыми
+            payload = peer.payload.copy()
+            payload.update(kwargs)
+        else:
+            payload = kwargs
+        await super().set(user_id, state, **payload)
 
 
 # -------------------- Конфигурация --------------------
