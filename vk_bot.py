@@ -31,6 +31,15 @@ from database import (
 )
 from payments import create_payment, check_payment
 
+
+class StateDispenserWithUpdate(BuiltinStateDispenser):
+    async def update(self, user_id: int, **kwargs):
+        peer = await self.get(user_id)
+        if peer is None:
+            raise ValueError("State not set for this user")
+        peer.payload.update(kwargs)
+        await self.set(user_id, peer.state, **peer.payload)
+
 # -------------------- Конфигурация --------------------
 ADMIN_VK_ID = int(os.environ.get("ADMIN_VK_ID", 0))
 BOT_TOKEN = "vk1.a.wjbVHMgAK5VANIWPlDxBo5GA4M_LEdURpeiwRdvY-KAZ3Vn0bQEmd_JAQb1Xw7qoTee_xGG29aJv9oB_vIf_pTfMgOQtkXMxD6sGh-s0bDgymaNosq2CkAldOkAxHGB3A7VLdLAZC4IjTV6VqlzyEkRvptOAsJhgYmkqq_ty2pQDNNY3DXsc1oeN1aSUjH9zh1wAK9bn25Va__zL0JH0CQ"
@@ -127,13 +136,6 @@ class TutorRescheduleStates(BaseStateGroup):
 class PaymentStates(BaseStateGroup):
     waiting_email = "waiting_email"
 
-class StateDispenserWithUpdate(BuiltinStateDispenser):
-    async def update(self, user_id: int, **kwargs):
-        peer = await self.get(user_id)
-        if peer is None:
-            raise ValueError("State not set for this user")
-        peer.payload.update(kwargs)
-        await self.set(user_id, peer.state, **peer.payload)
 # -------------------- Клавиатуры главного меню --------------------
 async def get_main_menu(user_id: int) -> str:
     """Возвращает JSON главной клавиатуры в зависимости от роли."""
