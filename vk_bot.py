@@ -42,7 +42,7 @@ TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY", "")
 
 # -------------------- Бот и диспетчер состояний --------------------
 bot = Bot(token=BOT_TOKEN)
-state_dispenser = BuiltinStateDispenser()
+state_dispenser = StateDispenserWithUpdate()
 
 
 # -------------------- Группы состояний (FSM) --------------------
@@ -127,7 +127,13 @@ class TutorRescheduleStates(BaseStateGroup):
 class PaymentStates(BaseStateGroup):
     waiting_email = "waiting_email"
 
-
+class StateDispenserWithUpdate(BuiltinStateDispenser):
+    async def update(self, user_id: int, **kwargs):
+        peer = await self.get(user_id)
+        if peer is None:
+            raise ValueError("State not set for this user")
+        peer.payload.update(kwargs)
+        await self.set(user_id, peer.state, **peer.payload)
 # -------------------- Клавиатуры главного меню --------------------
 async def get_main_menu(user_id: int) -> str:
     """Возвращает JSON главной клавиатуры в зависимости от роли."""
