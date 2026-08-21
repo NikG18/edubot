@@ -1,4 +1,5 @@
 import asyncio
+import aiohttp
 import logging
 import sys
 import re
@@ -77,6 +78,10 @@ if not BOT_TOKEN:
 
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY", "")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY", "")
+
+TELEGRAM_BOT_TOKEN = os.environ.get("BOT_TOKEN")
+if not TELEGRAM_BOT_TOKEN:
+    logging.warning("TELEGRAM_BOT_TOKEN не задан, уведомления в Telegram не будут работать")
 
 # -------------------- Бот и диспетчер состояний --------------------
 bot = Bot(token=BOT_TOKEN)
@@ -386,13 +391,26 @@ async def create_and_send_payment(source, booking, email, booking_id):
         random_id=random.randint(1, 2 ** 31 - 1)
     )
 
-    if tutor.get("vk_id"):
-        await bot.api.messages.send(
-            user_id=tutor["vk_id"],
-            message=f"✅ Занятие с {booking['username']} подтверждено. Ожидается оплата.",
-            random_id=random.randint(1, 2 ** 31 - 1)
-        )
+    await notify_tutor(tutor_id, f"✅ Занятие с {booking['username']} подтверждено. Ожидается оплата.")
 
+
+async def send_telegram_message(telegram_id: int, text: str):
+    """Отправляет сообщение в Телеграм через бота."""
+    if not TELEGRAM_BOT_TOKEN or not telegram_id:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": telegram_id,
+        "text": text,
+        "parse_mode": "HTML"
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload) as resp:
+                if resp.status != 200:
+                    logging.warning(f"Ошибка отправки в Telegram: {await resp.text()}")
+    except Exception as e:
+        logging.warning(f"Ошибка отправки в Telegram: {e}")
 
 # -------------------- Обработчики начала диалога и главного меню --------------------
 @bot.on.private_message(text=["Начать", "/start", "start"])
@@ -568,19 +586,11 @@ async def confirm_trial_booking(event: MessageEvent):
 
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
-    if tutor and tutor.get("vk_id"):
-        keyboard = Keyboard(inline=True)
-        keyboard.add(Callback("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
-        keyboard.add(Callback("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
-        try:
-            await bot.api.messages.send(
-                user_id=tutor["vk_id"],
-                message=booking_msg,
-                keyboard=keyboard.get_json(),
-                random_id=random.randint(1, 2 ** 31 - 1)
-            )
-        except Exception:
-            pass
+    if tutor:
+        keyboard_vk = Keyboard(inline=True)
+        keyboard_vk.add(Callback("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
+        keyboard_vk.add(Callback("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
+        await notify_tutor(tid, booking_msg, text_tg=booking_msg, keyboard_vk=keyboard_vk)
 
     await edit_event_message(event, "✅ Заявка на пробное занятие отправлена преподавателю. Ожидайте подтверждения.")
     await bot.api.messages.send(
@@ -787,19 +797,11 @@ async def confirm_booking(event: MessageEvent):
 
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
-    if tutor and tutor.get("vk_id"):
-        kb = Keyboard(inline=True)
-        kb.add(Callback("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
-        kb.add(Callback("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
-        try:
-            await bot.api.messages.send(
-                user_id=tutor["vk_id"],
-                message=booking_msg,
-                keyboard=kb.get_json(),
-                random_id=random.randint(1, 2 ** 31 - 1)
-            )
-        except Exception:
-            pass
+    if tutor:
+        keyboard_vk = Keyboard(inline=True)
+        keyboard_vk.add(Callback("✅ Подтвердить", payload={"cmd": f"tutor_confirm_{new_id}"}))
+        keyboard_vk.add(Callback("❌ Отклонить", payload={"cmd": f"tutor_reject_{new_id}"}))
+        await notify_tutor(tid, booking_msg, text_tg=booking_msg, keyboard_vk=keyboard_vk)
 
     await edit_event_message(event, "✅ Заявка отправлена преподавателю. Ожидайте подтверждения.")
     await bot.api.messages.send(
@@ -1096,6 +1098,38 @@ async def confirm_student_reschedule(event: MessageEvent):
                                 random_id=random.randint(1, 2 ** 31 - 1)
                                 )
     await state_dispenser.delete(event.user_id)
+
+
+async def notify_tutor(tutor_id: int, text_vk: str, text_tg: str = None, keyboard_vk: Keyboard = None):
+    """
+    Отправляет уведомление репетитору в ВК и Телеграм.
+    text_vk – текст для ВК (может содержать HTML, но в ВК он не поддерживается, оставляем как есть).
+    text_tg – текст для Телеграм (по умолчанию такой же).
+    keyboard_vk – клавиатура для ВК (если нужна).
+    """
+    if text_tg is None:
+        text_tg = text_vk
+    tutors = await get_all_tutors()
+    tutor = tutors.get(tutor_id)
+    if not tutor:
+        return
+
+    # Отправка в ВК
+    if tutor.get("vk_id"):
+        try:
+            await bot.api.messages.send(
+                user_id=tutor["vk_id"],
+                message=text_vk,
+                keyboard=keyboard_vk.get_json() if keyboard_vk else None,
+                random_id=random.randint(1, 2**31 - 1)
+            )
+        except Exception as e:
+            logging.warning(f"Не удалось отправить в ВК репетитору {tutor_id}: {e}")
+
+    # Отправка в Телеграм
+    if tutor.get("telegram_id"):
+        await send_telegram_message(tutor["telegram_id"], text_tg)
+
 
 
 # ==================== ОПЛАТА ====================
