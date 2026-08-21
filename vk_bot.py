@@ -33,29 +33,40 @@ from payments import create_payment, check_payment
 
 
 class StateDispenserWithUpdate(BuiltinStateDispenser):
-    async def get(self, user_id: int):
-        peer = await super().get(user_id)
-        if peer is None:
-            return None
-        return peer.payload   # возвращаем словарь с данными
+    def __init__(self):
+        super().__init__()
+        self._custom_data = {}   # отдельное хранилище payload
 
-    async def update(self, user_id: int, **kwargs):
-        peer = await super().get(user_id)
-        if peer is None:
-            raise ValueError("State not set for this user")
-        peer.payload.update(kwargs)
-        await super().set(user_id, peer.state, **peer.payload)
+    async def get(self, user_id: int):
+        return self._custom_data.get(user_id, {})
 
     async def set(self, user_id: int, state, **kwargs):
-        peer = await super().get(user_id)
-        if peer:
-            # объединяем старые данные с новыми
-            payload = peer.payload.copy()
-            payload.update(kwargs)
-        else:
-            payload = kwargs
-        await super().set(user_id, state, **payload)
+        # Сохраняем состояние во встроенном диспенсере (нужно для фильтров)
+        await super().set(user_id, state)
+        # Обновляем/создаём наш словарь данных
+        existing = self._custom_data.get(user_id, {})
+        existing.update(kwargs)
+        self._custom_data[user_id] = existing
 
+    async def update(self, user_id: int, **kwargs):
+        if user_id not in self._custom_data:
+            # Если состояния ещё нет, просто создаём запись
+            self._custom_data[user_id] = {}
+        self._custom_data[user_id].update(kwargs)
+
+    async def delete(self, user_id: int):
+        await super().delete(user_id)
+        if user_id in self._custom_data:
+            del self._custom_data[user_id]
+
+async def get_user_display_name(user_id: int) -> str:
+    try:
+        users = await bot.api.users.get(user_id)
+        if users:
+            return f"{users[0].first_name} {users[0].last_name}"
+    except Exception:
+        pass
+    return f"Пользователь {user_id}"
 
 # -------------------- Конфигурация --------------------
 ADMIN_VK_ID = int(os.environ.get("ADMIN_VK_ID", 0))
@@ -439,7 +450,7 @@ async def start_trials_booking(event: MessageEvent):
     if len(subjects) == 1:
         subject = subjects[0]
         await state_dispenser.update(event.user_id, subject=subject)
-        await edit_event_message(event, "Ищем доступные слоты на ближайшие 7 дней...")
+        #await edit_event_message(event, "Ищем доступные слоты на ближайшие 7 дней...")
         await show_trial_dates(event, tid)
         return
 
@@ -456,7 +467,7 @@ async def trial_subject_chosen(event: MessageEvent):
     await state_dispenser.update(event.user_id, subject=subject)
     data = await state_dispenser.get(event.user_id)
     tid = data["tutor_id"]
-    await edit_event_message(event, "Ищем доступные слоты на ближайшие 7 дней...")
+    #await edit_event_message(event, "Ищем доступные слоты на ближайшие 7 дней...")
     await show_trial_dates(event, tid)
 
 
@@ -539,8 +550,8 @@ async def confirm_trial_booking(event: MessageEvent):
     subject = data["subject"]
     date = data["date"]
     slot = data["time_slot"]
-    user = await bot.api.users.get(event.user_id)
-    username = f"{user[0].first_name} {user[0].last_name}"
+
+    username = await get_user_display_name(event.user_id)
     uid = event.user_id
 
     new_id = await add_booking(tid, uid, username, subject, date, slot)
@@ -758,8 +769,8 @@ async def confirm_booking(event: MessageEvent):
     subject = data["subject"]
     date = data["date"]
     slot = data["time_slot"]
-    user = await bot.api.users.get(event.user_id)
-    username = f"{user[0].first_name} {user[0].last_name}"
+
+    username = await get_user_display_name(event.user_id)
     uid = event.user_id
 
     new_id = await add_booking(tid, uid, username, subject, date, slot)
@@ -1224,8 +1235,7 @@ async def cancel_msg_to_tutor(event: MessageEvent):
 
 @bot.on.private_message(state=ContactStates.waiting_message)
 async def send_message_to_tutor(message: Message):
-    user = await bot.api.users.get(message.from_id)
-    username = f"{user[0].first_name} {user[0].last_name}" if user else str(message.from_id)
+    username = await get_user_display_name(message.from_id)
     data = await state_dispenser.get(message.from_id)
     tid = data["msg_tutor_id"]
     tutor_name = data["msg_tutor_name"]
@@ -1377,8 +1387,7 @@ async def cancel_support(event: MessageEvent):
 
 @bot.on.private_message(state=SupportUserStates.waiting_message)
 async def support_message_to_admin(message: Message):
-    user = await bot.api.users.get(message.from_id)
-    username = f"{user[0].first_name} {user[0].last_name}" if user else str(message.from_id)
+    username = await get_user_display_name(message.from_id)
     uid = message.from_id
     text = message.text.strip()
 
