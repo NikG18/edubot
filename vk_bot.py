@@ -1645,6 +1645,7 @@ async def edit_field_choice(event: MessageEvent):
         "inn": "Введите новый ИНН (или '-', чтобы удалить):"
     }
     await edit_event_message(event, prompts.get(field, "Введите новое значение:"))
+    logging.info(f"Устанавливаю состояние waiting_new_value для {event.user_id}")
     await state_dispenser.set(event.user_id, AdminStates.waiting_new_value)
 
 
@@ -1653,7 +1654,7 @@ async def process_new_value(message: Message):
     data = await state_dispenser.get(message.from_id)
     tid = data["edit_tutor_id"]
     field = data["edit_field"]
-
+    logging.info(f"Получено сообщение в состоянии waiting_new_value от {message.from_id}: {message.text}")
     kwargs = {}
     if field == "name":
         kwargs["name"] = message.text.strip()
