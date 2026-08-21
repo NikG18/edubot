@@ -59,7 +59,7 @@ class StateDispenserWithUpdate(BuiltinStateDispenser):
 
 # -------------------- Конфигурация --------------------
 ADMIN_VK_ID = int(os.environ.get("ADMIN_VK_ID", 0))
-BOT_TOKEN = ""
+BOT_TOKEN = os.environ.get("VK_BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("VK_BOT_TOKEN не задан!")
 
