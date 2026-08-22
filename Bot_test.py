@@ -726,7 +726,12 @@ async def choose_tutor_booking(call: CallbackQuery, state: FSMContext):
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
     if not tutor:
-        await call.message.edit_text("Ошибка выбора репетитора.")
+        await call.message.edit_text(
+            "Ошибка выбора репетитора.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_tutors_booking")]
+            ])
+        )
         return
     await state.update_data(tutor_id=tid, tutor_name=tutor["name"])
     keyboard = await make_subjects_keyboard(tid, back_callback="back_to_tutors_booking")
@@ -746,6 +751,7 @@ async def subject_chosen(call: CallbackQuery, state: FSMContext):
     await safe_answer(call)
     parts = call.data.split("_", 2)
     if len(parts) < 3:
+        await call.answer("Ошибка данных.", show_alert=True)
         return
     tid = int(parts[1])
     subject = parts[2]
@@ -950,10 +956,11 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
     bid = int(call.data.split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
+    dt = parse_booking_time(booking)
     if not booking:
         await call.message.edit_text("Запись не найдена.")
         return
-    if booking["status"] == "paid":
+    if booking["status"] == "paid" and (dt - datetime.now()) > timedelta(hours=24):
         await call.message.edit_text("Для отмены оплаченного занятия обратитесь в поддержку для возврата.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 К моим записям", callback_data="back_to_my_records")]
     ])
@@ -966,9 +973,13 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
         except Exception as e:
             logging.warning(f"Не удалось удалить сообщение из канала: {e}")
 
-    dt = parse_booking_time(booking)
     if (dt - datetime.now()) <= timedelta(hours=24):
-        await call.message.edit_text("Слишком поздно отменять. Стоимость не возвращается.")
+        await call.message.edit_text(
+            "Слишком поздно отменять. Стоимость не возвращается.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 К моим записям", callback_data="back_to_my_records")]
+            ])
+        )
         return
     # Отменяем
     await update_booking(bid, status="cancelled")
@@ -1091,11 +1102,21 @@ async def student_reschedule_start(call: CallbackQuery, state: FSMContext):
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
     if not booking or booking["status"] != "confirmed":
-        await call.message.edit_text("Запись недоступна для переноса.")
+        await call.message.edit_text(
+            "Запись недоступна для переноса.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_menu")]
+            ])
+        )
         return
     dt = parse_booking_time(booking)
     if (dt - datetime.now()) <= timedelta(hours=24):
-        await call.message.edit_text("Перенос возможен не позднее чем за 24 часа.")
+        await call.message.edit_text(
+            "Перенос возможен не позднее чем за 24 часа.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_menu")]
+            ])
+        )
         return
     # Сохраняем данные старой записи
     await state.update_data(
@@ -1253,7 +1274,8 @@ async def payment_menu(message: types.Message):
 
 
 @dp.callback_query(F.data == "back_to_payment_menu")
-async def back_to_pay(call: CallbackQuery):
+async def back_to_payment_menu(call: CallbackQuery):
+    await state.clear()
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Оплатить занятие", callback_data="pay_booking")],
         [InlineKeyboardButton(text="📚 Купить абонемент", callback_data="buy_subscription")],
@@ -1470,6 +1492,7 @@ async def confirm_buy_subscription(call: CallbackQuery, state: FSMContext, bot: 
     await create_subscription_payment(call, bot, user_id, tid, subject, count, total, discount, email)
     await call.message.edit_text("Платёж создан. Ожидаем оплаты.")
     await state.clear()
+    await call.message.answer("Главное меню:", reply_markup=await get_main_menu(user_id))
 
 async def create_subscription_payment(source, bot, user_id, tutor_id, subject, count, total, discount, email):
     """Создаёт платёж для абонемента и отправляет ссылку."""
@@ -2475,7 +2498,7 @@ async def count_student_lessons(tutor_id: int, user_id: int) -> int:
     bookings = await get_all_bookings()
     count = 0
     for b in bookings.values():
-        if b["tutor_id"] == tutor_id and b["user_id"] == user_id and b["status"] in ("confirmed", "completed"):
+        if b["tutor_id"] == tutor_id and b["user_id"] == user_id and b["status"] in ("completed"):
             count += 1
     return count
 
@@ -2553,8 +2576,15 @@ async def tutor_cancel_booking(call: CallbackQuery, bot: Bot):
     bid = int(call.data.split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
+    dt = parse_booking_time(booking)
     if not booking or booking["status"] != "confirmed":
-        await call.message.edit_text("Невозможно отменить.")
+        if (dt - datetime.now()) > timedelta(hours=24):
+            await call.message.edit_text(
+                "Невозможно отменить.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 К ученикам", callback_data=f"tutor_students_{booking['tutor_id']}")]
+                ])
+            )
         return
 
     if booking.get("channel_msg_id") and RECORDS_CHANNEL_ID:
@@ -2563,9 +2593,13 @@ async def tutor_cancel_booking(call: CallbackQuery, bot: Bot):
         except Exception as e:
             logging.warning(f"Не удалось удалить сообщение из канала: {e}")
 
-    dt = parse_booking_time(booking)
     if (dt - datetime.now()) <= timedelta(hours=24):
-        await call.message.edit_text("Отмена менее чем за 24 часа невозможна.")
+        await call.message.edit_text(
+            "Отмена менее чем за 24 часа невозможна.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 К ученикам", callback_data=f"tutor_students_{booking['tutor_id']}")]
+            ])
+        )
         return
     await update_booking(bid, status="cancelled")
     student_id = booking["user_id"]
@@ -2587,12 +2621,23 @@ async def tutor_reschedule_start(call: CallbackQuery, state: FSMContext):
     bid = int(call.data.split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
-    if not booking or booking["status"] != "confirmed":
-        await call.message.edit_text("Невозможно перенести.")
-        return
     dt = parse_booking_time(booking)
+    if not booking or booking["status"] != "confirmed" :
+        if (dt - datetime.now()) > timedelta(hours=24):
+            await call.message.edit_text(
+                "Невозможно перенести.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 К ученикам", callback_data=f"tutor_students_{booking['tutor_id']}")]
+                ])
+            )
+        return
     if (dt - datetime.now()) <= timedelta(hours=24):
-        await call.message.edit_text("Перенос менее чем за 24 часа невозможен.")
+        await call.message.edit_text(
+            "Перенос менее чем за 24 часа невозможен.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 К ученикам", callback_data=f"tutor_students_{booking['tutor_id']}")]
+            ])
+        )
         return
     await state.update_data(
         old_booking_id=bid,
@@ -3386,7 +3431,6 @@ async def process_payment_email_state(message: Message, state: FSMContext, bot: 
         discount = data.get("buy_discount")
         await create_subscription_payment(message, bot, user_id, tid, subject, count, total, discount, email)
         await message.answer("Платёж для абонемента создан.")
-        await message.answer("Главное меню:", reply_markup=await get_main_menu(user_id))
     else:
         # Оплата занятия
         booking_id = data.get("pending_booking_id")
