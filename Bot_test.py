@@ -139,6 +139,7 @@ class AdminStates(StatesGroup):
     waiting_photo = State()
     waiting_description = State()
     waiting_telegram_id = State()
+    waiting_vk_id = State()
     waiting_subject_name = State()
     waiting_subject_price = State()
     waiting_edit_choice = State()
@@ -1503,7 +1504,7 @@ async def create_subscription_payment(source, bot, user_id, tutor_id, subject, c
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_payment_menu")]
     ])
 )
-        
+
         return
     description = f"Абонемент: {count} занятий по {subject} у {tutor['name']}"
     amount_kop = int(total * 100)
@@ -2143,6 +2144,17 @@ async def admin_add_telegram_id(message: Message, state: FSMContext):
         await message.answer("Введите целое число или 0.")
         return
     await state.update_data(telegram_id=tid_val if tid_val != 0 else None)
+    await message.answer("Введите VK ID репетитора (число) или 0, если нет:")
+    await state.set_state(AdminStates.waiting_vk_id)
+
+@dp.message(AdminStates.waiting_vk_id)
+async def admin_add_vk_id(message: Message, state: FSMContext):
+    try:
+        vk_val = int(message.text.strip())
+    except ValueError:
+        await message.answer("Введите целое число или 0.")
+        return
+    await state.update_data(vk_id=vk_val if vk_val != 0 else None)
     await message.answer("Введите процент комиссии (целое число, по умолчанию 15):")
     await state.set_state(AdminStates.waiting_commission)
 
@@ -2204,7 +2216,8 @@ async def finish_adding_subjects(call: CallbackQuery, state: FSMContext):
         telegram_id=data.get("telegram_id"),
         description=data["description"],
         commission_percent=data.get("commission_percent", 25),
-        inn = data.get("inn", "")
+        inn = data.get("inn", ""),
+        vk_id=data.get("vk_id")
     )
     subjects = data.get("subjects", {})
     for subj_name, subj_price in subjects.items():
@@ -2246,6 +2259,7 @@ async def edit_tutor_choice(call: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="Изменить описание", callback_data="edit_desc")],
         [InlineKeyboardButton(text="Изменить фото", callback_data="edit_photo")],
         [InlineKeyboardButton(text="Изменить Telegram ID", callback_data="edit_telegram_id")],
+        [InlineKeyboardButton(text="Изменить VK ID", callback_data="edit_vk_id")],
         [InlineKeyboardButton(text="🆔 Изменить ИНН", callback_data="edit_inn")],
         [InlineKeyboardButton(text="📚 Управление предметами", callback_data="manage_subjects")],
         [InlineKeyboardButton(text="💰 Изменить комиссию", callback_data="edit_commission")],
@@ -2293,6 +2307,7 @@ async def edit_field_choice(call: CallbackQuery, state: FSMContext):
         "desc": "Введите новое описание:",
         "photo": "Отправьте новое фото (или 'нет', чтобы пропустить):",
         "telegram_id": "Введите новый Telegram ID (число или 0, чтобы удалить):",
+        "vk_id": "Введите новый VK ID (число или 0, чтобы удалить):",
         "inn": "Введите новый ИНН репетитора (или '-', чтобы удалить):"
     }
     await call.message.edit_text(prompts.get(field, "Введите новое значение:"))
@@ -2319,6 +2334,13 @@ async def process_new_value(message: Message, state: FSMContext):
         try:
             new_id = int(message.text.strip())
             kwargs["telegram_id"] = new_id if new_id != 0 else None
+        except ValueError:
+            await message.answer("Введите целое число или 0.")
+            return
+    elif field == "vk_id":
+        try:
+            new_vk_id = int(message.text.strip())
+            kwargs["vk_id"] = new_vk_id if new_vk_id != 0 else None
         except ValueError:
             await message.answer("Введите целое число или 0.")
             return
