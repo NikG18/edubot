@@ -39,7 +39,7 @@ class StateDispenserWithUpdate(BuiltinStateDispenser):
         super().__init__()
         self._custom_data = {}   # отдельное хранилище payload
 
-    async def get(self, user_id: int):
+    async def get_data(self, user_id: int):
         return self._custom_data.get(user_id, {})
 
     async def set(self, user_id: int, state, **kwargs):
@@ -391,7 +391,7 @@ async def create_and_send_payment(source, booking, email, booking_id):
         random_id=random.randint(1, 2 ** 31 - 1)
     )
 
-    await notify_tutor(tutor_id, f"✅ Занятие с {booking['username']} подтверждено. Ожидается оплата.")
+    await notify_tutor(tutor, f"✅ Занятие с {booking['username']} подтверждено. Ожидается оплата.")
 
 
 async def send_telegram_message(telegram_id: int, text: str):
@@ -484,7 +484,7 @@ async def start_trials_booking(event: MessageEvent):
 async def trial_subject_chosen(event: MessageEvent):
     subject = event.payload.get("subject")
     await state_dispenser.update(event.user_id, subject=subject)
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tutor_id"]
     #await edit_event_message(event, "Ищем доступные слоты на ближайшие 7 дней...")
     await show_trial_dates(event, tid)
@@ -516,7 +516,7 @@ async def show_trial_dates(event: MessageEvent, tid: int):
 async def trial_date_chosen(event: MessageEvent):
     date_str = event.payload.get("date")
     await state_dispenser.update(event.user_id, date=date_str)
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tutor_id"]
     slots = await get_available_slots(tid, date_str)
     if not slots:
@@ -535,7 +535,7 @@ async def trial_date_chosen(event: MessageEvent):
 
 
 async def back_to_trial_dates(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tutor_id"]
     await show_trial_dates(event, tid)
 
@@ -543,7 +543,7 @@ async def back_to_trial_dates(event: MessageEvent):
 async def trial_slot_chosen(event: MessageEvent):
     slot = event.payload.get("slot")
     await state_dispenser.update(event.user_id, time_slot=slot)
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tutor_id"]
     tutors = await get_all_tutors()
     tutor_name = tutors[tid]["name"]
@@ -564,7 +564,7 @@ async def trial_slot_chosen(event: MessageEvent):
 
 
 async def confirm_trial_booking(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tutor_id"]
     subject = data["subject"]
     date = data["date"]
@@ -711,7 +711,7 @@ async def subject_chosen(event: MessageEvent):
 async def choose_date(event: MessageEvent):
     date_str = event.payload["cmd"].split("_", 1)[1]
     await state_dispenser.update(event.user_id, date=date_str)
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tutor_id"]
     slots = await get_available_slots(tid, date_str)
     if not slots:
@@ -730,7 +730,7 @@ async def choose_date(event: MessageEvent):
 
 
 async def back_to_date(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data.get("tutor_id")
     if not tid:
         return
@@ -749,7 +749,7 @@ async def back_to_date(event: MessageEvent):
 async def choose_slot(event: MessageEvent):
     slot = event.payload["cmd"].split("_", 1)[1]
     await state_dispenser.update(event.user_id, time_slot=slot)
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data.get("tutor_id")
     if "tutor_name" not in data and tid:
         tutors = await get_all_tutors()
@@ -775,7 +775,7 @@ async def choose_slot(event: MessageEvent):
 
 
 async def confirm_booking(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tutor_id"]
     subject = data["subject"]
     date = data["date"]
@@ -1002,7 +1002,7 @@ async def student_reschedule_start(event: MessageEvent):
 async def student_reschedule_date(event: MessageEvent):
     date_str = event.payload["cmd"].split("reschedule_date_")[1]
     await state_dispenser.update(event.user_id, new_date=date_str)
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tutor_id"]
     old_bid = data["old_booking_id"]
     slots = await get_available_slots(tid, date_str, exclude_booking_id=old_bid)
@@ -1021,7 +1021,7 @@ async def student_reschedule_date(event: MessageEvent):
 
 
 async def back_to_reschedule_date(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tutor_id"]
     dates = await get_available_dates(tid)
     kb = Keyboard(inline=True)
@@ -1038,7 +1038,7 @@ async def back_to_reschedule_date(event: MessageEvent):
 async def student_reschedule_slot(event: MessageEvent):
     slot = event.payload["cmd"].split("reschedule_slot_")[1]
     await state_dispenser.update(event.user_id, new_time=slot)
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     text = (
         f"Перенос занятия:\n"
         f"Репетитор: {data.get('tutor_name', '')}\n"
@@ -1055,7 +1055,7 @@ async def student_reschedule_slot(event: MessageEvent):
 
 
 async def confirm_student_reschedule(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     old_bid = data["old_booking_id"]
     tid = data["tutor_id"]
     new_date = data["new_date"]
@@ -1273,7 +1273,7 @@ async def cancel_msg_to_tutor(event: MessageEvent):
 @bot.on.private_message(state=ContactStates.waiting_message)
 async def send_message_to_tutor(message: Message):
     username = await get_user_display_name(message.from_id)
-    data = await state_dispenser.get(message.from_id)
+    data = await state_dispenser.get_data(message.from_id)
     tid = data["msg_tutor_id"]
     tutor_name = data["msg_tutor_name"]
     text = message.text.strip()
@@ -1314,7 +1314,7 @@ async def process_reply_button(event: MessageEvent):
 
 @bot.on.private_message(state=ContactStates.waiting_reply)
 async def send_reply_to_student(message: Message):
-    data = await state_dispenser.get(message.from_id)
+    data = await state_dispenser.get_data(message.from_id)
     student_id = data["reply_student_id"]
     reply_text = f"📬 Ответ от преподавателя:\n{message.text}"
     try:
@@ -1389,7 +1389,7 @@ async def cancel_tutor_msg_to_student(event: MessageEvent):
 
 @bot.on.private_message(state=TutorContactStudentStates.waiting_message)
 async def tutor_send_message_to_student(message: Message):
-    data = await state_dispenser.get(message.from_id)
+    data = await state_dispenser.get_data(message.from_id)
     student_id = data["tutor_contact_student_id"]
     tutor_id = await get_tutor_by_vk_id(message.from_id)
     tutors = await get_all_tutors()
@@ -1452,7 +1452,7 @@ async def support_reply_start(event: MessageEvent):
 
 @bot.on.private_message(state=SupportAdminReplyStates.waiting_reply)
 async def support_send_reply(message: Message):
-    data = await state_dispenser.get(message.from_id)
+    data = await state_dispenser.get_data(message.from_id)
     student_id = data["support_reply_student_id"]
     reply_text = f"📬 Ответ от администратора:\n{message.text}"
     try:
@@ -1586,7 +1586,7 @@ async def admin_add_subject_price(message: Message):
     except ValueError:
         await message.answer("Пожалуйста, введите целое число.")
         return
-    data = await state_dispenser.get(message.from_id)
+    data = await state_dispenser.get_data(message.from_id)
     subjects = data.get("subjects", {})
     temp_subject = data.get("temp_subject")
     subjects[temp_subject] = price
@@ -1606,7 +1606,7 @@ async def add_another_subject(event: MessageEvent):
 
 
 async def finish_adding_subjects(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     new_id = await add_tutor(
         name=data["name"],
         photo="",
@@ -1685,7 +1685,7 @@ async def edit_field_choice(event: MessageEvent):
 
 @bot.on.private_message(state=AdminStates.waiting_new_value)
 async def process_new_value(message: Message):
-    data = await state_dispenser.get(message.from_id)
+    data = await state_dispenser.get_data(message.from_id)
     tid = data["edit_tutor_id"]
     field = data["edit_field"]
     logging.info(f"Получено сообщение в состоянии waiting_new_value от {message.from_id}: {message.text}")
@@ -1728,7 +1728,7 @@ async def process_new_value(message: Message):
 
 
 async def manage_subjects(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data.get("edit_tutor_id")
     tutors = await get_all_tutors()
     if not tid or tid not in tutors:
@@ -1750,7 +1750,7 @@ async def manage_subjects(event: MessageEvent):
 
 
 async def back_to_edit_tutor(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data.get("edit_tutor_id")
     tutors = await get_all_tutors()
     if not tid or tid not in tutors:
@@ -1784,7 +1784,7 @@ async def add_subject_start(event: MessageEvent):
 @bot.on.private_message(state=AdminStates.adding_subject_name)
 async def process_adding_subject_name(message: Message):
     name = message.text.strip()
-    data = await state_dispenser.get(message.from_id)
+    data = await state_dispenser.get_data(message.from_id)
     tid = data.get("edit_tutor_id")
     tutors = await get_all_tutors()
     if tid and name in tutors[tid]["subjects"]:
@@ -1802,7 +1802,7 @@ async def process_adding_subject_price(message: Message):
     except ValueError:
         await message.answer("Введите целое число.")
         return
-    data = await state_dispenser.get(message.from_id)
+    data = await state_dispenser.get_data(message.from_id)
     tid = data.get("edit_tutor_id")
     name = data.get("temp_new_subject")
     await add_subject(tid, name, price)
@@ -1839,7 +1839,7 @@ async def edit_subject_menu(event: MessageEvent):
 
 
 async def back_to_subjects_list(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data.get("edit_tutor_id")
     tutors = await get_all_tutors()
     tutor = tutors[tid]
@@ -1865,7 +1865,7 @@ async def edit_subject_name_start(event: MessageEvent):
 @bot.on.private_message(state=AdminStates.editing_subject_name_state)
 async def process_new_subject_name(message: Message):
     new_name = message.text.strip()
-    data = await state_dispenser.get(message.from_id)
+    data = await state_dispenser.get_data(message.from_id)
     tid = data.get("edit_tutor_id")
     old_name = data.get("edit_subject_name")
     await update_subject(tid, old_name, new_name=new_name)
@@ -1899,7 +1899,7 @@ async def process_new_subject_price(message: Message):
     except ValueError:
         await message.answer("Введите целое число.")
         return
-    data = await state_dispenser.get(message.from_id)
+    data = await state_dispenser.get_data(message.from_id)
     tid = data.get("edit_tutor_id")
     subj = data.get("edit_subject_name")
     await update_subject(tid, subj, new_price=new_price)
@@ -1921,7 +1921,7 @@ async def process_new_subject_price(message: Message):
 
 
 async def delete_subject_confirm(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     subj = data.get("edit_subject_name")
     kb = Keyboard(inline=True)
     kb.add(Callback("✅ Да, удалить", payload={"cmd": "confirm_delete_subject"}))
@@ -1932,7 +1932,7 @@ async def delete_subject_confirm(event: MessageEvent):
 
 
 async def confirm_delete_subject(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data.get("edit_tutor_id")
     subj = data.get("edit_subject_name")
     await delete_subject(tid, subj)
@@ -1954,7 +1954,7 @@ async def confirm_delete_subject(event: MessageEvent):
 
 
 async def toggle_commission_mode(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data.get("edit_tutor_id")
     if not tid:
         return
@@ -2001,7 +2001,7 @@ async def delete_tutor_confirm(event: MessageEvent):
 
 
 async def confirm_delete(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["del_tutor_id"]
     tutors = await get_all_tutors()
     name = tutors[tid]["name"]
@@ -2291,7 +2291,7 @@ async def tutor_reschedule_start(event: MessageEvent):
 async def tutor_reschedule_date(event: MessageEvent):
     date_str = event.payload["cmd"].split("t_reschedule_date_")[1]
     await state_dispenser.update(event.user_id, new_date=date_str)
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tutor_id"]
     old_bid = data["old_booking_id"]
     slots = await get_available_slots(tid, date_str, exclude_booking_id=old_bid)
@@ -2310,7 +2310,7 @@ async def tutor_reschedule_date(event: MessageEvent):
 
 
 async def back_tutor_reschedule_date(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tutor_id"]
     dates = await get_available_dates(tid)
     kb = Keyboard(inline=True)
@@ -2327,7 +2327,7 @@ async def back_tutor_reschedule_date(event: MessageEvent):
 async def tutor_reschedule_slot(event: MessageEvent):
     slot = event.payload["cmd"].split("t_reschedule_slot_")[1]
     await state_dispenser.update(event.user_id, new_time=slot)
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     text = (
         f"Перенос занятия:\n"
         f"Ученик: {data['student_username']}\n"
@@ -2344,7 +2344,7 @@ async def tutor_reschedule_slot(event: MessageEvent):
 
 
 async def confirm_tutor_reschedule(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     old_bid = data["old_booking_id"]
     tid = data["tutor_id"]
     new_date = data["new_date"]
@@ -2402,7 +2402,7 @@ async def schedule_main(event: MessageEvent):
 async def edit_day(event: MessageEvent):
     day = event.payload["cmd"].split("_")[2]
     await state_dispenser.update(event.user_id, current_day=day)
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tid"]
     sched = await get_schedule(tid)
     slots = sched.get(day, [])
@@ -2431,7 +2431,7 @@ async def edit_day(event: MessageEvent):
 
 
 async def back_to_schedule(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tid"]
     sched = await get_schedule(tid)
     text = "Ваше расписание:\n"
@@ -2451,7 +2451,7 @@ async def back_to_schedule(event: MessageEvent):
 
 async def handle_block_day(event: MessageEvent):
     day = event.payload["cmd"].split("block_day_")[1]
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tid"]
     await block_day(tid, day)
     await edit_day(event)
@@ -2459,7 +2459,7 @@ async def handle_block_day(event: MessageEvent):
 
 async def handle_unblock_day(event: MessageEvent):
     day = event.payload["cmd"].split("unblock_day_")[1]
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tid"]
     await unblock_day(tid, day)
     await edit_day(event)
@@ -2489,7 +2489,7 @@ async def process_add_slot(message: Message):
             await message.answer(f"Некорректное время «{t}». Пожалуйста, введите слот в формате ЧЧ:ММ-ЧЧ:ММ.")
             return
     slot = f"{start}-{end}"
-    data = await state_dispenser.get(message.from_id)
+    data = await state_dispenser.get_data(message.from_id)
     tid = data["tid"]
     day = data["current_day"]
     await add_schedule_slot(tid, day, slot)
@@ -2577,7 +2577,7 @@ async def process_add_range(message: Message):
             await message.answer(f"Некорректное время «{t}». Пожалуйста, используйте формат ЧЧ:ММ.")
             return
 
-    data = await state_dispenser.get(message.from_id)
+    data = await state_dispenser.get_data(message.from_id)
     tid = data["tid"]
     day = data["current_day"]
     duration_min = data.get("range_duration", 90)
@@ -2613,7 +2613,7 @@ async def process_add_range(message: Message):
 
 
 async def del_slot_start(event: MessageEvent):
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tid"]
     day = data["current_day"]
     sched = await get_schedule(tid)
@@ -2632,7 +2632,7 @@ async def del_slot_start(event: MessageEvent):
 
 async def confirm_del_slot(event: MessageEvent):
     slot = event.payload["cmd"].split("_", 1)[1]
-    data = await state_dispenser.get(event.user_id)
+    data = await state_dispenser.get_data(event.user_id)
     tid = data["tid"]
     day = data["current_day"]
     await delete_schedule_slot(tid, day, slot)
