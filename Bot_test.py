@@ -1275,7 +1275,6 @@ async def payment_menu(message: types.Message):
 
 @dp.callback_query(F.data == "back_to_payment_menu")
 async def back_to_payment_menu(call: CallbackQuery):
-    await state.clear()
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Оплатить занятие", callback_data="pay_booking")],
         [InlineKeyboardButton(text="📚 Купить абонемент", callback_data="buy_subscription")],
@@ -1504,7 +1503,7 @@ async def create_subscription_payment(source, bot, user_id, tutor_id, subject, c
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_payment_menu")]
     ])
 )
-
+        
         return
     description = f"Абонемент: {count} занятий по {subject} у {tutor['name']}"
     amount_kop = int(total * 100)
@@ -1902,6 +1901,7 @@ async def support_send_reply(message: Message, state: FSMContext, bot: Bot):
 # ==================== АДМИН-ПАНЕЛЬ ====================
 def admin_actions_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💵 Подтверждение оплат", callback_data="admin_confirm_payments")],
         [InlineKeyboardButton(text="➕ Добавить репетитора", callback_data="admin_add")],
         [InlineKeyboardButton(text="✏️ Редактировать репетитора", callback_data="admin_edit_list")],
         [InlineKeyboardButton(text="❌ Удалить репетитора", callback_data="admin_delete_list")],
@@ -1926,6 +1926,91 @@ async def open_admin_panel(call: CallbackQuery, state: FSMContext):
     await call.message.answer("Админ-панель управления репетиторами", reply_markup=ReplyKeyboardRemove())
     await call.message.answer("Выберите действие:", reply_markup=admin_actions_keyboard())
     await safe_answer(call)
+
+# -------------ПОДТВЕЖДЕНИЕ ОПЛАТ----------------------
+
+@dp.callback_query(F.data == "admin_confirm_payments")
+async def admin_show_unpaid_bookings(call: CallbackQuery):
+    if call.from_user.id != ADMING_ID:
+        await call.answer("⛔ Только администратор", show_alert=True)
+        return
+
+    bookings = await get_all_bookings()
+    unpaid = [(bid, b) for bid, b in bookings.items() if b["status"] == "confirmed"]
+    if not unpaid:
+        await call.message.edit_text(
+            "Нет неоплаченных заявок.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 В админ-панель", callback_data="admin_panel_open")]
+            ])
+        )
+        return
+
+    tutors = await get_all_tutors()
+    grouped = {}
+    for bid, b in unpaid:
+        tid = b["tutor_id"]
+        tutor_name = tutors.get(tid, {}).get("name", "Неизвестный")
+        grouped.setdefault(tid, {"tutor_name": tutor_name, "bookings": []})
+        grouped[tid]["bookings"].append((bid, b))
+
+    text_lines = ["Неоплаченные заявки (ожидают подтверждения оплаты):\n"]
+    keyboard = []
+    for tid, data in grouped.items():
+        text_lines.append(f"\n👨‍🏫 {data['tutor_name']}:")
+        for bid, b in data["bookings"]:
+            text_lines.append(f"  • {b['username']}: {b['subject']}, {b['date']} {b['time_slot']}")
+            keyboard.append([InlineKeyboardButton(
+                text=f"✅ Подтвердить: {b['username']} {b['date']} {b['time_slot']}",
+                callback_data=f"admin_confirm_payment_{bid}"
+            )])
+
+    text = "\n".join(text_lines)
+    keyboard.append([InlineKeyboardButton(text="🔙 В админ-панель", callback_data="admin_panel_open")])
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+
+
+@dp.callback_query(F.data.startswith("admin_confirm_payment_"))
+async def admin_confirm_payment_handler(call: CallbackQuery, bot: Bot):
+    if call.from_user.id != ADMING_ID:
+        await call.answer("⛔ Только администратор", show_alert=True)
+        return
+
+    bid = int(call.data.split("_")[-1])
+    bookings = await get_all_bookings()
+    booking = bookings.get(bid)
+    if not booking or booking["status"] != "confirmed":
+        await call.answer("Заявка уже обработана или не найдена", show_alert=True)
+        return
+
+    # Переводим в оплачено
+    await update_booking(bid, status="paid")
+    # Начисляем занятие ученику
+    await add_lesson_to_balance(booking["user_id"], booking["tutor_id"], booking["subject"])
+
+    # Удаляем сообщение со ссылкой на оплату
+    payment_msg_id = booking.get("payment_msg_id")
+    if payment_msg_id:
+        try:
+            await bot.delete_message(chat_id=booking["user_id"], message_id=payment_msg_id)
+        except Exception as e:
+            logging.warning(f"Не удалось удалить сообщение {payment_msg_id}: {e}")
+
+    # Уведомления
+    await bot.send_message(booking["user_id"], "✅ Оплата подтверждена администратором! Занятие подтверждено.")
+    tutors = await get_all_tutors()
+    tutor = tutors.get(booking["tutor_id"])
+    if tutor and tutor.get("telegram_id"):
+        try:
+            await bot.send_message(
+                tutor["telegram_id"],
+                f"✅ Оплата за занятие {booking['date']} {booking['time_slot']} подтверждена администратором."
+            )
+        except Exception as e:
+            logging.warning(f"Не удалось уведомить преподавателя: {e}")
+
+    # Обновляем список неоплаченных заявок
+    await admin_show_unpaid_bookings(call)
 
 
 # ==================== АДМИН-СТАТИСТИКА ====================
@@ -3624,16 +3709,16 @@ async def process_payment_status(bot: Bot, booking_id: int, status: str, payment
 async def main():
     await init_db()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    webhook_app = create_webhook_app(bot)
-    runner = web.AppRunner(webhook_app)
-    await runner.setup()
-    site = web.TCPSite(runner, 'localhost', 8765)  # Порт можно передать через env
-    await site.start()
-    logging.info("Webhook server started on port 8765")
+   # webhook_app = create_webhook_app(bot)
+   # runner = web.AppRunner(webhook_app)
+   # await runner.setup()
+   # site = web.TCPSite(runner, 'localhost', 8765)  # Порт можно передать через env
+   # await site.start()
+   # logging.info("Webhook server started on port 8765")
     async def periodic_cleanup_with_bot():
         while True:
             await cleanup_old_bookings()
-            await check_pending_payments(bot)
+        #    await check_pending_payments(bot)
             await asyncio.sleep(3600)
 
     asyncio.create_task(periodic_cleanup_with_bot())
@@ -3642,7 +3727,7 @@ async def main():
     try:
         await dp.start_polling(bot, drop_pending_updates=True)
     finally:
-        await runner.cleanup()
+#        await runner.cleanup()
         await close_db()
 
 
