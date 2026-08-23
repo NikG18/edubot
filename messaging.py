@@ -13,9 +13,15 @@ if not TELEGRAM_BOT_TOKEN:
 if not VK_BOT_TOKEN:
     logging.warning("VK_BOT_TOKEN не задан, отправка в VK невозможна")
 
-
-async def send_telegram_message(chat_id: int, text: str, reply_markup: str = None):
-    """Отправка сообщения в Telegram через HTTP API. reply_markup - JSON-строка клавиатуры."""
+def _clean_none(obj):
+    """Рекурсивно удаляет ключи со значением None."""
+    if isinstance(obj, dict):
+        return {k: _clean_none(v) for k, v in obj.items() if v is not None}
+    elif isinstance(obj, list):
+        return [_clean_none(item) for item in obj]
+    return obj
+async def send_telegram_message(chat_id: int, text: str, reply_markup=None):
+    """Отправка сообщения в Telegram через HTTP API. reply_markup - JSON-строка или dict."""
     if not TELEGRAM_BOT_TOKEN or not chat_id:
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -25,7 +31,16 @@ async def send_telegram_message(chat_id: int, text: str, reply_markup: str = Non
         "parse_mode": "HTML",
     }
     if reply_markup:
-        payload["reply_markup"] = reply_markup
+        if isinstance(reply_markup, str):
+            try:
+                reply_markup = _clean_none(json.loads(reply_markup))
+            except Exception as e:
+                logging.warning(f"Не удалось разобрать JSON reply_markup: {e}")
+                reply_markup = None
+        else:
+            reply_markup = _clean_none(reply_markup)
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload) as resp:
@@ -36,9 +51,11 @@ async def send_telegram_message(chat_id: int, text: str, reply_markup: str = Non
     except Exception as e:
         logging.error(f"TG send error: {e}")
         return False
-async def send_telegram_message_get_id(chat_id: int, text: str, reply_markup: str = None):
+
+async def send_telegram_message_get_id(chat_id: int, text: str, reply_markup=None):
     """
     Отправляет сообщение в Telegram и возвращает (success, message_id).
+    reply_markup - JSON-строка или dict.
     """
     if not TELEGRAM_BOT_TOKEN or not chat_id:
         return False, None
@@ -49,7 +66,16 @@ async def send_telegram_message_get_id(chat_id: int, text: str, reply_markup: st
         "parse_mode": "HTML",
     }
     if reply_markup:
-        payload["reply_markup"] = reply_markup
+        if isinstance(reply_markup, str):
+            try:
+                reply_markup = _clean_none(json.loads(reply_markup))
+            except Exception as e:
+                logging.warning(f"Не удалось разобрать JSON reply_markup: {e}")
+                reply_markup = None
+        else:
+            reply_markup = _clean_none(reply_markup)
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload) as resp:
@@ -63,8 +89,9 @@ async def send_telegram_message_get_id(chat_id: int, text: str, reply_markup: st
         logging.error(f"TG send error: {e}")
         return False, None
 
-async def send_vk_message(user_id: int, text: str, keyboard: str = None):
-    """Отправка сообщения в VK через VK API. keyboard - JSON-строка клавиатуры."""
+
+async def send_vk_message(user_id: int, text: str, keyboard=None):
+    """Отправка сообщения в VK через VK API."""
     if not VK_BOT_TOKEN or not user_id:
         return False
     url = "https://api.vk.com/method/messages.send"
@@ -90,8 +117,7 @@ async def send_vk_message(user_id: int, text: str, keyboard: str = None):
         return False
 
 
-async def send_to_user(user_id: int, platform: str, text: str, reply_markup_tg: str = None, keyboard_vk: str = None):
-    """Отправка сообщения пользователю в зависимости от платформы."""
+async def send_to_user(user_id: int, platform: str, text: str, reply_markup_tg=None, keyboard_vk=None):
     if platform == 'telegram':
         return await send_telegram_message(user_id, text, reply_markup_tg)
     elif platform == 'vk':
@@ -101,23 +127,14 @@ async def send_to_user(user_id: int, platform: str, text: str, reply_markup_tg: 
         return False
 
 
-async def send_to_tutor(tutor_id: int, text: str, reply_markup_tg: str = None, keyboard_vk: str = None, db_get_tutors_func=None):
-    """
-    Отправка уведомления преподавателю в оба мессенджера, если у него есть соответствующие ID.
-    reply_markup_tg - JSON-строка клавиатуры для Telegram.
-    keyboard_vk - JSON-строка клавиатуры для VK.
-    """
+async def send_to_tutor(tutor_id: int, text: str, reply_markup_tg=None, keyboard_vk=None, db_get_tutors_func=None):
     if db_get_tutors_func is None:
         from database import get_all_tutors as db_get_tutors_func
     tutors = await db_get_tutors_func()
     tutor = tutors.get(tutor_id)
     if not tutor:
         return
-
-    # Отправка в Telegram
     if tutor.get("telegram_id"):
         await send_telegram_message(tutor["telegram_id"], text, reply_markup_tg)
-
-    # Отправка в VK
     if tutor.get("vk_id"):
         await send_vk_message(tutor["vk_id"], text, keyboard_vk)
