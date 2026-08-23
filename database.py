@@ -406,7 +406,7 @@ async def get_all_bookings() -> Dict[int, dict]:
             }
     return bookings
 
-async def add_booking(tutor_id, user_id, username, subject, date, time_slot, channel_msg_id=None, user_platform):
+async def add_booking(tutor_id, user_id, username, subject, date, time_slot, channel_msg_id=None, user_platform='telegram'):
     async with pool.acquire() as conn:
         return await conn.fetchval(
             "INSERT INTO bookings (tutor_id, user_id, username, subject, date, time_slot, status, reminded, channel_msg_id, user_platform) "
