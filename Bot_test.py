@@ -981,7 +981,7 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
         await call.message.edit_text("Запись не найдена.")
         return
     dt = parse_booking_time(booking)
-    if booking["status"] == "paid" and (dt - datetime.now()) > timedelta(hours=24):
+    if booking["status"] == "paid":
         await call.message.edit_text("Для отмены оплаченного занятия обратитесь в поддержку для возврата.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 К моим записям", callback_data="back_to_my_records")]
     ])
@@ -1748,9 +1748,11 @@ async def send_message_to_tutor(message: Message, state: FSMContext, bot: Bot):
         [InlineKeyboardButton(text="↩️ Ответить", callback_data=f"reply_{user.id}")]
     ])
     await bot.send_message(ADMING_ID, forward_msg, reply_markup=reply_markup)
-    tutors = await get_all_tutors()
-    tutor = tutors.get(tid)
-    await send_to_tutor(tid, forward_msg, reply_markup_tg=reply_markup)
+
+    vk_reply_kb = vk_keyboard([
+        [("↩️ Ответить", {"cmd": f"reply_{user.id}"}, "primary")]
+    ])
+    await send_to_tutor(tid, forward_msg, reply_markup_tg=reply_markup, keyboard_vk=vk_reply_kb)
 
     await message.answer("✅ Сообщение отправлено. Ожидайте ответа.",
                          reply_markup=await get_main_menu(message.from_user.id))
@@ -1799,7 +1801,7 @@ async def tutor_contact_student_start(message: types.Message, state: FSMContext)
     bookings = await get_all_bookings()
     students = {}
     for b in bookings.values():
-        if b["tutor_id"] == tutor_id and b["status"] in ("pending", "confirmed"):
+        if b["tutor_id"] == tutor_id and b["status"] in ("pending", "confirmed", "paid"):
             uid = b["user_id"]
             if uid not in students:
                 students[uid] = b["username"]
@@ -2693,7 +2695,7 @@ async def show_students(call: CallbackQuery, bot: Bot):
         lessons_count = await count_student_lessons(tid, uid)
         text += f"👤 {sdata['username']} (занятий: {lessons_count})\n"
         for bid, b in sdata["bookings"]:
-            status_emoji = "⏳" if b["status"] == "pending" else "✅"
+            status_emoji = "✅" if b["status"] == "paid" else "⏳"
             text += f"  {status_emoji} {b['date']} (МСК) {b['time_slot']} – {b['subject']}\n"
             if b["status"] == "pending":
                 keyboard.append([
