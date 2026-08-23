@@ -603,7 +603,7 @@ async def trial_date_chosen(call: CallbackQuery, state: FSMContext):
 async def back_to_trial_dates(call: CallbackQuery, state: FSMContext):
     await safe_answer(call)
     data = await state.get_data()
-    tid = data["tutor_id"]
+    tid = data.get("tutor_id")
     if not tid:
         # Данные потеряны, возвращаем в главное меню
         await call.message.edit_text("Ошибка: данные о выборе не найдены. Возвращаемся в главное меню.")
@@ -815,6 +815,11 @@ async def choose_date(call: CallbackQuery, state: FSMContext):
 async def back_to_date(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     tid = data.get("tutor_id")
+    if not tid:
+        await call.message.edit_text("Ошибка: данные не найдены. Возвращаемся в главное меню.")
+        await state.clear()
+        await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
+        return
     dates = await get_available_dates(tid)
     buttons = []
     for d in dates:
@@ -1175,7 +1180,12 @@ async def student_reschedule_date(call: CallbackQuery, state: FSMContext):
     date_str = call.data.split("reschedule_date_")[1]
     await state.update_data(new_date=date_str)
     data = await state.get_data()
-    tid = data["tutor_id"]
+    tid = data.get("tutor_id")
+    if not tid:
+        await call.message.edit_text("Ошибка: данные не найдены. Возвращаемся в главное меню.")
+        await state.clear()
+        await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
+        return
     old_bid = data["old_booking_id"]
     slots = await get_available_slots(tid, date_str, exclude_booking_id=old_bid)
     if not slots:
@@ -2845,7 +2855,12 @@ async def tutor_reschedule_date(call: CallbackQuery, state: FSMContext):
     date_str = call.data.split("t_reschedule_date_")[1]
     await state.update_data(new_date=date_str)
     data = await state.get_data()
-    tid = data["tutor_id"]
+    tid = data.get("tutor_id")
+    if not tid:
+        await call.message.edit_text("Ошибка: данные не найдены. Возвращаемся в главное меню.")
+        await state.clear()
+        await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
+        return
     old_bid = data["old_booking_id"]
     slots = await get_available_slots(tid, date_str, exclude_booking_id=old_bid)
     if not slots:
@@ -2864,7 +2879,12 @@ async def tutor_reschedule_date(call: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "back_tutor_reschedule_date", StateFilter("*"))
 async def back_tutor_reschedule_date(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    tid = data["tutor_id"]
+    tid = data.get("tutor_id")
+    if not tid:
+        await call.message.edit_text("Ошибка: данные не найдены. Возвращаемся в главное меню.")
+        await state.clear()
+        await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
+        return
     dates = await get_available_dates(tid)
     buttons = [[InlineKeyboardButton(
         text=f"{d} ({WEEKDAY_NAMES[WEEKDAYS[datetime.strptime(d, '%d.%m.%Y').weekday()]]})",
