@@ -722,13 +722,16 @@ async def subject_chosen(event: MessageEvent):
     for d in dates:
         dt = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
-        row.append(Callback(label, payload={"cmd": f"..._{d}"}))
-        if len(row) == 5:
-            kb.add(*row)
+        row.append(Callback(label, payload={"cmd": f"date_{d}"}))
+        if len(row) == 3:
+            kb.add(row[0], row[1], row[2])  # максимум 3 кнопки
             kb.row()
             row = []
     if row:
-        kb.add(*row)
+        if len(row) == 2:
+            kb.add(row[0], row[1])
+        else:
+            kb.add(row[0])
         kb.row()
     kb.add(Callback("🔙 Назад к репетиторам", payload={"cmd": "back_to_tutors_booking"}))
     await edit_event_message(event, "Выберите дату:", keyboard=kb.get_json())
@@ -751,12 +754,15 @@ async def choose_date(event: MessageEvent):
     row = []
     for s in slots:
         row.append(Callback(s, payload={"cmd": f"slot_{s}"}))
-        if len(row) == 5:
-            kb.add(*row)  # добавляем три кнопки в один ряд
+        if len(row) == 3:
+            kb.add(row[0], row[1], row[2])  # максимум 3 кнопки
             kb.row()
             row = []
     if row:
-        kb.add(*row)
+        if len(row) == 2:
+            kb.add(row[0], row[1])
+        else:
+            kb.add(row[0])
         kb.row()
     kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_date"}))
 
@@ -772,7 +778,7 @@ async def back_to_date(event: MessageEvent):
     for d in dates:
         dt = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
-        row.append(Callback(label, payload={"cmd": f"..._{d}"}))
+        row.append(Callback(label, payload={"cmd": f"date_{d}"}))
         if len(row) == 5:
             kb.add(*row)
             kb.row()
@@ -1037,10 +1043,20 @@ async def student_reschedule_start(event: MessageEvent):
         await edit_event_message(event, "У преподавателя нет свободных дат для переноса.")
         return
     kb = Keyboard(inline=True)
+    row = []
     for d in dates:
         dt_date = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt_date.weekday()]]})"
-        kb.add(Callback(label, payload={"cmd": f"reschedule_date_{d}"}))
+        row.append(Callback(label, payload={"cmd": f"reschedule_date_{d}"}))
+        if len(row) == 3:
+            kb.add(row[0], row[1], row[2])
+            kb.row()
+            row = []
+    if row:
+        if len(row) == 2:
+            kb.add(row[0], row[1])
+        else:
+            kb.add(row[0])
         kb.row()
     kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите новую дату:", keyboard=kb.get_json())
@@ -1062,14 +1078,17 @@ async def student_reschedule_date(event: MessageEvent):
     row = []
     for s in slots:
         row.append(Callback(s, payload={"cmd": f"slot_{s}"}))
-        if len(row) == 5:
-            kb.add(*row)  # добавляем три кнопки в один ряд
+        if len(row) == 3:
+            kb.add(row[0], row[1], row[2])  # максимум 3 кнопки
             kb.row()
             row = []
     if row:
-        kb.add(*row)
+        if len(row) == 2:
+            kb.add(row[0], row[1])
+        else:
+            kb.add(row[0])
         kb.row()
-    kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_date"}))
+    kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_reschedule_date"}))
     await edit_event_message(event, "Выберите новое время:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, StudentRescheduleStates.waiting_time)
 
@@ -1083,13 +1102,16 @@ async def back_to_reschedule_date(event: MessageEvent):
     for d in dates:
         dt = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
-        row.append(Callback(label, payload={"cmd": f"..._{d}"}))
-        if len(row) == 5:
-            kb.add(*row)
+        row.append(Callback(label, payload={"cmd": f"date_{d}"}))
+        if len(row) == 3:
+            kb.add(row[0], row[1], row[2])  # максимум 3 кнопки
             kb.row()
             row = []
     if row:
-        kb.add(*row)
+        if len(row) == 2:
+            kb.add(row[0], row[1])
+        else:
+            kb.add(row[0])
         kb.row()
     kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите новую дату:", keyboard=kb.get_json())
@@ -2122,8 +2144,18 @@ async def admin_stats_tutors_overview(event: MessageEvent):
     now = datetime.now()
     months = sorted(set((d.year, d.month) for d in [now - timedelta(days=30 * i) for i in range(12)]), reverse=True)
     kb = Keyboard(inline=True)
+    row = []
     for y, m in months:
-        kb.add(Callback(f"{y}-{m:02d}", payload={"cmd": f"admin_stats_tutors_month_{y}_{m}"}))
+        row.append(Callback(f"{y}-{m:02d}", payload={"cmd": f"admin_stats_tutors_month_{y}_{m}"}))
+        if len(row) == 3:
+            kb.add(row[0], row[1], row[2])
+            kb.row()
+            row = []
+    if row:
+        if len(row) == 2:
+            kb.add(row[0], row[1])
+        else:
+            kb.add(row[0])
         kb.row()
     kb.add(Callback("🔙 К разделам статистики", payload={"cmd": "admin_stats"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
@@ -2356,10 +2388,20 @@ async def tutor_reschedule_start(event: MessageEvent):
         await edit_event_message(event, "Нет доступных дат для переноса.")
         return
     kb = Keyboard(inline=True)
+    row = []
     for d in dates:
         dt_date = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt_date.weekday()]]})"
-        kb.add(Callback(label, payload={"cmd": f"t_reschedule_date_{d}"}))
+        row.append(Callback(label, payload={"cmd": f"t_reschedule_date_{d}{d}"}))
+        if len(row) == 3:
+            kb.add(row[0], row[1], row[2])
+            kb.row()
+            row = []
+    if row:
+        if len(row) == 2:
+            kb.add(row[0], row[1])
+        else:
+            kb.add(row[0])
         kb.row()
     kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите новую дату:", keyboard=kb.get_json())
@@ -2381,14 +2423,17 @@ async def tutor_reschedule_date(event: MessageEvent):
     row = []
     for s in slots:
         row.append(Callback(s, payload={"cmd": f"slot_{s}"}))
-        if len(row) == 5:
-            kb.add(*row)  # добавляем три кнопки в один ряд
+        if len(row) == 3:
+            kb.add(row[0], row[1], row[2])  # максимум 3 кнопки
             kb.row()
             row = []
     if row:
-        kb.add(*row)
+        if len(row) == 2:
+            kb.add(row[0], row[1])
+        else:
+            kb.add(row[0])
         kb.row()
-    kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_date"}))
+    kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_tutor_reschedule_date"}))
     await edit_event_message(event, "Выберите новое время:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorRescheduleStates.waiting_time)
 
@@ -2402,13 +2447,16 @@ async def back_tutor_reschedule_date(event: MessageEvent):
     for d in dates:
         dt = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
-        row.append(Callback(label, payload={"cmd": f"..._{d}"}))
-        if len(row) == 5:
-            kb.add(*row)
+        row.append(Callback(label, payload={"cmd": f"date_{d}"}))
+        if len(row) == 3:
+            kb.add(row[0], row[1], row[2])  # максимум 3 кнопки
             kb.row()
             row = []
     if row:
-        kb.add(*row)
+        if len(row) == 2:
+            kb.add(row[0], row[1])
+        else:
+            kb.add(row[0])
         kb.row()
     kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите новую дату:", keyboard=kb.get_json())
@@ -2763,10 +2811,20 @@ async def tutor_stats_menu(event: MessageEvent):
     now = datetime.now()
     months = sorted(set((d.year, d.month) for d in [now - timedelta(days=30 * i) for i in range(12)]), reverse=True)
     kb = Keyboard(inline=True)
+    row = []
     for y, m in months:
-        kb.add(Callback(f"{y}-{m:02d}", payload={"cmd": f"tutor_stats_month_{tid}_{y}_{m}"}))
+        row.append(Callback(f"{y}-{m:02d}", payload={"cmd": f"tutor_stats_month_{tid}_{y}_{m}"}))
+        if len(row) == 3:
+            kb.add(row[0], row[1], row[2])
+            kb.row()
+            row = []
+    if row:
+        if len(row) == 2:
+            kb.add(row[0], row[1])
+        else:
+            kb.add(row[0])
         kb.row()
-    kb.add(Callback("🔙 Назад", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
+    kb.add(Callback("🔙 К разделам статистики", payload={"cmd": f"back_to_tutor_panel_{tid}"}))
     await edit_event_message(event, text, keyboard=kb.get_json())
 
 
