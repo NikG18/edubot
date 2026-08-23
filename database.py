@@ -132,6 +132,8 @@ async def init_db():
         await conn.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS tinkoff_payment_id TEXT;")
         await conn.execute("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS discount_percent INTEGER DEFAULT 0;")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS autopay_enabled BOOLEAN DEFAULT FALSE;")
+        await conn.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS user_platform TEXT DEFAULT 'telegram';")
+        await conn.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_notified BOOLEAN DEFAULT FALSE;")
 
 async def close_db():
     global pool
@@ -399,15 +401,17 @@ async def get_all_bookings() -> Dict[int, dict]:
                 "commission_percent": row["commission_percent"],
                 "tinkoff_payment_id": row["tinkoff_payment_id"],
                 "payment_msg_id": row["payment_msg_id"],
+                "user_platform": row["user_platform"],
+                "payment_notified": bool(row["payment_notified"])
             }
     return bookings
 
-async def add_booking(tutor_id, user_id, username, subject, date, time_slot, channel_msg_id=None):
+async def add_booking(tutor_id, user_id, username, subject, date, time_slot, channel_msg_id=None, user_platform):
     async with pool.acquire() as conn:
         return await conn.fetchval(
-            "INSERT INTO bookings (tutor_id, user_id, username, subject, date, time_slot, status, reminded, channel_msg_id) "
-            "VALUES ($1, $2, $3, $4, $5, $6, 'pending', 0, $7) RETURNING id",
-            tutor_id, user_id, username, subject, date, time_slot, channel_msg_id
+            "INSERT INTO bookings (tutor_id, user_id, username, subject, date, time_slot, status, reminded, channel_msg_id, user_platform) "
+            "VALUES ($1, $2, $3, $4, $5, $6, 'pending', 0, $7, $8) RETURNING id",
+            tutor_id, user_id, username, subject, date, time_slot, channel_msg_id, user_platform
         )
 
 async def update_booking(booking_id, **kwargs):
