@@ -3,6 +3,9 @@ import json
 import aiohttp
 import logging
 import random
+import asyncio
+
+TIMEOUT = aiohttp.ClientTimeout(total=30)
 
 TELEGRAM_BOT_TOKEN = os.environ.get("BOT_TOKEN")  # токен телеграм-бота
 VK_BOT_TOKEN = os.environ.get("VK_BOT_TOKEN")      # токен VK-бота
@@ -20,8 +23,25 @@ def _clean_none(obj):
     elif isinstance(obj, list):
         return [_clean_none(item) for item in obj]
     return obj
+
+async def _post_json(url, payload, retries=3):
+    for attempt in range(retries):
+        try:
+            async with aiohttp.ClientSession(timeout=TIMEOUT) as session:
+                async with session.post(url, json=payload) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    else:
+                        logging.warning(f"TG send failed: status={resp.status}, response={await resp.text()}")
+                        return None
+        except Exception as e:
+            if attempt == retries - 1:
+                logging.error(f"TG send error after {retries} attempts: {e}")
+                return None
+            await asyncio.sleep(2 ** attempt)
+
 async def send_telegram_message(chat_id: int, text: str, reply_markup=None):
-    """Отправка сообщения в Telegram через HTTP API. reply_markup - JSON-строка или dict."""
+    """Отправка сообщения в Telegram. Возвращает True/False."""
     if not TELEGRAM_BOT_TOKEN or not chat_id:
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -41,22 +61,13 @@ async def send_telegram_message(chat_id: int, text: str, reply_markup=None):
             reply_markup = _clean_none(reply_markup)
         if reply_markup:
             payload["reply_markup"] = reply_markup
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload) as resp:
-                if resp.status != 200:
-                    logging.warning(f"TG send failed: {await resp.text()}")
-                    return False
-                return True
-    except Exception as e:
-        logging.error(f"TG send error: {e}")
-        return False
+
+    result = await _post_json(url, payload)
+    return result is not None
+
 
 async def send_telegram_message_get_id(chat_id: int, text: str, reply_markup=None):
-    """
-    Отправляет сообщение в Telegram и возвращает (success, message_id).
-    reply_markup - JSON-строка или dict.
-    """
+    """Отправляет сообщение в Telegram и возвращает (success, message_id)."""
     if not TELEGRAM_BOT_TOKEN or not chat_id:
         return False, None
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -76,18 +87,11 @@ async def send_telegram_message_get_id(chat_id: int, text: str, reply_markup=Non
             reply_markup = _clean_none(reply_markup)
         if reply_markup:
             payload["reply_markup"] = reply_markup
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload) as resp:
-                data = await resp.json()
-                if resp.status == 200 and data.get("ok"):
-                    return True, data["result"]["message_id"]
-                else:
-                    logging.warning(f"TG send failed: {data}")
-                    return False, None
-    except Exception as e:
-        logging.error(f"TG send error: {e}")
-        return False, None
+
+    result = await _post_json(url, payload)
+    if result and result.get("ok"):
+        return True, result["result"]["message_id"]
+    return False, None
 
 
 async def send_vk_message(user_id: int, text: str, keyboard=None):
