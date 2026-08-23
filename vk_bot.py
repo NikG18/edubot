@@ -86,8 +86,8 @@ if not TELEGRAM_BOT_TOKEN:
     logging.warning("TELEGRAM_BOT_TOKEN не задан, уведомления в Telegram не будут работать")
 
 # -------------------- Бот и диспетчер состояний --------------------
-bot = Bot(token=BOT_TOKEN)
 state_dispenser = StateDispenserWithUpdate()
+bot = Bot(token=BOT_TOKEN, state_dispenser=state_dispenser)
 
 
 # -------------------- Группы состояний (FSM) --------------------
