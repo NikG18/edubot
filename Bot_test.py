@@ -601,10 +601,15 @@ async def trial_date_chosen(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "back_to_trial_dates", StateFilter("*"))
 async def back_to_trial_dates(call: CallbackQuery, state: FSMContext):
-    """Возврат к списку дат."""
+    await safe_answer(call)
     data = await state.get_data()
     tid = data["tutor_id"]
-    await safe_answer(call)
+    if not tid:
+        # Данные потеряны, возвращаем в главное меню
+        await call.message.edit_text("Ошибка: данные о выборе не найдены. Возвращаемся в главное меню.")
+        await state.clear()
+        await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
+        return
     await show_trial_dates(call, state, tid)
 
 
