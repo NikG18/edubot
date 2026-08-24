@@ -1,149 +1,91 @@
-import json
-import hashlib
 import logging
-import os
 from aiohttp import web
-from aiogram import Bot
+from payments import generate_token
 from database import (
-    get_all_bookings,
-    update_booking,
-    add_lesson_to_balance,
-    get_all_tutors,
-    activate_subscription,           
-    get_pending_subscription_by_payment_id, 
-    delete_pending_subscription,
+    get_pending_subscription_by_payment_id,
+    activate_subscription,
+    get_booking_id_by_payment_id,
 )
+from messaging import send_to_user
+from bot_common import process_booking_payment_status
 
-TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
-TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 
-def check_signature(request_body: bytes, token: str) -> bool:
-    """Проверяет подпись уведомления от Т‑Банка."""
-    expected = hashlib.sha256(request_body + TINKOFF_SECRET_KEY.encode()).hexdigest()
-    return expected == token
+def _valid_notification(payload: dict) -> bool:
+    received = payload.get("Token")
+    if not received:
+        return False
+    expected = generate_token({k: v for k, v in payload.items() if k != "Token"})
+    import hmac
+    return hmac.compare_digest(str(received), str(expected))
 
-async def handle_tinkoff_webhook(request):
-    body = await request.read()
-    token = request.headers.get("Token", "")
-    expected = hashlib.sha256(body + TINKOFF_SECRET_KEY.encode()).hexdigest()
-    logging.info(f"Received token: {token}")
-    logging.info(f"Expected token: {expected}")
-    logging.info(f"Body: {body[:200]}")
-    logging.info(f"Secret key (первые 4 символа): {TINKOFF_SECRET_KEY[:4]}")
-    bot: Bot = request.app.get("bot")
-    if bot is None:
-        logging.error("Webhook: bot не передан в приложение")
-        return web.Response(status=500, text="Internal Server Error")
 
+async def _handle_notification(request: web.Request):
+    bot = request.app["bot"]
     try:
-        body = await request.read()
-        data = json.loads(body)
+        payload = await request.json()
     except Exception:
-        return web.Response(status=400, text="Bad JSON")
+        return web.Response(status=400, text="bad json")
 
-    token = request.headers.get("Token", "")
-    if not check_signature(body, token):
-        logging.warning("Webhook: неверная подпись")
-        return web.Response(status=403, text="Forbidden")
+    if not _valid_notification(payload):
+        logging.warning("Отклонён webhook T-Bank с неверным Token")
+        return web.Response(status=403, text="forbidden")
 
-    status = data.get("Status")
-    order_id = data.get("OrderId")
-    payment_id = data.get("PaymentId")
+    payment_id = str(payload.get("PaymentId") or "")
+    status = str(payload.get("Status") or "")
 
-    if not order_id or "_" not in order_id:
-        return web.Response(status=400, text="Invalid OrderId")
+    if not payment_id or not status:
+        return web.Response(status=400, text="missing fields")
 
-    prefix, id_str = order_id.split("_", 1)
-    try:
-        order_id_num = int(id_str)
-    except ValueError:
-        return web.Response(status=400, text="Invalid OrderId")
-
-    if prefix == "booking":
-        # === Обработка занятия ===
-        bookings = await get_all_bookings()
-        booking = bookings.get(order_id_num)
-        if not booking:
-            return web.Response(status=404, text="Booking not found")
-
-        # Если статус уже изменён, ничего не делаем
-        if booking["status"] != "confirmed":
-            return web.Response(text="OK")
-
-        payment_msg_id = booking.get("payment_msg_id")
-        user_id = booking["user_id"]
-        tutor_id = booking["tutor_id"]
-
+    # Сначала проверяем, относится ли платёж к абонементу.
+    pending_sub = await get_pending_subscription_by_payment_id(payment_id)
+    if pending_sub:
         if status in ("CONFIRMED", "AUTHORIZED"):
-            await update_booking(order_id_num, status="paid")
-            await add_lesson_to_balance(user_id, tutor_id, booking["subject"])
-
-            if payment_msg_id:
-                try:
-                    await bot.delete_message(chat_id=user_id, message_id=payment_msg_id)
-                except Exception as e:
-                    logging.warning(f"Не удалось удалить сообщение {payment_msg_id}: {e}")
-
-            await bot.send_message(user_id, "✅ Оплата получена! Занятие подтверждено.")
-
-            tutors = await get_all_tutors()
-            tutor = tutors.get(tutor_id)
-            if tutor and tutor.get("telegram_id"):
-                try:
-                    await bot.send_message(
-                        tutor["telegram_id"],
-                        f"✅ Оплата за занятие {booking['date']} {booking['time_slot']} получена."
-                    )
-                except Exception as e:
-                    logging.warning(f"Не удалось уведомить преподавателя {tutor_id}: {e}")
-
-            logging.info(f"Webhook: booking {order_id_num} оплачен (status={status})")
-
+            activated = await activate_subscription(payment_id)
+            if activated:
+                await send_to_user(
+                    pending_sub["user_id"],
+                    pending_sub.get("user_platform", "telegram"),
+                    f"✅ Абонемент на {pending_sub['total_lessons']} занятий активирован."
+                )
         elif status in ("REJECTED", "CANCELED"):
-            await update_booking(order_id_num, status="cancelled")
-
-            if payment_msg_id:
-                try:
-                    await bot.delete_message(chat_id=user_id, message_id=payment_msg_id)
-                except Exception as e:
-                    logging.warning(f"Не удалось удалить сообщение {payment_msg_id}: {e}")
-
-            await bot.send_message(user_id, "❌ Платёж не прошёл. Запись отменена.")
-
-            tutors = await get_all_tutors()
-            tutor = tutors.get(tutor_id)
-            if tutor and tutor.get("telegram_id"):
-                try:
-                    await bot.send_message(
-                        tutor["telegram_id"],
-                        f"❌ Платёж за занятие {booking['date']} {booking['time_slot']} не прошёл, запись отменена."
-                    )
-                except Exception as e:
-                    logging.warning(f"Не удалось уведомить преподавателя {tutor_id}: {e}")
-
-            logging.info(f"Webhook: booking {order_id_num} отменён ({status})")
-
-    elif prefix == "sub":
-        # === Обработка абонемента ===
-        pending = await get_pending_subscription_by_payment_id(payment_id)
-        if not pending:
-            logging.warning(f"Webhook: pending subscription не найден для payment_id={payment_id}")
-            return web.Response(text="OK")  # возможно уже обработано
-
-        if status in ("CONFIRMED", "AUTHORIZED"):
-            await activate_subscription(payment_id)
-            await bot.send_message(pending["user_id"], "✅ Абонемент успешно активирован!")
-            logging.info(f"Webhook: subscription {payment_id} оплачен")
-        elif status in ("REJECTED", "CANCELED"):
+            from database import delete_pending_subscription
             await delete_pending_subscription(payment_id)
-            await bot.send_message(pending["user_id"], "❌ Платёж за абонемент не прошёл.")
-            logging.info(f"Webhook: subscription {payment_id} отменён")
+        return web.Response(text="OK")
 
+    booking_id = await get_booking_id_by_payment_id(payment_id)
+    if booking_id:
+        changed, booking = await process_booking_payment_status(booking_id, status)
+        if changed and booking:
+            if status in ("CONFIRMED", "AUTHORIZED"):
+                if booking.get("payment_msg_id") and booking.get("user_platform") == "telegram":
+                    try:
+                        await bot.delete_message(
+                            chat_id=booking["user_id"],
+                            message_id=booking["payment_msg_id"]
+                        )
+                    except Exception:
+                        logging.exception("Не удалось удалить сообщение оплаты")
+                await send_to_user(
+                    booking["user_id"], booking.get("user_platform", "telegram"),
+                    "✅ Оплата получена! Занятие подтверждено."
+                )
+                from messaging import send_to_tutor
+                await send_to_tutor(
+                    booking["tutor_id"],
+                    f"✅ Оплата за занятие {booking['date']} {booking['time_slot']} получена."
+                )
+            elif status in ("REJECTED", "CANCELED"):
+                await send_to_user(
+                    booking["user_id"], booking.get("user_platform", "telegram"),
+                    "❌ Платёж не прошёл. Запись отменена."
+                )
+
+    # T-Bank ожидает HTTP 200 и OK.
     return web.Response(text="OK")
 
 
-def create_webhook_app(bot: Bot):
+def create_webhook_app(bot):
     app = web.Application()
-    app['bot'] = bot
-    app.router.add_post("/tinkoff-webhook", handle_tinkoff_webhook)
+    app["bot"] = bot
+    app.router.add_post("/tinkoff-webhook", _handle_notification)
     return app
