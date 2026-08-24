@@ -3,96 +3,126 @@ import json
 import hashlib
 import logging
 import aiohttp
-import certifi
 import ssl
+import certifi
+from typing import Optional, Tuple
 
 TINKOFF_TERMINAL_KEY = os.environ.get("TINKOFF_TERMINAL_KEY")
 TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
-TINKOFF_WEBHOOK_URL = os.environ.get("TINKOFF_WEBHOOK_URL")
-# Для боевого API
+TINKOFF_WEBHOOK_URL = os.environ.get("TINKOFF_WEBHOOK_URL", "")
 API_BASE = "https://securepay.tinkoff.ru/v2/"
 
+if not TINKOFF_TERMINAL_KEY or not TINKOFF_SECRET_KEY:
+    logging.warning("TINKOFF_TERMINAL_KEY/TINKOFF_SECRET_KEY не заданы")
+
+
 def generate_token(params: dict) -> str:
-    params1 = dict(params)
-    params1["TerminalKey"] = TINKOFF_TERMINAL_KEY
-    params1["Password"] = TINKOFF_SECRET_KEY
-    excluded_keys = {"Token", "DATA", "Shops", "Receipts", "Receipt", "PaymentMethods"} #"Receipt"
-    data = {k: v for k, v in sorted(params1.items())
-            if k not in excluded_keys and not k.startswith("DATA.")}
+    """Токен T-Bank: только значения полей верхнего уровня, без вложенных объектов."""
+    flat = dict(params)
+    flat["TerminalKey"] = TINKOFF_TERMINAL_KEY
+    flat["Password"] = TINKOFF_SECRET_KEY
+
+    excluded = {"Token", "DATA", "Receipt", "Receipts", "Shops", "PaymentMethods"}
     values = []
-    for v in data.values():
-        if isinstance(v, dict):
-            values.append(json.dumps(v, separators=(',', ':')))
-        else:
-            values.append(str(v))
-    request_string = ''.join(values)
-    token = hashlib.sha256((request_string).encode('utf-8')).hexdigest()
-    return token
+    for key in sorted(flat):
+        if key in excluded or key.startswith("DATA."):
+            continue
+        value = flat[key]
+        if isinstance(value, (dict, list)) or value is None:
+            continue
+        if isinstance(value, bool):
+            value = "true" if value else "false"
+        values.append(str(value))
+    return hashlib.sha256("".join(values).encode("utf-8")).hexdigest()
+
+
+def _ssl_context():
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    return ctx
 
 
 async def api_call(endpoint: str, params: dict) -> dict:
-    url = API_BASE + endpoint
-    params["TerminalKey"] = TINKOFF_TERMINAL_KEY
-    params["Token"] = generate_token(params)
-    timeout = aiohttp.ClientTimeout(total=10)
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), timeout=timeout) as session:
-        try:
-            async with session.post(url, json=params) as resp:
-                text = await resp.text()
-                if resp.status == 200:
-                    return json.loads(text)
-                else:
-                    logging.error(f"API error {endpoint}: {resp.status} {text[:200]}")
-                    return {}
-        except Exception as e:
-            logging.error(f"Tinkoff API error ({endpoint}): {e}")
-            return {}
+    if not TINKOFF_TERMINAL_KEY or not TINKOFF_SECRET_KEY:
+        logging.error("T-Bank credentials are not configured")
+        return {}
 
-async def create_payment(booking_id: int, amount_kop: int, description: str, tutor_id: int, tutor_name: str, customer_email: str, inn: str = None, order_id_prefix: str = "booking") -> tuple:
+    payload = dict(params)
+    payload["TerminalKey"] = TINKOFF_TERMINAL_KEY
+    payload["Token"] = generate_token(payload)
+
+    timeout = aiohttp.ClientTimeout(total=15, connect=5)
+    connector = aiohttp.TCPConnector(ssl=_ssl_context())
+    url = API_BASE + endpoint
+
+    try:
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            async with session.post(url, json=payload) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    logging.error("T-Bank %s HTTP %s: %s", endpoint, resp.status, text[:500])
+                    return {}
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    logging.error("T-Bank %s returned non-JSON: %s", endpoint, text[:500])
+                    return {}
+    except (aiohttp.ClientError, TimeoutError) as exc:
+        logging.error("T-Bank %s network error: %s", endpoint, exc)
+        return {}
+
+
+async def create_payment(
+    booking_id: int,
+    amount_kop: int,
+    description: str,
+    tutor_id: int,
+    tutor_name: str,
+    customer_email: str,
+    inn: Optional[str] = None,
+    order_id_prefix: str = "booking",
+) -> Tuple[Optional[str], Optional[str]]:
+    if amount_kop <= 0:
+        logging.error("Некорректная сумма платежа: %s", amount_kop)
+        return None, None
+
+    order_id = f"{order_id_prefix}_{booking_id}_{int(__import__('time').time() * 1000)}"
     receipt = {
         "Email": customer_email,
         "Taxation": "usn_income",
         "Items": [{
             "Name": description[:64],
-            "Price": amount_kop,
+            "Price": int(amount_kop),
             "Quantity": 1,
-            "Amount": amount_kop,
-            "Tax": "none"
-        }]
-    }
-    #if inn:
-     #   #receipt["Items"][0]["AgentSign"] = "agent"
-      #  receipt["Items"][0]["AgentData"] = {
-       #     "AgentSign": "commission_agent",
-        #    "AgentPhone": "+79331209603",          # твой телефон как агента
-         #   "SupplierInfo": {
-          #      "Name": tutor_name,
-           #     "Inn": inn,
-            #    "Phones": ["+79331209603"]
-          #  }
-        #}
-    params = {
-       # "TerminalKey": TINKOFF_TERMINAL_KEY,
-        "Amount": amount_kop,
-        "OrderId": f"{order_id_prefix}_{booking_id}",
-        "Description": description,
-        "Receipt": receipt,
-        "NotificationURL": os.environ.get("TINKOFF_WEBHOOK_URL", "")
+            "Amount": int(amount_kop),
+            "Tax": "none",
+        }],
     }
 
+    params = {
+        "Amount": int(amount_kop),
+        "OrderId": order_id,
+        "Description": description[:250],
+        "Receipt": receipt,
+    }
+    if TINKOFF_WEBHOOK_URL:
+        params["NotificationURL"] = TINKOFF_WEBHOOK_URL
+
     resp = await api_call("Init", params)
-    if resp.get("Success"):
-        return resp["PaymentURL"], resp["PaymentId"]
-    else:
-        logging.error(f"Init failed: {resp.get('Details')}")
-        return None, None
+    if resp.get("Success") and resp.get("PaymentURL") and resp.get("PaymentId"):
+        return resp["PaymentURL"], str(resp["PaymentId"])
+
+    logging.error("T-Bank Init failed: ErrorCode=%s Details=%s Message=%s",
+                  resp.get("ErrorCode"), resp.get("Details"), resp.get("Message"))
+    return None, None
 
 
 async def check_payment(payment_id: str) -> dict:
-    result = await api_call("GetState", {"PaymentId": payment_id})
+    if not payment_id:
+        return {}
+    result = await api_call("GetState", {"PaymentId": str(payment_id)})
     if not result:
-        logging.warning(f"CheckPayment: пустой ответ для payment_id={payment_id}")
+        logging.warning("GetState: пустой ответ для payment_id=%s", payment_id)
         return {}
     if not result.get("Success", False):
-        logging.warning(f"CheckPayment: API вернул ошибку для {payment_id}: {result.get('Details')}")
+        logging.warning("GetState error for %s: %s", payment_id, result.get("Details"))
     return result
