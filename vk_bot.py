@@ -30,10 +30,15 @@ from database import (
     get_user_email, set_user_email,
     add_lesson_to_balance, calculate_auto_commission,
     set_pending_email_request, get_pending_email_request, delete_pending_email_request,
-    close_db, cleanup_old_bookings, WEEKDAYS, WEEKDAY_NAMES, get_tutor_by_vk_id
+    close_db, cleanup_old_bookings, WEEKDAYS, WEEKDAY_NAMES, get_tutor_by_vk_id,
+    get_booked_slots, mark_booking_paid_once, mark_booking_payment_failed, reschedule_booking, move_booking_in_place
 )
 from payments import create_payment, check_payment
-from messaging import send_to_user, send_to_tutor, send_telegram_message, send_telegram_message_get_id
+from messaging import (
+    send_to_user, send_to_tutor, send_telegram_message,
+    send_telegram_message_get_id, close_messaging
+)
+from bot_common import now_msk_naive, valid_email
 
 
 class StateDispenserWithUpdate(BuiltinStateDispenser):
@@ -286,34 +291,40 @@ async def make_subjects_keyboard(tutor_id: int, back_callback: str = "back_to_me
 
 
 async def get_available_slots(tutor_id: int, date_str: str, exclude_booking_id: int = None) -> list:
-    """Свободные слоты на дату. Можно исключить конкретное бронирование (при переносе)."""
-    date = datetime.strptime(date_str, "%d.%m.%Y")
-    day_name = WEEKDAYS[date.weekday()]
-    schedule = await get_schedule(tutor_id)
-    if day_name not in schedule:
+    try:
+        date = datetime.strptime(date_str, "%d.%m.%Y")
+    except ValueError:
         return []
-    all_slots = schedule[day_name]
-    busy = []
-    bookings = await get_all_bookings()
-    for bid, b in bookings.items():
-        if b["tutor_id"] == tutor_id and b["date"] == date_str and b["status"] in ("pending", "confirmed", "paid"):
-            if exclude_booking_id and bid == exclude_booking_id:
-                continue
-            busy.append(b["time_slot"])
-    free = [s for s in all_slots if s not in busy]
+    day_name = WEEKDAYS[date.weekday()]
     if await is_day_blocked(tutor_id, day_name):
         return []
-    return free
+    schedule = await get_schedule(tutor_id)
+    all_slots = schedule.get(day_name, [])
+    if not all_slots:
+        return []
+    busy = set(await get_booked_slots(tutor_id, date_str, exclude_booking_id))
+    now = now_msk_naive()
+    result = []
+    for slot in all_slots:
+        if slot in busy:
+            continue
+        try:
+            start_time = slot.split("-")[0].replace(".", ":")
+            slot_dt = datetime.strptime(f"{date_str} {start_time}", "%d.%m.%Y %H:%M")
+        except (ValueError, AttributeError):
+            continue
+        if slot_dt > now:
+            result.append(slot)
+    return result
 
 
 async def get_available_dates(tutor_id: int, days_ahead=30) -> list:
-    today = datetime.now()
+    today = now_msk_naive().replace(hour=0, minute=0, second=0, microsecond=0)
     available = []
     for i in range(days_ahead):
         d = today + timedelta(days=i)
         date_str = d.strftime("%d.%m.%Y")
-        free = await get_available_slots(tutor_id, date_str)
-        if free:
+        if await get_available_slots(tutor_id, date_str):
             available.append(date_str)
     return available
 
@@ -348,12 +359,16 @@ async def create_and_send_payment(source, booking, email, booking_id):
     tutor = tutors.get(booking["tutor_id"])
     if not tutor:
         return
-    price_rub = tutor["subjects"].get(booking["subject"])
-    if not price_rub:
-        return
-    amount_kop = price_rub * 100
+    if booking.get("amount"):
+        amount_kop = int(booking["amount"])
+        price_rub = amount_kop / 100
+    else:
+        price_rub = tutor["subjects"].get(booking["subject"])
+        if not price_rub:
+            return
+        amount_kop = int(price_rub) * 100
 
-    now = datetime.now()
+    now = now_msk_naive()
     if tutor.get("commission_mode") == "auto":
         percent, _ = await calculate_auto_commission(booking["tutor_id"], now.year, now.month)
     else:
@@ -366,7 +381,9 @@ async def create_and_send_payment(source, booking, email, booking_id):
         description=description,
         tutor_id=booking["tutor_id"],
         tutor_name=tutor["name"],
-        customer_email=email
+        customer_email=email,
+        inn=tutor.get("inn", ""),
+        order_id_prefix="booking"
     )
     if not payment_url:
         await send_to_user(booking["user_id"], booking.get("user_platform", "vk"),
@@ -425,6 +442,24 @@ async def send_telegram_message(telegram_id: int, text: str):
                     logging.warning(f"Ошибка отправки в Telegram: {await resp.text()}")
     except Exception as e:
         logging.warning(f"Ошибка отправки в Telegram: {e}")
+
+async def _require_vk_booking_owner(event: MessageEvent, booking: dict) -> bool:
+    if not booking or booking.get("user_id") != event.user_id or booking.get("user_platform", "vk") != "vk":
+        await answer_event(event, "Доступ запрещён.", snackbar=True)
+        return False
+    return True
+
+
+async def _require_vk_booking_tutor(event: MessageEvent, booking: dict) -> bool:
+    if not booking:
+        await answer_event(event, "Запись не найдена.", snackbar=True)
+        return False
+    tid = await get_tutor_by_vk_id(event.user_id)
+    if tid != booking.get("tutor_id"):
+        await answer_event(event, "Доступ запрещён.", snackbar=True)
+        return False
+    return True
+
 
 # -------------------- Обработчики начала диалога и главного меню --------------------
 @bot.on.private_message(text=["Начать", "/start", "start"])
@@ -551,7 +586,7 @@ async def trial_date_chosen(event: MessageEvent):
     kb = Keyboard(inline=True)
     row = []
     for s in slots:
-        row.append(Callback(s, payload={"cmd": f"trial_slot_{s}"}))
+        row.append(Callback(s, payload={"cmd": "trial_slot", "slot": s}))
         if len(row) == 3:
             for btn in row:
                 kb.add(btn)
@@ -606,6 +641,10 @@ async def confirm_trial_booking(event: MessageEvent):
     uid = event.user_id
 
     new_id = await add_booking(tid, uid, username, subject, date, slot, user_platform='vk')
+    if new_id is None:
+        await edit_event_message(event, "⚠️ Этот слот уже заняли. Выберите другое время.")
+        await state_dispenser.delete(event.user_id)
+        return
 
     booking_msg = (
         f"📝 Новая заявка на пробное занятие (ожидает подтверждения)\n"
@@ -781,6 +820,8 @@ async def choose_date(event: MessageEvent):
             kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_date"}))
+    await edit_event_message(event, "Выберите время:", keyboard=kb.get_json())
+    await state_dispenser.set(event.user_id, BookingStates.waiting_time)
 
 
 async def back_to_date(event: MessageEvent):
@@ -848,6 +889,10 @@ async def confirm_booking(event: MessageEvent):
     uid = event.user_id
 
     new_id = await add_booking(tid, uid, username, subject, date, slot, user_platform='vk')
+    if new_id is None:
+        await edit_event_message(event, "⚠️ Этот слот уже заняли. Выберите другое время.")
+        await state_dispenser.delete(event.user_id)
+        return
 
     booking_msg = (
         f"📝 Новая заявка на занятие (ожидает подтверждения преподавателя)\n"
@@ -919,7 +964,7 @@ async def my_records(message: Message):
     for bid, b in user_bookings:
         tutor = tutors.get(b["tutor_id"], {"name": "Неизвестный"})
         dt = datetime.strptime(b["date"] + " " + b["time_slot"].split("-")[0].replace(".", ":"), "%d.%m.%Y %H:%M")
-        now = datetime.now()
+        now = now_msk_naive()
         can_act = (dt - now) > timedelta(hours=24) and b["status"] == "confirmed"
         status_text = "(ожидает подтверждения)" if b["status"] == "pending" else "(подтверждено)"
 
@@ -947,13 +992,15 @@ async def cancel_student_booking(event: MessageEvent):
     if not booking:
         await edit_event_message(event, "Запись не найдена.")
         return
+    if not await _require_vk_booking_owner(event, booking):
+        return
 
     dt = datetime.strptime(booking["date"] + " " + booking["time_slot"].split("-")[0].replace(".", ":"),
                            "%d.%m.%Y %H:%M")
-    if booking["status"] == "paid" and (dt - datetime.now()) > timedelta(hours=24):
+    if booking["status"] == "paid" and (dt - now_msk_naive()) > timedelta(hours=24):
         await edit_event_message(event, "Для отмены оплаченного занятия обратитесь в поддержку для возврата.")
         return
-    if (dt - datetime.now()) <= timedelta(hours=24):
+    if (dt - now_msk_naive()) <= timedelta(hours=24):
         await edit_event_message(event, "Слишком поздно отменять. Стоимость не возвращается.")
         return
 
@@ -1014,7 +1061,7 @@ async def back_to_my_records(event: MessageEvent):
     for bid, b in user_bookings:
         tutor = tutors.get(b["tutor_id"], {"name": "Неизвестный"})
         dt = datetime.strptime(b["date"] + " " + b["time_slot"].split("-")[0].replace(".", ":"), "%d.%m.%Y %H:%M")
-        can_act = (dt - datetime.now()) > timedelta(hours=24) and b["status"] == "confirmed"
+        can_act = (dt - now_msk_naive()) > timedelta(hours=24) and b["status"] == "confirmed"
         status_text = "(ожидает подтверждения)" if b["status"] == "pending" else "(подтверждено)"
         text_lines.append(f"👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n📅 {b['date']} 🕒 {b['time_slot']} {status_text}\n" + (
             "✅ Можно отменить/перенести" if can_act else "⚠️ Действия невозможны"))
@@ -1037,12 +1084,20 @@ async def student_reschedule_start(event: MessageEvent):
     bid = int(event.payload["cmd"].split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
-    if not booking or booking["status"] != "confirmed":
+    if not booking:
+        await edit_event_message(event, "Запись не найдена.")
+        return
+    if not await _require_vk_booking_owner(event, booking):
+        return
+    if booking["status"] != "confirmed":
         await edit_event_message(event, "Запись недоступна для переноса.")
+        return
+    if booking.get("tinkoff_payment_id"):
+        await edit_event_message(event, "Для записи уже создан платёж. Для безопасного переноса обратитесь в поддержку.")
         return
     dt = datetime.strptime(booking["date"] + " " + booking["time_slot"].split("-")[0].replace(".", ":"),
                            "%d.%m.%Y %H:%M")
-    if (dt - datetime.now()) <= timedelta(hours=24):
+    if (dt - now_msk_naive()) <= timedelta(hours=24):
         await edit_event_message(event, "Перенос возможен не позднее чем за 24 часа.")
         return
     await state_dispenser.set(event.user_id, StudentRescheduleStates.waiting_date)
@@ -1161,8 +1216,11 @@ async def confirm_student_reschedule(event: MessageEvent):
     subject = data["subject"]
     student_id = data["student_id"]
     student_username = data["student_username"]
-    await update_booking(old_bid, status="cancelled")
-    new_id = await add_booking(tid, student_id, student_username, subject, new_date, new_time, user_platform='vk')
+    new_id = await reschedule_booking(old_bid, new_date, new_time, new_status="pending")
+    if new_id is None:
+        await edit_event_message(event, "⚠️ Новый слот уже занят. Старая запись сохранена.")
+        await state_dispenser.delete(event.user_id)
+        return
 
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
@@ -2156,7 +2214,7 @@ async def admin_stats_tutors_overview(event: MessageEvent):
     lines.append(f"   Общий доход: {total_income:.2f} руб.")
     lines.append(f"   Общая комиссия: {total_commission:.2f} руб.")
     text = "\n".join(lines)
-    now = datetime.now()
+    now = now_msk_naive()
     months = sorted(set((d.year, d.month) for d in [now - timedelta(days=30 * i) for i in range(12)]), reverse=True)
     kb = Keyboard(inline=True)
     row = []
@@ -2277,6 +2335,9 @@ async def show_tutor_own_profile(event: MessageEvent):
 
 async def show_students(event: MessageEvent):
     tid = int(event.payload["cmd"].split("_")[-1])
+    if await get_tutor_by_vk_id(event.user_id) != tid:
+        await answer_event(event, "Доступ запрещён.", snackbar=True)
+        return
     bookings = await get_all_bookings()
     students = {}
     for bid, b in bookings.items():
@@ -2305,7 +2366,7 @@ async def show_students(event: MessageEvent):
                 kb.row()
             elif b["status"] == "confirmed":
                 dt = datetime.strptime(b["date"] + " " + b["time_slot"].split("-")[0], "%d.%m.%Y %H:%M")
-                if (dt - datetime.now()) > timedelta(hours=24):
+                if (dt - now_msk_naive()) > timedelta(hours=24):
                     kb.add(Callback(f"❌ Отменить", payload={"cmd": f"tutor_cancel_{bid}"}))
                     kb.add(Callback(f"🔄 Перенести", payload={"cmd": f"tutor_reschedule_{bid}"}))
                     kb.row()
@@ -2318,7 +2379,12 @@ async def tutor_confirm_booking(event: MessageEvent):
     bid = int(event.payload["cmd"].split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
-    if not booking or booking["status"] != "pending":
+    if not booking:
+        await edit_event_message(event, "Заявка не найдена.")
+        return
+    if not await _require_vk_booking_tutor(event, booking):
+        return
+    if booking["status"] != "pending":
         await edit_event_message(event, "Заявка уже обработана.")
         return
 
@@ -2338,7 +2404,12 @@ async def tutor_reject_booking(event: MessageEvent):
     bid = int(event.payload["cmd"].split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
-    if not booking or booking["status"] != "pending":
+    if not booking:
+        await edit_event_message(event, "Заявка не найдена.")
+        return
+    if not await _require_vk_booking_tutor(event, booking):
+        return
+    if booking["status"] != "pending":
         await edit_event_message(event, "Заявка уже обработана.")
         return
     user_id = booking["user_id"]
@@ -2355,12 +2426,17 @@ async def tutor_cancel_booking(event: MessageEvent):
     bid = int(event.payload["cmd"].split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
+    if not booking:
+        await edit_event_message(event, "Запись не найдена.")
+        return
+    if not await _require_vk_booking_tutor(event, booking):
+        return
     user_id = booking["user_id"]
-    if not booking or booking["status"] != "confirmed":
+    if booking["status"] != "confirmed":
         await edit_event_message(event, "Невозможно отменить.")
         return
     dt = datetime.strptime(booking["date"] + " " + booking["time_slot"].split("-")[0], "%d.%m.%Y %H:%M")
-    if (dt - datetime.now()) <= timedelta(hours=24):
+    if (dt - now_msk_naive()) <= timedelta(hours=24):
         await edit_event_message(event, "Отмена менее чем за 24 часа невозможна.")
         return
     await update_booking(bid, status="cancelled")
@@ -2380,11 +2456,16 @@ async def tutor_reschedule_start(event: MessageEvent):
     bid = int(event.payload["cmd"].split("_")[2])
     bookings = await get_all_bookings()
     booking = bookings.get(bid)
-    if not booking or booking["status"] != "confirmed":
+    if not booking:
+        await edit_event_message(event, "Запись не найдена.")
+        return
+    if not await _require_vk_booking_tutor(event, booking):
+        return
+    if booking["status"] != "confirmed":
         await edit_event_message(event, "Невозможно перенести.")
         return
     dt = datetime.strptime(booking["date"] + " " + booking["time_slot"].split("-")[0], "%d.%m.%Y %H:%M")
-    if (dt - datetime.now()) <= timedelta(hours=24):
+    if (dt - now_msk_naive()) <= timedelta(hours=24):
         await edit_event_message(event, "Перенос менее чем за 24 часа невозможен.")
         return
     await state_dispenser.set(event.user_id, TutorRescheduleStates.waiting_date)
@@ -2503,9 +2584,12 @@ async def confirm_tutor_reschedule(event: MessageEvent):
     subject = data["subject"]
     student_id = data["student_id"]
     student_username = data["student_username"]
-    await update_booking(old_bid, status="cancelled")
-    new_id = await add_booking(tid, student_id, student_username, subject, new_date, new_time, user_platform='vk')
-    await update_booking(new_id, status="confirmed", reminded=0)
+    moved = await move_booking_in_place(old_bid, new_date, new_time)
+    if not moved:
+        await edit_event_message(event, "⚠️ Новый слот уже занят. Старая запись сохранена.")
+        await state_dispenser.delete(event.user_id)
+        return
+    new_id = old_bid
 
     student_msg = (
         f"🔄 Преподаватель перенёс занятие.\n"
@@ -2528,6 +2612,9 @@ async def confirm_tutor_reschedule(event: MessageEvent):
 
 async def schedule_main(event: MessageEvent):
     tid = int(event.payload["cmd"].split("_")[-1])
+    if await get_tutor_by_vk_id(event.user_id) != tid:
+        await answer_event(event, "Доступ запрещён.", snackbar=True)
+        return
     await state_dispenser.update(event.user_id, tid=tid)
     sched = await get_schedule(tid)
     text = "Ваше расписание:\n"
@@ -2808,6 +2895,9 @@ async def confirm_del_slot(event: MessageEvent):
 
 async def tutor_stats_menu(event: MessageEvent):
     tid = int(event.payload["cmd"].split("_")[2])
+    if await get_tutor_by_vk_id(event.user_id) != tid:
+        await answer_event(event, "Доступ запрещён.", snackbar=True)
+        return
     fin = await get_tutor_financials(tid)
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
@@ -2820,7 +2910,7 @@ async def tutor_stats_menu(event: MessageEvent):
         f"• Доход после комиссии: {fin['net_income']:.2f} руб.\n\n"
         "Выберите месяц для детализации:"
     )
-    now = datetime.now()
+    now = now_msk_naive()
     months = sorted(set((d.year, d.month) for d in [now - timedelta(days=30 * i) for i in range(12)]), reverse=True)
     kb = Keyboard(inline=True)
     row = []
@@ -2843,6 +2933,9 @@ async def tutor_stats_menu(event: MessageEvent):
 async def tutor_stats_month(event: MessageEvent):
     parts = event.payload["cmd"].split("_")
     tid = int(parts[3])
+    if await get_tutor_by_vk_id(event.user_id) != tid:
+        await answer_event(event, "Доступ запрещён.", snackbar=True)
+        return
     year = int(parts[4])
     month = int(parts[5])
     fin = await get_tutor_financials(tid, year, month)
@@ -2897,7 +2990,8 @@ async def process_payment_email(message: Message):
     if not booking_id:
         return
     email = message.text.strip()
-    if "@" not in email or "." not in email:
+    if not valid_email(email):
+        await message.answer("Введите корректный email, например name@example.com")
         return
 
     await set_user_email(message.from_id, email)
@@ -2929,6 +3023,16 @@ async def universal_callback_handler(event: MessageEvent):
     )
 
     user_id = event.user_id
+
+    admin_prefixes = (
+        "admin_", "edit_tutor_", "edit_", "manage_subjects", "back_to_edit_tutor",
+        "add_subject", "editsubj_", "confirm_delete_subject", "back_to_subjects_list",
+        "toggle_commission_mode", "del_tutor_", "confirm_delete", "add_another_subject",
+        "finish_adding_subjects"
+    )
+    if cmd.startswith(admin_prefixes) and user_id != ADMIN_VK_ID:
+        await answer_event(event, "Доступ запрещён.", snackbar=True)
+        return
 
     # --- Навигация и общие действия ---
     if cmd == "back_to_menu":
@@ -3022,7 +3126,7 @@ async def universal_callback_handler(event: MessageEvent):
     elif cmd.startswith("reply_"):
         await process_reply_button(event)
     # --- Связь преподавателя с учеником ---
-    elif cmd.startswith("tutorcontactstudent_"):
+    elif cmd.startswith("tutor_contact_student_"):
         await tutor_contact_student_chosen(event)
     elif cmd == "cancel_tutor_msg_to_student":
         await cancel_tutor_msg_to_student(event)
@@ -3147,23 +3251,26 @@ async def periodic_cleanup():
 async def check_pending_payments():
     bookings = await get_all_bookings()
     for bid, b in bookings.items():
-        if b["status"] != "confirmed" or not b.get("tinkoff_payment_id"):
+        if b.get("status") != "confirmed" or not b.get("tinkoff_payment_id"):
             continue
         payment_state = await check_payment(b["tinkoff_payment_id"])
-
-        if payment_state.get("Success") and payment_state.get("Status") in ("CONFIRMED", "AUTHORIZED"):
-            if not b.get("payment_notified"):
-                await update_booking(bid, status="paid", payment_notified=True)
-                await send_to_user(b["user_id"], b["user_platform"], "✅ Оплата получена! Занятие подтверждено.")
-                await send_to_tutor(b["tutor_id"], f"✅ Оплата за занятие {b['date']} {b['time_slot']} получена.")
-            await add_lesson_to_balance(b["user_id"], b["tutor_id"], b["subject"])
-        elif payment_state.get("Status") in ("REJECTED", "CANCELED"):
-            await update_booking(bid, status="cancelled")
-            await send_to_user(b["user_id"], b["user_platform"], "❌ Платёж не прошёл. Запись отменена.")
+        status = payment_state.get("Status")
+        if payment_state.get("Success") and status in ("CONFIRMED", "AUTHORIZED"):
+            changed, booking = await mark_booking_paid_once(bid)
+            if changed and booking:
+                await send_to_user(booking["user_id"], booking.get("user_platform", "vk"),
+                                   "✅ Оплата получена! Занятие подтверждено.")
+                await send_to_tutor(booking["tutor_id"],
+                                    f"✅ Оплата за занятие {booking['date']} {booking['time_slot']} получена.")
+        elif status in ("REJECTED", "CANCELED"):
+            changed, booking = await mark_booking_payment_failed(bid)
+            if changed and booking:
+                await send_to_user(booking["user_id"], booking.get("user_platform", "vk"),
+                                   "❌ Платёж не прошёл. Запись отменена.")
 
 
 async def send_reminders():
-    now = datetime.now()
+    now = now_msk_naive()
     bookings = await get_all_bookings()
     for bid, b in bookings.items():
         if b.get("status") != "paid" or b.get("reminded"):
@@ -3175,7 +3282,7 @@ async def send_reminders():
         except ValueError:
             continue
         diff = dt - now
-        if timedelta(minutes=59) < diff <= timedelta(hours=1):
+        if timedelta(0) < diff <= timedelta(hours=1):
             student_id = b["user_id"]
             tutor_id = b["tutor_id"]
             tutors = await get_all_tutors()
@@ -3206,7 +3313,7 @@ async def reminder_loop():
 async def send_pending_reminders():
     bookings = await get_all_bookings()
     pending_by_tutor = {}
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = now_msk_naive().replace(hour=0, minute=0, second=0, microsecond=0)
     for bid, b in bookings.items():
         if b["status"] != "pending":
             continue
@@ -3255,7 +3362,11 @@ async def main():
     asyncio.create_task(periodic_cleanup())
     asyncio.create_task(reminder_loop())
     asyncio.create_task(pending_reminder_loop())
-    await bot.run_polling()
+    try:
+        await bot.run_polling()
+    finally:
+        await close_messaging()
+        await close_db()
 
 
 if __name__ == "__main__":
