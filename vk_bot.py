@@ -519,8 +519,17 @@ async def show_trial_dates(event: MessageEvent, tid: int):
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
         buttons.append(Callback(label, payload={"cmd": "trial_date", "date": d}))
     kb = Keyboard(inline=True)
+    row = []
     for btn in buttons:
-        kb.add(btn)
+        row.append(btn)
+        if len(row) == 3:
+            for b in row:
+                kb.add(b)
+            kb.row()
+            row = []
+    if row:
+        for b in row:
+            kb.add(b)
         kb.row()
     kb.add(Callback("🔙 К анкете", payload={"cmd": "tutor_info", "tutor_id": tid}))
     await edit_event_message(event, "Выберите дату пробного занятия:", keyboard=kb.get_json())
@@ -540,8 +549,17 @@ async def trial_date_chosen(event: MessageEvent):
         return
 
     kb = Keyboard(inline=True)
+    row = []
     for s in slots:
-        kb.add(Callback(s, payload={"cmd": "trial_slot", "slot": s}))
+        row.append(Callback(s, payload={"cmd": f"trial_slot_{s}"}))
+        if len(row) == 3:
+            for btn in row:
+                kb.add(btn)
+            kb.row()
+            row = []
+    if row:
+        for btn in row:
+            kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_trial_dates"}))
     await edit_event_message(event, "Выберите время:", keyboard=kb.get_json())
@@ -724,14 +742,13 @@ async def subject_chosen(event: MessageEvent):
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
         row.append(Callback(label, payload={"cmd": f"date_{d}"}))
         if len(row) == 3:
-            kb.add(row[0], row[1], row[2])  # максимум 3 кнопки
+            for btn in row:
+                kb.add(btn)
             kb.row()
             row = []
     if row:
-        if len(row) == 2:
-            kb.add(row[0], row[1])
-        else:
-            kb.add(row[0])
+        for btn in row:
+            kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 Назад к репетиторам", payload={"cmd": "back_to_tutors_booking"}))
     await edit_event_message(event, "Выберите дату:", keyboard=kb.get_json())
@@ -755,14 +772,13 @@ async def choose_date(event: MessageEvent):
     for s in slots:
         row.append(Callback(s, payload={"cmd": f"slot_{s}"}))
         if len(row) == 3:
-            kb.add(row[0], row[1], row[2])  # максимум 3 кнопки
+            for btn in row:
+                kb.add(btn)
             kb.row()
             row = []
     if row:
-        if len(row) == 2:
-            kb.add(row[0], row[1])
-        else:
-            kb.add(row[0])
+        for btn in row:
+            kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_date"}))
 
@@ -779,12 +795,14 @@ async def back_to_date(event: MessageEvent):
         dt = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
         row.append(Callback(label, payload={"cmd": f"date_{d}"}))
-        if len(row) == 5:
-            kb.add(*row)
+        if len(row) == 3:
+            for btn in row:
+                kb.add(btn)
             kb.row()
             row = []
     if row:
-        kb.add(*row)
+        for btn in row:
+            kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 Назад к репетиторам", payload={"cmd": "back_to_tutors_booking"}))
     await edit_event_message(event, "Выберите дату:", keyboard=kb.get_json())
@@ -1049,14 +1067,13 @@ async def student_reschedule_start(event: MessageEvent):
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt_date.weekday()]]})"
         row.append(Callback(label, payload={"cmd": f"reschedule_date_{d}"}))
         if len(row) == 3:
-            kb.add(row[0], row[1], row[2])
+            for btn in row:
+                kb.add(btn)
             kb.row()
             row = []
     if row:
-        if len(row) == 2:
-            kb.add(row[0], row[1])
-        else:
-            kb.add(row[0])
+        for btn in row:
+            kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите новую дату:", keyboard=kb.get_json())
@@ -1077,16 +1094,15 @@ async def student_reschedule_date(event: MessageEvent):
     kb = Keyboard(inline=True)
     row = []
     for s in slots:
-        row.append(Callback(s, payload={"cmd": f"slot_{s}"}))
+        row.append(Callback(s, payload={"cmd": f"reschedule_slot_{s}"}))
         if len(row) == 3:
-            kb.add(row[0], row[1], row[2])  # максимум 3 кнопки
+            for btn in row:
+                kb.add(btn)
             kb.row()
             row = []
     if row:
-        if len(row) == 2:
-            kb.add(row[0], row[1])
-        else:
-            kb.add(row[0])
+        for btn in row:
+            kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_reschedule_date"}))
     await edit_event_message(event, "Выберите новое время:", keyboard=kb.get_json())
@@ -1102,16 +1118,15 @@ async def back_to_reschedule_date(event: MessageEvent):
     for d in dates:
         dt = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
-        row.append(Callback(label, payload={"cmd": f"date_{d}"}))
+        row.append(Callback(label, payload={"cmd": f"reschedule_date_{d}"}))
         if len(row) == 3:
-            kb.add(row[0], row[1], row[2])  # максимум 3 кнопки
+            for btn in row:
+                kb.add(btn)
             kb.row()
             row = []
     if row:
-        if len(row) == 2:
-            kb.add(row[0], row[1])
-        else:
-            kb.add(row[0])
+        for btn in row:
+            kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите новую дату:", keyboard=kb.get_json())
@@ -2392,16 +2407,15 @@ async def tutor_reschedule_start(event: MessageEvent):
     for d in dates:
         dt_date = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt_date.weekday()]]})"
-        row.append(Callback(label, payload={"cmd": f"t_reschedule_date_{d}{d}"}))
+        row.append(Callback(label, payload={"cmd": f"t_reschedule_date_{d}"}))
         if len(row) == 3:
-            kb.add(row[0], row[1], row[2])
+            for btn in row:
+                kb.add(btn)
             kb.row()
             row = []
     if row:
-        if len(row) == 2:
-            kb.add(row[0], row[1])
-        else:
-            kb.add(row[0])
+        for btn in row:
+            kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите новую дату:", keyboard=kb.get_json())
@@ -2422,16 +2436,15 @@ async def tutor_reschedule_date(event: MessageEvent):
     kb = Keyboard(inline=True)
     row = []
     for s in slots:
-        row.append(Callback(s, payload={"cmd": f"slot_{s}"}))
+        row.append(Callback(s, payload={"cmd": f"t_reschedule_slot_{s}"}))
         if len(row) == 3:
-            kb.add(row[0], row[1], row[2])  # максимум 3 кнопки
+            for btn in row:
+                kb.add(btn)
             kb.row()
             row = []
     if row:
-        if len(row) == 2:
-            kb.add(row[0], row[1])
-        else:
-            kb.add(row[0])
+        for btn in row:
+            kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_tutor_reschedule_date"}))
     await edit_event_message(event, "Выберите новое время:", keyboard=kb.get_json())
@@ -2447,16 +2460,15 @@ async def back_tutor_reschedule_date(event: MessageEvent):
     for d in dates:
         dt = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
-        row.append(Callback(label, payload={"cmd": f"date_{d}"}))
+        row.append(Callback(label, payload={"cmd": f"t_reschedule_date_{d}"}))
         if len(row) == 3:
-            kb.add(row[0], row[1], row[2])  # максимум 3 кнопки
+            for btn in row:
+                kb.add(btn)
             kb.row()
             row = []
     if row:
-        if len(row) == 2:
-            kb.add(row[0], row[1])
-        else:
-            kb.add(row[0])
+        for btn in row:
+            kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
     await edit_event_message(event, "Выберите новую дату:", keyboard=kb.get_json())
