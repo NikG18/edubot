@@ -37,8 +37,7 @@ def generate_token(params: dict) -> str:
 
 
 def _ssl_context():
-    ctx = ssl.create_default_context(cafile=certifi.where())
-    return ctx
+    return ssl.create_default_context()
 
 
 async def api_call(endpoint: str, params: dict) -> dict:
