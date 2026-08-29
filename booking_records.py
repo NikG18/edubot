@@ -6,6 +6,8 @@ import os
 import sys
 from zoneinfo import ZoneInfo
 
+from aiogram.exceptions import TelegramBadRequest
+
 
 class _AwaitableBool:
     """Bool, который также можно await-ить для legacy/compatibility кода."""
@@ -68,7 +70,13 @@ if _bot_legacy is not None:
                     callback_data="back_to_my_records",
                 )]
             ])
-        return await _original_edit_text(self, text, *args, **kwargs)
+        try:
+            return await _original_edit_text(self, text, *args, **kwargs)
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                logging.debug("Пропущено повторное редактирование Telegram-сообщения без изменений")
+                return None
+            raise
 
     _bot_legacy.Message.edit_text = _edit_text_with_records_back
 
