@@ -60,6 +60,7 @@ def render_event(event: dict) -> str:
         "payment_failed": "❌ Платёж не прошёл",
         "refund_pending": "↩️ Требуется возврат средств",
         "refunded": "↩️ Возврат средств выполнен",
+        "late_payment_after_cancel": "⚠️ Оплата поступила после отмены — требуется возврат",
         "legacy_import": "📦 Импортировано из старой системы",
     }
     if event_type == "cancelled":
@@ -139,7 +140,7 @@ async def render_booking_record(booking_id: int):
         f"<b>История:</b>\n{history}"
     )
     if len(text) > MAX_RECORD_LENGTH:
-        safe_history_budget = max(300, MAX_RECORD_LENGTH - (len(text) - len(history)) - 50)
+        safe_history_budget = max(300, MAX_RECORD_LENGTH - (len(text) - len(history)) - 80)
         history = history[-safe_history_budget:]
         text = (
             f"<b>{header}</b>\n\n"
@@ -147,13 +148,13 @@ async def render_booking_record(booking_id: int):
             f"👤 Ученик: {_short(booking['username'], 160)}\n"
             f"👨‍🏫 Преподаватель: {_short(tutor_name, 160)}\n"
             f"📚 Предмет: {_short(booking['subject'], 160)}\n"
-            f"📅 { _short(booking['date'], 40) } · 🕒 {_short(booking['time_slot'], 80)} МСК\n"
+            f"📅 {_short(booking['date'], 40)} · 🕒 {_short(booking['time_slot'], 80)} МСК\n"
             f"🌐 {_short(platform, 80)} · 💳 {amount_text}\n"
             f"↩️ {_short(refund_text, 100)}\n"
             f"🕘 {format_dt(booking.get('updated_at'))}\n\n"
             f"<b>Последние события:</b>\n…\n{history}"
         )
-    return text[:4090]
+    return text
 
 
 async def sync_booking_record(booking_id: int) -> bool:
