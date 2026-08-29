@@ -25,7 +25,7 @@ DOCS = {
     "privacy_policy": {
         "title": "Политика обработки ПД",
         "url": f"{DOC_BASE_URL}/03_privacy_policy.md",
-        "hash": "b66def1c2591503da7a35de89771132353b101d73ba6aecddcf15f48d1b42aeb",
+        "hash": "aab1969c082f8222879b406fa6e7d0a92aa4ea96cff9596d021e8a74047deff6",
     },
     "tutor_pd_consent": {
         "title": "Согласие репетитора на обработку ПД",
