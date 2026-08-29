@@ -113,7 +113,6 @@ def _compat_open_link(label, link, *args, **kwargs):
 
 legacy.OpenLink = _compat_open_link
 
-# VK inline keyboard: оставляем максимум 9 дат + навигацию.
 _original_get_available_dates = legacy.get_available_dates
 
 
@@ -422,15 +421,14 @@ async def _compat_confirm_student_reschedule(event):
         booking.get("user_platform", "vk"),
         f"✅ Занятие перенесено на {data['new_date']} {data['new_time']}.{payment_note}",
     )
-    await legacy.edit_event_message(
-        event,
-        f"✅ Перенос выполнен.{payment_note}",
-    )
+    await legacy.edit_event_message(event, f"✅ Перенос выполнен.{payment_note}")
     await legacy.state_dispenser.delete(event.user_id)
 
 
-# Инъекция helpers в globals legacy: зарегистрированный handler my_records
-# продолжает использовать тот же объект функции, но с новой логикой.
+# Функция my_records уже зарегистрирована декоратором при импорте legacy.
+# Меняем её code object, поэтому даём legacy-модулю ссылку на самого себя,
+# которую использует compatibility-реализация.
+legacy.legacy = legacy
 legacy._compat_render_my_records = _compat_render_my_records
 legacy._student_can_change = _student_can_change
 legacy.my_records.__code__ = _compat_my_records.__code__
