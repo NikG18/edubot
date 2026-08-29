@@ -108,6 +108,12 @@ async def _legal_zapis(message, state):
     return await _original_zapis(message, state)
 
 
+# При подмене __code__ функция продолжает работать с globals модуля Bot_test_legacy.
+# Поэтому все новые имена, к которым обращается подменённый handler, явно
+# публикуем там до замены кода.
+legacy.student_privacy_notice_completed = student_privacy_notice_completed
+legacy._show_privacy_notice = _show_privacy_notice
+legacy._original_zapis = _original_zapis
 legacy.zapis.__code__ = _legal_zapis.__code__
 
 
@@ -125,8 +131,9 @@ async def legal_continue_regular_booking(call, state):
 _original_start_trials_booking = legacy.start_trials_booking
 
 
-async def _start_trial_after_privacy(call, state):
-    tid = int(call.data.split("_")[1])
+async def _start_trial_after_privacy(call, state, tid=None):
+    if tid is None:
+        tid = int(call.data.split("_")[1])
     tutors = await legacy.get_all_tutors()
     tutor = tutors.get(tid)
     if not tutor:
@@ -203,8 +210,10 @@ async def _legal_start_trials_booking(call, state):
     await _start_trial_after_privacy(call, state)
 
 
-legacy.start_trials_booking.__code__ = _legal_start_trials_booking.__code__
+legacy.record_student_privacy_presented = record_student_privacy_presented
+legacy.DOCS = DOCS
 legacy._start_trial_after_privacy = _start_trial_after_privacy
+legacy.start_trials_booking.__code__ = _legal_start_trials_booking.__code__
 
 
 @legacy.dp.callback_query(legacy.F.data == "legal_continue_trial_booking")
@@ -216,8 +225,7 @@ async def legal_continue_trial_booking(call, state):
         await call.message.edit_text("Не удалось продолжить запись. Откройте карточку репетитора заново.")
         return
     await record_student_privacy_continued(call.from_user.id, "telegram", "trial_booking")
-    call.data = f"trials_{tid}"
-    await legacy._start_trial_after_privacy(call, state)
+    await legacy._start_trial_after_privacy(call, state, tid)
 
 
 _original_set_pending_email_request = legacy.set_pending_email_request
