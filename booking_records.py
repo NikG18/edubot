@@ -33,8 +33,6 @@ class _LegacyProxy:
     def __getattr__(self, name):
         if name == "actor_is_booking_owner":
             def _owner(arg1, arg2):
-                # Поддерживаем оба порядка аргументов:
-                # (booking, actor_id) и ошибочный compatibility-вызов (actor_id, booking).
                 if isinstance(arg1, dict):
                     booking, actor_id = arg1, arg2
                 else:
@@ -44,18 +42,24 @@ class _LegacyProxy:
         return getattr(self._module, name)
 
 
-# Bot_test.py подменяет code object уже зарегистрированных aiogram handlers.
-# Такие функции продолжают использовать globals модуля Bot_test_legacy.
-# Если этот модуль уже загружен (Telegram-процесс), явно прокидываем туда
-# compatibility-ссылки. В VK-процессе Bot_test_legacy не импортирован, поэтому
-# этот блок ничего не делает и не создаёт лишних зависимостей.
+async def _compat_back_to_my_records(call, state):
+    """Возврат к тому же новому списку записей, что и кнопка «Мои записи»."""
+    await safe_answer(call)
+    await state.clear()
+    await _tg_render_records(call.message)
+
+
 _bot_legacy = sys.modules.get("Bot_test_legacy")
 if _bot_legacy is not None:
     _bot_legacy.__dict__["legacy"] = _LegacyProxy(_bot_legacy)
     _bot_legacy.__dict__["_db"] = importlib.import_module("database")
 
-    # После успешного переноса старый compatibility-handler редактирует сообщение
-    # без reply_markup. Добавляем безопасную навигацию назад к списку записей.
+    # Старый back_to_my_records запрещал действия для pending и не показывал
+    # перенос там, где новая compatibility-логика его уже разрешает.
+    # Подменяем только code object: зарегистрированный aiogram handler остаётся тем же.
+    if hasattr(_bot_legacy, "back_to_my_records"):
+        _bot_legacy.back_to_my_records.__code__ = _compat_back_to_my_records.__code__
+
     _original_edit_text = _bot_legacy.Message.edit_text
 
     async def _edit_text_with_records_back(self, text, *args, **kwargs):
