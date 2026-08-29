@@ -6,6 +6,42 @@ import os
 import sys
 from zoneinfo import ZoneInfo
 
+
+class _AwaitableBool:
+    """Bool, который также можно await-ить для legacy/compatibility кода."""
+
+    def __init__(self, value):
+        self.value = bool(value)
+
+    def __bool__(self):
+        return self.value
+
+    def __await__(self):
+        async def _result():
+            return self.value
+        return _result().__await__()
+
+
+class _LegacyProxy:
+    """Прокси Bot_test_legacy с совместимой проверкой владельца записи."""
+
+    def __init__(self, module):
+        self._module = module
+
+    def __getattr__(self, name):
+        if name == "actor_is_booking_owner":
+            def _owner(arg1, arg2):
+                # Поддерживаем оба порядка аргументов:
+                # (booking, actor_id) и ошибочный compatibility-вызов (actor_id, booking).
+                if isinstance(arg1, dict):
+                    booking, actor_id = arg1, arg2
+                else:
+                    actor_id, booking = arg1, arg2
+                return _AwaitableBool(bool(booking and booking.get("user_id") == actor_id))
+            return _owner
+        return getattr(self._module, name)
+
+
 # Bot_test.py подменяет code object уже зарегистрированных aiogram handlers.
 # Такие функции продолжают использовать globals модуля Bot_test_legacy.
 # Если этот модуль уже загружен (Telegram-процесс), явно прокидываем туда
@@ -13,8 +49,28 @@ from zoneinfo import ZoneInfo
 # этот блок ничего не делает и не создаёт лишних зависимостей.
 _bot_legacy = sys.modules.get("Bot_test_legacy")
 if _bot_legacy is not None:
-    _bot_legacy.__dict__["legacy"] = _bot_legacy
+    _bot_legacy.__dict__["legacy"] = _LegacyProxy(_bot_legacy)
     _bot_legacy.__dict__["_db"] = importlib.import_module("database")
+
+    # После успешного переноса старый compatibility-handler редактирует сообщение
+    # без reply_markup. Добавляем безопасную навигацию назад к списку записей.
+    _original_edit_text = _bot_legacy.Message.edit_text
+
+    async def _edit_text_with_records_back(self, text, *args, **kwargs):
+        if (
+            isinstance(text, str)
+            and text.startswith("✅ Занятие перенесено.")
+            and kwargs.get("reply_markup") is None
+        ):
+            kwargs["reply_markup"] = _bot_legacy.InlineKeyboardMarkup(inline_keyboard=[
+                [_bot_legacy.InlineKeyboardButton(
+                    text="🔙 К моим записям",
+                    callback_data="back_to_my_records",
+                )]
+            ])
+        return await _original_edit_text(self, text, *args, **kwargs)
+
+    _bot_legacy.Message.edit_text = _edit_text_with_records_back
 
 from database import get_all_tutors, get_booking, get_booking_events, update_booking
 from messaging import edit_telegram_message, send_telegram_message_get_id
