@@ -165,7 +165,9 @@ async def _booking_document_was_presented(user_id: int, platform: str, doc_type:
         ))
 
 
-async def record_student_docs_presented(user_id: int, platform: str, booking_id: int | None = None):
+async def record_student_docs_presented(user_id: int, platform: str, booking_id: int | None = None) -> bool:
+    """Фиксирует показ документов и возвращает True, если для этой точки появился новый показ."""
+    newly_presented = False
     for doc_type in ("student_offer", "privacy_policy"):
         if booking_id is not None and await _booking_document_was_presented(
             user_id, platform, doc_type, booking_id
@@ -180,6 +182,8 @@ async def record_student_docs_presented(user_id: int, platform: str, booking_id:
             "presented",
             booking_id=booking_id,
         )
+        newly_presented = True
+    return newly_presented
 
 
 async def student_privacy_notice_completed(user_id: int, platform: str) -> bool:
