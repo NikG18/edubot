@@ -96,7 +96,11 @@ async def legal_documents_menu(message):
 
 
 # Обычная запись: до первого сбора данных показываем текущую Политику ПД.
-_original_zapis = legacy.zapis
+async def _regular_booking_after_privacy(message, state):
+    await message.answer("Переходим в раздел...", reply_markup=legacy.ReplyKeyboardRemove())
+    keyboard = await legacy.make_tutors_keyboard("tutor_booking", back_callback="back_to_menu")
+    await message.answer("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
+    await state.clear()
 
 
 async def _legal_zapis(message, state):
@@ -105,7 +109,7 @@ async def _legal_zapis(message, state):
         await message.answer("Переходим в раздел...", reply_markup=legacy.ReplyKeyboardRemove())
         await _show_privacy_notice(message, "regular_booking", "legal_continue_regular_booking")
         return
-    return await _original_zapis(message, state)
+    return await _regular_booking_after_privacy(message, state)
 
 
 # При подмене __code__ функция продолжает работать с globals модуля Bot_test_legacy.
@@ -113,7 +117,7 @@ async def _legal_zapis(message, state):
 # публикуем там до замены кода.
 legacy.student_privacy_notice_completed = student_privacy_notice_completed
 legacy._show_privacy_notice = _show_privacy_notice
-legacy._original_zapis = _original_zapis
+legacy._regular_booking_after_privacy = _regular_booking_after_privacy
 legacy.zapis.__code__ = _legal_zapis.__code__
 
 
@@ -128,9 +132,6 @@ async def legal_continue_regular_booking(call, state):
 
 # Пробное занятие запускается из карточки репетитора, поэтому ставим такой же gate
 # прямо перед началом trial-flow.
-_original_start_trials_booking = legacy.start_trials_booking
-
-
 async def _start_trial_after_privacy(call, state, tid=None):
     if tid is None:
         tid = int(call.data.split("_")[1])
@@ -226,6 +227,51 @@ async def legal_continue_trial_booking(call, state):
         return
     await record_student_privacy_continued(call.from_user.id, "telegram", "trial_booking")
     await legacy._start_trial_after_privacy(call, state, tid)
+
+
+# Покупка абонемента: тот же privacy-gate до выбора репетитора/предмета/пакета.
+async def _subscription_after_privacy(call, state):
+    keyboard = await legacy.make_tutors_keyboard("buy_tutor", back_callback="back_to_payment_menu")
+    await call.message.edit_text("Выберите репетитора для абонемента:", reply_markup=keyboard)
+    await state.set_state(legacy.BuySubscriptionStates.choosing_tutor)
+
+
+async def _legal_buy_subscription_start(call, state):
+    await legacy.safe_answer(call)
+    if not await student_privacy_notice_completed(call.from_user.id, "telegram"):
+        await state.clear()
+        await record_student_privacy_presented(call.from_user.id, "telegram", "subscription_purchase")
+        keyboard = legacy.InlineKeyboardMarkup(inline_keyboard=[
+            [legacy.InlineKeyboardButton(
+                text="📄 Политика обработки ПД",
+                url=DOCS["privacy_policy"]["url"],
+            )],
+            [legacy.InlineKeyboardButton(
+                text="▶️ Продолжить покупку",
+                callback_data="legal_continue_subscription_purchase",
+            )],
+            [legacy.InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_payment_menu")],
+        ])
+        await call.message.edit_text(
+            "До начала оформления абонемента ознакомьтесь с Политикой обработки персональных данных. "
+            "Для оформления покупки Сервис использует необходимые идентификаторы и сведения о выбранном абонементе.\n\n"
+            "Нажмите «Продолжить покупку», чтобы перейти к выбору репетитора.",
+            reply_markup=keyboard,
+        )
+        return
+    await _subscription_after_privacy(call, state)
+
+
+legacy._subscription_after_privacy = _subscription_after_privacy
+legacy.buy_subscription_start.__code__ = _legal_buy_subscription_start.__code__
+
+
+@legacy.dp.callback_query(legacy.F.data == "legal_continue_subscription_purchase")
+async def legal_continue_subscription_purchase(call, state):
+    await legacy.safe_answer(call)
+    await record_student_privacy_continued(call.from_user.id, "telegram", "subscription_purchase")
+    await state.clear()
+    await legacy._subscription_after_privacy(call, state)
 
 
 _original_set_pending_email_request = legacy.set_pending_email_request
