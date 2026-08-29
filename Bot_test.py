@@ -1,4 +1,5 @@
 import inspect
+from datetime import timedelta
 from types import SimpleNamespace
 
 import database as _db
@@ -64,13 +65,309 @@ async def _contextual_delete_booking(booking_id: int):
     return booking if changed else booking
 
 
+# ---------------------------------------------------------------------------
+# Ученик Telegram: pending/confirmed можно отменять и переносить
+# ---------------------------------------------------------------------------
+
+def _tg_student_can_change(booking) -> bool:
+    if not booking or booking.get("status") == "paid":
+        return False
+    start = legacy.parse_booking_time(booking)
+    now = legacy.now_msk_naive()
+    if start <= now:
+        return False
+    if booking.get("status") == "pending":
+        return True
+    if booking.get("status") == "confirmed":
+        return (start - now) > timedelta(hours=24)
+    return False
+
+
+async def _tg_render_records(message):
+    user_id = message.from_user.id
+    bookings = await _db.get_all_bookings()
+    rows = [
+        (bid, booking) for bid, booking in bookings.items()
+        if booking["user_id"] == user_id and booking["status"] in {"pending", "confirmed", "paid"}
+    ]
+    if not rows:
+        await message.answer(
+            "У вас пока нет активных записей.",
+            reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=[
+                [legacy.InlineKeyboardButton(text="📊 Статистика", callback_data="student_stats")],
+                [legacy.InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")],
+            ]),
+        )
+        return
+
+    tutors = await legacy.get_all_tutors()
+    text_lines = ["Ваши записи:\n"]
+    buttons = []
+    for bid, booking in rows:
+        tutor_name = tutors.get(booking["tutor_id"], {}).get("name", "Неизвестный")
+        can_change = _tg_student_can_change(booking)
+        status_text = {
+            "pending": "ожидает подтверждения",
+            "confirmed": "подтверждено, ожидает оплаты",
+            "paid": "оплачено",
+        }.get(booking["status"], booking["status"])
+        text_lines.append(
+            f"👨‍🏫 {tutor_name}\n"
+            f"📚 {booking['subject']}\n"
+            f"📅 {booking['date']} 🕒 {booking['time_slot']} ({status_text})\n"
+            + ("✅ Можно отменить/перенести" if can_change else "⚠️ Действия недоступны")
+        )
+        if can_change:
+            buttons.append([
+                legacy.InlineKeyboardButton(
+                    text=f"🔄 Перенести: {tutor_name} {booking['date']} {booking['time_slot']}"[:64],
+                    callback_data=f"reschedule_student_{bid}",
+                )
+            ])
+            buttons.append([
+                legacy.InlineKeyboardButton(
+                    text=f"❌ Отменить: {tutor_name} {booking['date']} {booking['time_slot']}"[:64],
+                    callback_data=f"cancel_student_{bid}",
+                )
+            ])
+    buttons.append([legacy.InlineKeyboardButton(text="📊 Статистика", callback_data="student_stats")])
+    buttons.append([legacy.InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
+    await message.answer(
+        "\n".join(text_lines),
+        reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+
+
+async def _tg_my_records(message, state):
+    await state.clear()
+    await message.answer("Переходим в раздел...", reply_markup=legacy.ReplyKeyboardRemove())
+    await legacy._tg_render_records(message)
+
+
+async def _tg_cancel_student_booking(call, bot):
+    await legacy.safe_answer(call)
+    bid = int(call.data.split("_")[2])
+    booking = await _db.get_booking(bid)
+    if not booking:
+        await call.message.edit_text("Запись не найдена.")
+        return
+    if not legacy.actor_is_booking_owner(call.from_user.id, booking):
+        await call.message.edit_text("⛔ Доступ запрещён.")
+        return
+    if booking["status"] == "paid":
+        await call.message.edit_text("Для отмены оплаченного занятия обратитесь в поддержку для возврата.")
+        return
+    if not legacy._tg_student_can_change(booking):
+        await call.message.edit_text("Эту запись уже нельзя отменить.")
+        return
+
+    changed, current = await _db.cancel_booking_record(
+        bid,
+        actor_type="student",
+        actor_id=call.from_user.id,
+        reason="Отменено учеником",
+        expected_statuses={"pending", "confirmed"},
+    )
+    if not changed:
+        await call.message.edit_text("Статус записи уже изменился.")
+        return
+    await legacy.send_to_tutor(
+        current["tutor_id"],
+        f"❌ Ученик {current['username']} отменил занятие:\n"
+        f"📚 {current['subject']}\n📅 {current['date']} 🕒 {current['time_slot']}",
+    )
+    await call.message.edit_text(
+        "✅ Запись отменена.",
+        reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=[
+            [legacy.InlineKeyboardButton(text="🔙 К моим записям", callback_data="back_to_my_records")]
+        ]),
+    )
+
+
+async def _tg_student_reschedule_start(call, state):
+    await legacy.safe_answer(call)
+    bid = int(call.data.split("_")[2])
+    booking = await _db.get_booking(bid)
+    if not booking:
+        await call.message.edit_text("Запись не найдена.")
+        return
+    if not legacy.actor_is_booking_owner(call.from_user.id, booking):
+        await call.message.edit_text("⛔ Доступ запрещён.")
+        return
+    if booking["status"] == "paid":
+        await call.message.edit_text("Оплаченное занятие переносится через поддержку.")
+        return
+    if not legacy._tg_student_can_change(booking):
+        await call.message.edit_text("Эту запись уже нельзя перенести.")
+        return
+
+    await state.update_data(
+        old_booking_id=bid,
+        tutor_id=booking["tutor_id"],
+        subject=booking["subject"],
+        old_date=booking["date"],
+        old_time=booking["time_slot"],
+        old_status=booking["status"],
+        student_id=booking["user_id"],
+        student_username=booking["username"],
+        user_platform=booking.get("user_platform", "telegram"),
+    )
+    dates = await legacy.get_available_dates(booking["tutor_id"])
+    if not dates:
+        await call.message.edit_text("У преподавателя нет свободных дат для переноса.")
+        return
+    buttons = []
+    row = []
+    for date_str in dates:
+        dt = legacy.datetime.strptime(date_str, "%d.%m.%Y")
+        label = f"{date_str} ({legacy.WEEKDAY_NAMES[legacy.WEEKDAYS[dt.weekday()]]})"
+        row.append(legacy.InlineKeyboardButton(text=label, callback_data=f"reschedule_date_{date_str}"))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([legacy.InlineKeyboardButton(text="🔙 Отмена", callback_data="back_to_menu")])
+    await call.message.edit_text(
+        "Выберите новую дату:",
+        reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await state.set_state(legacy.StudentRescheduleStates.waiting_date)
+
+
+async def _tg_reschedule_unpaid_in_place(booking_id: int, new_date: str, new_time: str, actor_id: int) -> bool:
+    await _db._ensure_pool()
+    async with _db._legacy.pool.acquire() as conn:
+        try:
+            async with conn.transaction():
+                old = await conn.fetchrow("SELECT * FROM bookings WHERE id=$1 FOR UPDATE", booking_id)
+                if not old or old["status"] not in {"pending", "confirmed"}:
+                    return False
+                if old["date"] == new_date and old["time_slot"] == new_time:
+                    return True
+                await conn.execute(
+                    "UPDATE bookings SET date=$1,time_slot=$2,reminded=0,updated_at=NOW() WHERE id=$3",
+                    new_date, new_time, booking_id,
+                )
+                await _db._add_booking_event(
+                    conn, booking_id, "rescheduled", old["status"], old["status"],
+                    "student", actor_id,
+                    {
+                        "old_date": old["date"],
+                        "old_time": old["time_slot"],
+                        "new_date": new_date,
+                        "new_time": new_time,
+                        "payment_link_kept": bool(old["tinkoff_payment_id"]),
+                    },
+                )
+        except _db.asyncpg.UniqueViolationError:
+            return False
+    await _db._sync_booking_record_safely(booking_id)
+    return True
+
+
+async def _tg_confirm_student_reschedule(call, state, bot):
+    await legacy.safe_answer(call)
+    data = await state.get_data()
+    bid = data["old_booking_id"]
+    booking = await _db.get_booking(bid)
+    if not booking or booking["user_id"] != call.from_user.id:
+        await call.message.edit_text("Запись не найдена.")
+        await state.clear()
+        return
+    moved = await legacy._tg_reschedule_unpaid_in_place(
+        bid, data["new_date"], data["new_time"], call.from_user.id
+    )
+    if not moved:
+        await call.message.edit_text("⚠️ Новый слот уже занят. Старая запись сохранена.")
+        await state.clear()
+        return
+
+    payment_note = ""
+    if booking.get("tinkoff_payment_id"):
+        payment_note = "\n💳 Ранее выданная ссылка на оплату остаётся действительной для этой записи."
+    await legacy.send_to_tutor(
+        booking["tutor_id"],
+        f"🔄 Ученик {booking['username']} перенёс занятие.\n"
+        f"📚 {booking['subject']}\n"
+        f"Было: {data['old_date']} {data['old_time']}\n"
+        f"Стало: {data['new_date']} {data['new_time']}",
+    )
+    await call.message.edit_text(f"✅ Занятие перенесено.{payment_note}")
+    await state.clear()
+
+
+# В aiogram обработчики уже зарегистрированы в legacy.dp, поэтому меняем код
+# зарегистрированных функций, а вспомогательные функции кладём в globals legacy.
+legacy._tg_student_can_change = _tg_student_can_change
+legacy._tg_render_records = _tg_render_records
+legacy._tg_reschedule_unpaid_in_place = _tg_reschedule_unpaid_in_place
+legacy.my_records.__code__ = _tg_my_records.__code__
+legacy.cancel_student_booking.__code__ = _tg_cancel_student_booking.__code__
+legacy.student_reschedule_start.__code__ = _tg_student_reschedule_start.__code__
+legacy.confirm_student_reschedule.__code__ = _tg_confirm_student_reschedule.__code__
+
+
+# ---------------------------------------------------------------------------
+# Автоотмена подтверждённых, но неоплаченных занятий за 72 часа
+# ---------------------------------------------------------------------------
+
+_original_cleanup_old_bookings = _db.cleanup_old_bookings
+
+
+async def _cleanup_with_unpaid_autocancel():
+    result = await _original_cleanup_old_bookings()
+    now = legacy.now_msk_naive()
+    bookings = await _db.get_all_bookings()
+    for bid, booking in bookings.items():
+        if booking.get("status") != "confirmed":
+            continue
+        try:
+            start = legacy.parse_booking_time(booking)
+        except Exception:
+            legacy.logging.warning("Не удалось разобрать время booking %s для автоотмены", bid)
+            continue
+        remaining = start - now
+        if remaining.total_seconds() <= 0 or remaining > timedelta(days=3):
+            continue
+        changed, cancelled = await _db.cancel_booking_record(
+            bid,
+            actor_type="system",
+            reason="Не оплачено за 72 часа до занятия",
+            expected_statuses={"confirmed"},
+        )
+        if not changed or not cancelled:
+            continue
+        text = (
+            f"❌ Занятие #{bid} автоматически отменено, потому что оплата не поступила "
+            "за 72 часа до начала.\n"
+            f"📚 {cancelled['subject']}\n"
+            f"📅 {cancelled['date']} 🕒 {cancelled['time_slot']}"
+        )
+        try:
+            await legacy.send_to_user(
+                cancelled["user_id"], cancelled.get("user_platform", "telegram"), text
+            )
+        except Exception:
+            legacy.logging.exception("Не удалось уведомить ученика об автоотмене booking %s", bid)
+        try:
+            await legacy.send_to_tutor(
+                cancelled["tutor_id"],
+                f"❌ Занятие #{bid} с {cancelled['username']} автоматически отменено: "
+                "оплата не поступила за 72 часа до начала.",
+            )
+        except Exception:
+            legacy.logging.exception("Не удалось уведомить преподавателя об автоотмене booking %s", bid)
+    return result
+
+
 legacy.update_booking = _contextual_update_booking
 legacy.delete_booking = _contextual_delete_booking
 legacy.mark_booking_paid_once = _db.mark_booking_paid_once
 legacy.mark_booking_payment_failed = _db.mark_booking_payment_failed
 legacy.reschedule_booking = _db.reschedule_booking
 legacy.move_booking_in_place = _db.move_booking_in_place
-legacy.cleanup_old_bookings = _db.cleanup_old_bookings
+legacy.cleanup_old_bookings = _cleanup_with_unpaid_autocancel
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +395,6 @@ def _booking_id_from_stack():
 
 async def _safe_delete_message(self, chat_id, message_id, *args, **kwargs):
     if _records_chat(chat_id):
-        # Журнал занятий не удаляем никогда.
         return True
     return await _original_delete_message(self, chat_id, message_id, *args, **kwargs)
 
@@ -110,14 +406,8 @@ async def _safe_send_message(self, chat_id, text, *args, **kwargs):
             await sync_booking_record(booking_id)
             booking = await _db.get_booking(booking_id)
             if booking and booking.get("channel_msg_id"):
-                # Старый код после send_message читает только message_id.
                 return SimpleNamespace(message_id=booking["channel_msg_id"])
-        # Не создаём дубль, если контекст брони определить не удалось.
-        # Возвращаем объект с None: update_booking проигнорирует смысловую синхронизацию
-        # channel_msg_id, а в журнале остаётся существующая карточка.
-        legacy.logging.warning(
-            "Подавлена попытка создать неидентифицированный дубль в records_channel"
-        )
+        legacy.logging.warning("Подавлена попытка создать неидентифицированный дубль в records_channel")
         return SimpleNamespace(message_id=None)
     return await _original_send_message(self, chat_id, text, *args, **kwargs)
 
