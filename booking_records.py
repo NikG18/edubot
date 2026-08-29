@@ -1,4 +1,5 @@
 import html
+import json
 import logging
 import os
 from zoneinfo import ZoneInfo
@@ -47,10 +48,24 @@ def _short(value, limit=MAX_EVENT_REASON_LENGTH) -> str:
     return html.escape(text)
 
 
+def _event_details(event: dict) -> dict:
+    details = event.get("details")
+    if isinstance(details, dict):
+        return details
+    if isinstance(details, str):
+        try:
+            parsed = json.loads(details)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            logging.warning("Некорректный JSON в booking_events.details: %r", details[:200])
+            return {}
+    return {}
+
+
 def render_event(event: dict) -> str:
     event_type = event.get("event_type") or "unknown"
     actor = event.get("actor_type") or "system"
-    details = event.get("details") or {}
+    details = _event_details(event)
     labels = {
         "created": "📝 Заявка создана",
         "confirmed": "✅ Подтверждено преподавателем",
