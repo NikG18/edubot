@@ -1,8 +1,20 @@
 import html
+import importlib
 import json
 import logging
 import os
+import sys
 from zoneinfo import ZoneInfo
+
+# Bot_test.py подменяет code object уже зарегистрированных aiogram handlers.
+# Такие функции продолжают использовать globals модуля Bot_test_legacy.
+# Если этот модуль уже загружен (Telegram-процесс), явно прокидываем туда
+# compatibility-ссылки. В VK-процессе Bot_test_legacy не импортирован, поэтому
+# этот блок ничего не делает и не создаёт лишних зависимостей.
+_bot_legacy = sys.modules.get("Bot_test_legacy")
+if _bot_legacy is not None:
+    _bot_legacy.__dict__["legacy"] = _bot_legacy
+    _bot_legacy.__dict__["_db"] = importlib.import_module("database")
 
 from database import get_all_tutors, get_booking, get_booking_events, update_booking
 from messaging import edit_telegram_message, send_telegram_message_get_id
