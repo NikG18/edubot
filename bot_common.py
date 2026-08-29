@@ -53,11 +53,50 @@ async def actor_is_tutor_for_booking(booking: Optional[dict], actor_platform_id:
 
 
 async def process_booking_payment_status(booking_id: int, status: str):
-    """Единая идемпотентная обработка статуса оплаты. Возвращает (changed, booking)."""
-    from database import mark_booking_paid_once, mark_booking_payment_failed
+    """Единая идемпотентная обработка статуса оплаты. Возвращает (changed, booking).
+
+    Если T-Bank сообщает об успешной оплате уже после отмены занятия, занятие не
+    восстанавливается. Вместо этого платёж фиксируется в истории, а бронь помечается
+    как требующая возврата.
+    """
+    from database import (
+        add_booking_event,
+        get_booking,
+        mark_booking_paid_once,
+        mark_booking_payment_failed,
+        update_booking,
+    )
 
     if status in ("CONFIRMED", "AUTHORIZED"):
+        booking = await get_booking(booking_id)
+        if not booking:
+            return False, None
+
+        if booking.get("status") == "cancelled":
+            if (booking.get("refund_status") or "none") != "required":
+                await add_booking_event(
+                    booking_id,
+                    "late_payment_after_cancel",
+                    old_status="cancelled",
+                    new_status="cancelled",
+                    actor_type="payment",
+                    details={
+                        "payment_id": booking.get("tinkoff_payment_id"),
+                        "amount": booking.get("amount"),
+                    },
+                )
+                booking = await update_booking(
+                    booking_id,
+                    refund_status="required",
+                    refund_updated_at=now_msk(),
+                )
+            # False намеренно: вызывающий код не должен отправлять сообщение
+            # «занятие подтверждено» для уже отменённого занятия.
+            return False, booking
+
         return await mark_booking_paid_once(booking_id)
+
     if status in ("REJECTED", "CANCELED"):
         return await mark_booking_payment_failed(booking_id)
+
     return False, None
