@@ -15,32 +15,32 @@ DOCS = {
     "agent_agreement": {
         "title": "Агентский договор",
         "url": f"{DOC_BASE_URL}/01_agent_agreement.md",
-        "hash": "1ec844080835d91e903e3d00c8f0da8d5355b8d6a6c1136bbb7ee5fc7506cabc",
+        "hash": "acf00b0f464e4f364a1e46fd7bc487d7ab5fe5e98168137cb6a782b5881c51a9",
     },
     "student_offer": {
         "title": "Публичная оферта",
         "url": f"{DOC_BASE_URL}/02_student_offer.md",
-        "hash": "ff769c75c6bbd669b71aa38462e5c18268b17d97585857eb24a04b405c6e76b3",
+        "hash": "b27ea2071205a7975a6ef444540928d73f9f90eb457b6aebe1c9b671ec4792fa",
     },
     "privacy_policy": {
         "title": "Политика обработки ПД",
         "url": f"{DOC_BASE_URL}/03_privacy_policy.md",
-        "hash": "e7e8b77b4a50abf598a6ec1beb4c7e2f9f354b8617382167236d53ee6d383e18",
+        "hash": "b66def1c2591503da7a35de89771132353b101d73ba6aecddcf15f48d1b42aeb",
     },
     "tutor_pd_consent": {
         "title": "Согласие репетитора на обработку ПД",
         "url": f"{DOC_BASE_URL}/04_tutor_pd_consent.md",
-        "hash": "23d35fc33a1d757ffd930cd3b03420b3f4a188c949360c78ba95cd26c4d0d7d2",
+        "hash": "34b245e8cb48c9621d38fd9e2c1ba06683211177e64e00edefa1c4de216e09a5",
     },
     "tutor_distribution_consent": {
         "title": "Согласие на распространение ПД",
         "url": f"{DOC_BASE_URL}/05_tutor_distribution_consent.md",
-        "hash": "28919bd788dec4529d53c9e13eaee0361c3e17b2133b132a16a98f79e9eedeaa",
+        "hash": "23b497d7861d06dde6eae2956d82315f1bc304f2c4445b96b0b9ccb258b30cfa",
     },
     "user_consent": {
         "title": "Согласие пользователя",
         "url": f"{DOC_BASE_URL}/06_user_consent.md",
-        "hash": "d7a3b58bc98a6e262ffc0fa0746b6026f5ed33ad85295a7e070e5e506a22c684",
+        "hash": "42ddd5ce0d6500822513bacca79dd1304c2e7b12d4f9528db8f3c2191856d296",
     },
 }
 
