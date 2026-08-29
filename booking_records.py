@@ -7,8 +7,10 @@ from database import get_all_tutors, get_booking, get_booking_events, update_boo
 from messaging import edit_telegram_message, send_telegram_message_get_id
 
 MSK = ZoneInfo("Europe/Moscow")
-RECORDS_CHANNEL_ID = int(os.environ.get("RECORDS_CHANNEL_ID") or 0)
-MAX_HISTORY_EVENTS = 25
+RECORDS_CHANNEL_ID = os.environ.get("RECORDS_CHANNEL_ID") or ""
+MAX_HISTORY_EVENTS = 15
+MAX_EVENT_REASON_LENGTH = 240
+MAX_RECORD_LENGTH = 3900
 
 STATUS_HEADERS = {
     "pending": "🟠 ОЖИДАЕТ ПОДТВЕРЖДЕНИЯ",
@@ -38,6 +40,13 @@ def format_dt(dt) -> str:
     return dt.strftime("%d.%m.%Y %H:%M")
 
 
+def _short(value, limit=MAX_EVENT_REASON_LENGTH) -> str:
+    text = str(value or "")
+    if len(text) > limit:
+        text = text[: limit - 1] + "…"
+    return html.escape(text)
+
+
 def render_event(event: dict) -> str:
     event_type = event.get("event_type") or "unknown"
     actor = event.get("actor_type") or "system"
@@ -61,10 +70,10 @@ def render_event(event: dict) -> str:
             "payment": "платёжной системой",
             "system": "системой",
         }.get(actor, actor)
-        label = f"❌ Отменено {who}"
+        label = f"❌ Отменено {_short(who, 80)}"
         reason = details.get("reason")
         if reason:
-            label += f" — {html.escape(str(reason))}"
+            label += f" — {_short(reason)}"
     elif event_type == "rescheduled":
         who = {
             "student": "учеником",
@@ -73,14 +82,14 @@ def render_event(event: dict) -> str:
             "system": "системой",
         }.get(actor, actor)
         label = (
-            f"🔄 Перенесено {who}: "
-            f"{html.escape(str(details.get('old_date', '?')))} "
-            f"{html.escape(str(details.get('old_time', '?')))} → "
-            f"{html.escape(str(details.get('new_date', '?')))} "
-            f"{html.escape(str(details.get('new_time', '?')))}"
+            f"🔄 Перенесено {_short(who, 80)}: "
+            f"{_short(details.get('old_date', '?'), 40)} "
+            f"{_short(details.get('old_time', '?'), 40)} → "
+            f"{_short(details.get('new_date', '?'), 40)} "
+            f"{_short(details.get('new_time', '?'), 40)}"
         )
     else:
-        label = labels.get(event_type, html.escape(str(event_type)))
+        label = labels.get(event_type, _short(event_type, 120))
     return f"{label}\n   🕒 {format_dt(event.get('created_at'))}"
 
 
@@ -114,21 +123,37 @@ async def render_booking_record(booking_id: int):
         history_parts.append(f"… ещё событий: {hidden_count}")
     history_parts.extend(render_event(event) for event in visible_events)
     history = "\n\n".join(history_parts) or "Нет событий"
-    return (
+    text = (
         f"<b>{header}</b>\n\n"
         f"🆔 <b>Занятие #{booking_id}</b>\n"
-        f"👤 Ученик: {html.escape(str(booking['username']))}\n"
+        f"👤 Ученик: {_short(booking['username'], 160)}\n"
         f"🆔 ID ученика: <code>{booking['user_id']}</code>\n"
-        f"🌐 Платформа: {html.escape(str(platform))}\n\n"
-        f"👨‍🏫 Преподаватель: {html.escape(str(tutor_name))}\n"
-        f"📚 Предмет: {html.escape(str(booking['subject']))}\n"
-        f"📅 Дата: {html.escape(str(booking['date']))}\n"
-        f"🕒 Время: {html.escape(str(booking['time_slot']))} МСК\n\n"
+        f"🌐 Платформа: {_short(platform, 80)}\n\n"
+        f"👨‍🏫 Преподаватель: {_short(tutor_name, 160)}\n"
+        f"📚 Предмет: {_short(booking['subject'], 160)}\n"
+        f"📅 Дата: {_short(booking['date'], 40)}\n"
+        f"🕒 Время: {_short(booking['time_slot'], 80)} МСК\n\n"
         f"💳 Стоимость: {amount_text}\n"
-        f"↩️ Возврат: {html.escape(str(refund_text))}\n"
+        f"↩️ Возврат: {_short(refund_text, 100)}\n"
         f"🕘 Последнее изменение: {format_dt(booking.get('updated_at'))}\n\n"
         f"<b>История:</b>\n{history}"
     )
+    if len(text) > MAX_RECORD_LENGTH:
+        safe_history_budget = max(300, MAX_RECORD_LENGTH - (len(text) - len(history)) - 50)
+        history = history[-safe_history_budget:]
+        text = (
+            f"<b>{header}</b>\n\n"
+            f"🆔 <b>Занятие #{booking_id}</b>\n"
+            f"👤 Ученик: {_short(booking['username'], 160)}\n"
+            f"👨‍🏫 Преподаватель: {_short(tutor_name, 160)}\n"
+            f"📚 Предмет: {_short(booking['subject'], 160)}\n"
+            f"📅 { _short(booking['date'], 40) } · 🕒 {_short(booking['time_slot'], 80)} МСК\n"
+            f"🌐 {_short(platform, 80)} · 💳 {amount_text}\n"
+            f"↩️ {_short(refund_text, 100)}\n"
+            f"🕘 {format_dt(booking.get('updated_at'))}\n\n"
+            f"<b>Последние события:</b>\n…\n{history}"
+        )
+    return text[:4090]
 
 
 async def sync_booking_record(booking_id: int) -> bool:
