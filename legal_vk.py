@@ -67,8 +67,7 @@ async def _legal_get_main_menu(user_id: int) -> str:
 legacy.get_main_menu = _legal_get_main_menu
 
 
-@legacy.bot.on.private_message(text="📄 Документы")
-async def legal_documents_menu(message):
+async def _legal_documents_reply(message):
     tutor_id = await legacy.get_tutor_by_vk_id(message.from_id)
     is_tutor = tutor_id is not None and message.from_id != legacy.ADMIN_VK_ID
     doc_types = TUTOR_DOC_TYPES if is_tutor else STUDENT_DOC_TYPES
@@ -82,10 +81,46 @@ async def legal_documents_menu(message):
     await message.answer(intro, keyboard=_docs_keyboard(doc_types))
 
 
+# Отдельный handler оставляем для новых конфигураций роутера.
+@legacy.bot.on.private_message(text="📄 Документы")
+async def legal_documents_menu(message):
+    await _legal_documents_reply(message)
+
+
+# В текущем legacy-роутере общий private_message handler обработки e-mail
+# зарегистрирован раньше legal_documents_menu и перехватывает текст. Поэтому
+# расширяем уже зарегистрированную функцию: документы обрабатываем первыми,
+# остальную e-mail-логику сохраняем без изменений.
+async def _legal_process_payment_email(message):
+    if message.text == "📄 Документы":
+        await _legal_documents_reply(message)
+        return
+
+    booking_id = await get_pending_email_request(message.from_id)
+    if not booking_id:
+        return
+    email = message.text.strip()
+    if not valid_email(email):
+        await message.answer("Введите корректный email, например name@example.com")
+        return
+
+    await set_user_email(message.from_id, email)
+    bookings = await get_all_bookings()
+    booking = bookings.get(booking_id)
+    if not booking:
+        await message.answer("Ошибка: запись не найдена.")
+        await delete_pending_email_request(message.from_id)
+        return
+
+    await create_and_send_payment(message, booking, email, booking_id)
+    await delete_pending_email_request(message.from_id)
+
+
+legacy._legal_documents_reply = _legal_documents_reply
+legacy.process_payment_email.__code__ = _legal_process_payment_email.__code__
+
+
 # -------------------- Ранний privacy-gate: обычная запись --------------------
-_original_zapis_code = legacy.zapis.__code__
-
-
 async def _regular_booking_after_privacy(message):
     await message.answer(
         "Кто из репетиторов вас интересует?",
@@ -209,6 +244,40 @@ async def _legal_create_and_send_payment(source, booking, email, booking_id):
 
 
 legacy.create_and_send_payment = _legal_create_and_send_payment
+
+
+# Дополнительная страховка на точке подтверждения преподавателем. В VK старый
+# callback-handler может идти через совместимый tutor_confirm_booking из vk_bot.py.
+# Перед запуском обычного платёжного сценария показываем документы напрямую.
+_original_tutor_confirm_booking = legacy.tutor_confirm_booking
+
+
+async def _legal_tutor_confirm_booking(event):
+    try:
+        bid = int(event.payload["cmd"].split("_")[2])
+    except (KeyError, ValueError, TypeError, IndexError):
+        return await _original_tutor_confirm_booking(event)
+
+    bookings = await legacy.get_all_bookings()
+    booking = bookings.get(bid)
+    is_trial = bool(booking and str(booking.get("subject") or "").startswith("Пробное: "))
+    tutor_id = await legacy.get_tutor_by_vk_id(event.user_id) if booking else None
+
+    if (
+        booking
+        and not is_trial
+        and booking.get("status") == "pending"
+        and tutor_id == booking.get("tutor_id")
+    ):
+        try:
+            await _send_student_legal_before_payment(booking["user_id"], bid)
+        except Exception:
+            legacy.logging.exception("Не удалось показать документы перед подтверждением booking=%s", bid)
+
+    return await _original_tutor_confirm_booking(event)
+
+
+legacy.tutor_confirm_booking = _legal_tutor_confirm_booking
 
 
 _paid_hook = install_payment_acceptance_hook()
