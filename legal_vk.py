@@ -9,6 +9,9 @@ from legal_common import (
     install_payment_acceptance_hook,
     install_subscription_acceptance_hook,
     record_student_docs_presented,
+    record_student_privacy_continued,
+    record_student_privacy_presented,
+    student_privacy_notice_completed,
 )
 
 
@@ -18,6 +21,16 @@ def _docs_keyboard(doc_types):
         doc = DOCS[doc_type]
         kb.add(legacy.OpenLink(doc["title"], doc["url"]))
         kb.row()
+    return kb.get_json()
+
+
+def _privacy_keyboard(continue_label: str, continue_payload: dict, back_cmd: str = "back_to_menu"):
+    kb = legacy.Keyboard(inline=True)
+    kb.add(legacy.OpenLink("📄 Политика обработки ПД", DOCS["privacy_policy"]["url"]))
+    kb.row()
+    kb.add(legacy.Callback(continue_label, payload=continue_payload))
+    kb.row()
+    kb.add(legacy.Callback("🔙 Назад", payload={"cmd": back_cmd}))
     return kb.get_json()
 
 
@@ -69,6 +82,104 @@ async def legal_documents_menu(message):
     await message.answer(intro, keyboard=_docs_keyboard(doc_types))
 
 
+# -------------------- Ранний privacy-gate: обычная запись --------------------
+_original_zapis_code = legacy.zapis.__code__
+
+
+async def _regular_booking_after_privacy(message):
+    await message.answer(
+        "Кто из репетиторов вас интересует?",
+        keyboard=await legacy.make_tutors_keyboard("tutor_booking", back_callback="back_to_menu"),
+    )
+    await legacy.state_dispenser.delete(message.from_id)
+
+
+async def _legal_zapis(message):
+    if not await student_privacy_notice_completed(message.from_id, "vk"):
+        await legacy.state_dispenser.delete(message.from_id)
+        await legacy.state_dispenser.update(
+            message.from_id,
+            legal_privacy_context="regular_booking",
+        )
+        await record_student_privacy_presented(message.from_id, "vk", "regular_booking")
+        await message.answer(
+            "До начала записи ознакомьтесь с Политикой обработки персональных данных. "
+            "Для оформления записи Сервис использует необходимые идентификаторы VK и сведения о выбранном занятии.\n\n"
+            "Нажмите «Продолжить», чтобы перейти к записи.",
+            keyboard=_privacy_keyboard(
+                "▶️ Продолжить",
+                {"cmd": "back_to_tutors_booking"},
+            ),
+        )
+        return
+    await _regular_booking_after_privacy(message)
+
+
+# Зарегистрированный vkbottle-handler уже хранит исходную функцию, поэтому меняем
+# только её code object и публикуем новые имена в globals legacy-модуля.
+legacy.student_privacy_notice_completed = student_privacy_notice_completed
+legacy.record_student_privacy_presented = record_student_privacy_presented
+legacy._privacy_keyboard = _privacy_keyboard
+legacy._regular_booking_after_privacy = _regular_booking_after_privacy
+legacy.zapis.__code__ = _legal_zapis.__code__
+
+
+_original_back_to_tutors_booking = legacy.back_to_tutors_booking
+
+
+async def _legal_back_to_tutors_booking(event):
+    data = await legacy.state_dispenser.get_data(event.user_id)
+    if data.get("legal_privacy_context") == "regular_booking":
+        await record_student_privacy_continued(event.user_id, "vk", "regular_booking")
+        await legacy.state_dispenser.delete(event.user_id)
+    return await _original_back_to_tutors_booking(event)
+
+
+legacy.back_to_tutors_booking = _legal_back_to_tutors_booking
+
+
+# -------------------- Ранний privacy-gate: пробное занятие --------------------
+_original_start_trials_booking = legacy.start_trials_booking
+
+
+async def _legal_start_trials_booking(event):
+    user_id = event.user_id
+    tid = event.payload.get("tutor_id")
+    if await student_privacy_notice_completed(user_id, "vk"):
+        return await _original_start_trials_booking(event)
+
+    data = await legacy.state_dispenser.get_data(user_id)
+    if (
+        data.get("legal_privacy_context") == "trial_booking"
+        and data.get("legal_trial_tutor_id") == tid
+    ):
+        await record_student_privacy_continued(user_id, "vk", "trial_booking")
+        await legacy.state_dispenser.delete(user_id)
+        return await _original_start_trials_booking(event)
+
+    await legacy.state_dispenser.update(
+        user_id,
+        legal_privacy_context="trial_booking",
+        legal_trial_tutor_id=tid,
+    )
+    await record_student_privacy_presented(user_id, "vk", "trial_booking")
+    await legacy.edit_event_message(
+        event,
+        "До начала записи на пробное занятие ознакомьтесь с Политикой обработки персональных данных. "
+        "Для оформления записи Сервис использует необходимые идентификаторы VK и сведения о выбранном занятии.\n\n"
+        "Нажмите «Продолжить пробную запись».",
+        keyboard=_privacy_keyboard(
+            "▶️ Продолжить пробную запись",
+            {"cmd": "trials", "tutor_id": tid},
+            back_cmd="back_to_tutors",
+        ),
+    )
+
+
+legacy.start_trials_booking = _legal_start_trials_booking
+
+
+# -------------------- Документы перед оплатой --------------------
 _original_set_pending_email_request = legacy.set_pending_email_request
 
 
