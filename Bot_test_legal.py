@@ -1,6 +1,6 @@
 import Bot_test as app
-import legal_telegram  # noqa: F401  # подключает юридический слой после Bot_test
-import payment_reuse_telegram  # noqa: F401  # не создаёт повторный T-Bank платёж для одной брони
+import payment_reuse_telegram  # noqa: F401  # один T-Bank платёж на бронь, повторная выдача СБП-ссылки
+import legal_telegram  # noqa: F401  # юридический слой оборачивает итоговый платёжный сценарий
 
 
 async def main():
