@@ -56,6 +56,35 @@ async def _contextual_delete_booking(booking_id: int):
     return booking if changed else booking
 
 
+# ---------------------------------------------------------------------------
+# VK compatibility fixes
+# ---------------------------------------------------------------------------
+# В старом коде OpenLink используется в привычном порядке (label, link),
+# а текущий vkbottle ожидает (link, label). Сохраняем старые вызовы и
+# переставляем аргументы только на границе совместимости.
+_original_open_link = legacy.OpenLink
+
+
+def _compat_open_link(label, link, *args, **kwargs):
+    return _original_open_link(link, label, *args, **kwargs)
+
+
+legacy.OpenLink = _compat_open_link
+
+# Inline-клавиатура VK ограничена по числу рядов. Старый код мог вывести
+# до 30 доступных дат (10 рядов по три кнопки + "Назад"), что VK отклоняет.
+# 15 дат = максимум 5 рядов дат + один ряд навигации.
+_original_get_available_dates = legacy.get_available_dates
+
+
+async def _vk_safe_available_dates(tutor_id: int, days_ahead=30):
+    dates = await _original_get_available_dates(tutor_id, days_ahead=days_ahead)
+    return dates[:15]
+
+
+legacy.get_available_dates = _vk_safe_available_dates
+
+
 # Старый VK-код остаётся неизменным, но все операции брони проходят через новый аудит.
 legacy.update_booking = _contextual_update_booking
 legacy.delete_booking = _contextual_delete_booking
