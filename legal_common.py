@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import database as _db
 
-DOC_VERSION = "2026-08-29"
+DOC_VERSION = "2026-08-29-r2"
 DOC_BASE_URL = os.environ.get(
     "LEGAL_DOCS_BASE_URL",
     "https://github.com/NikG18/edubot/blob/main/legal",
