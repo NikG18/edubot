@@ -88,6 +88,23 @@ async def ensure_legal_schema():
             """
         )
 
+        # В старой схеме pending_subscriptions мог существовать без UNIQUE(payment_id),
+        # хотя add_pending_subscription использует ON CONFLICT(payment_id).
+        # Один T-Bank PaymentId может соответствовать только одному ожидающему абонементу,
+        # поэтому при исторических дублях оставляем самую раннюю строку и добавляем
+        # уникальный индекс, который также является arbiter для ON CONFLICT.
+        await conn.execute(
+            """
+            DELETE FROM pending_subscriptions newer
+            USING pending_subscriptions older
+            WHERE newer.payment_id = older.payment_id
+              AND newer.id > older.id;
+
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_pending_subscriptions_payment_id
+                ON pending_subscriptions(payment_id);
+            """
+        )
+
 
 async def record_legal_event(
     subject_id: int,
