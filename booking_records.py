@@ -42,21 +42,31 @@ class _LegacyProxy:
         return getattr(self._module, name)
 
 
+class _CallbackMessageProxy:
+    """Даёт рендеру записей ID пользователя callback, а не ID бота-автора сообщения."""
+
+    def __init__(self, message, user):
+        self._message = message
+        self.from_user = user
+
+    async def answer(self, *args, **kwargs):
+        return await self._message.answer(*args, **kwargs)
+
+
 async def _compat_back_to_my_records(call, state):
     """Возврат к тому же новому списку записей, что и кнопка «Мои записи»."""
     await safe_answer(call)
     await state.clear()
-    await _tg_render_records(call.message)
+    message = _CallbackMessageProxy(call.message, call.from_user)
+    await _tg_render_records(message)
 
 
 _bot_legacy = sys.modules.get("Bot_test_legacy")
 if _bot_legacy is not None:
     _bot_legacy.__dict__["legacy"] = _LegacyProxy(_bot_legacy)
     _bot_legacy.__dict__["_db"] = importlib.import_module("database")
+    _bot_legacy.__dict__["_CallbackMessageProxy"] = _CallbackMessageProxy
 
-    # Старый back_to_my_records запрещал действия для pending и не показывал
-    # перенос там, где новая compatibility-логика его уже разрешает.
-    # Подменяем только code object: зарегистрированный aiogram handler остаётся тем же.
     if hasattr(_bot_legacy, "back_to_my_records"):
         _bot_legacy.back_to_my_records.__code__ = _compat_back_to_my_records.__code__
 
