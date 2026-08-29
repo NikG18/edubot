@@ -7,6 +7,7 @@
 import asyncio
 
 import database as _db
+import fiscalization as _fiscal
 import payments as _payments
 import vk_bot as app
 
@@ -75,6 +76,18 @@ async def _sbp_link_for_existing(payment_id: str):
         return None
 
 
+async def _fiscal_payment_may_be_exposed(booking_id: int, payment_id: str) -> bool:
+    if not _fiscal.AGENT_FISCALIZATION_ENABLED:
+        return True
+    try:
+        return await _fiscal.booking_prepayment_snapshot_matches(booking_id, str(payment_id))
+    except Exception:
+        legacy.logging.exception(
+            "Не удалось проверить fiscal snapshot booking=%s payment=%s", booking_id, payment_id
+        )
+        return False
+
+
 async def _idempotent_create_and_send_payment(source, booking, email, booking_id):
     booking_id = int(booking_id)
     async with _lock_for(booking_id):
@@ -85,6 +98,13 @@ async def _idempotent_create_and_send_payment(source, booking, email, booking_id
 
         existing_payment_id = current.get("tinkoff_payment_id")
         if existing_payment_id:
+            if not await _fiscal_payment_may_be_exposed(booking_id, existing_payment_id):
+                await _respond(
+                    source,
+                    "Ссылка на оплату временно заблокирована: не подтверждена фискальная связка "
+                    "этого платежа. Новый платёж автоматически не создаётся. Обратитесь в поддержку.",
+                )
+                return
             payment_url = await _sbp_link_for_existing(existing_payment_id)
             if not payment_url:
                 await _respond(
@@ -139,8 +159,6 @@ async def _idempotent_create_and_send_payment(source, booking, email, booking_id
             order_id_prefix="booking",
         )
 
-        # PaymentId сохраняем сразу после Init, даже если GetQr временно не вернул ссылку.
-        # Иначе повторная попытка могла бы создать второй платёж.
         if payment_id:
             await legacy.update_booking(
                 booking_id,
@@ -159,6 +177,14 @@ async def _idempotent_create_and_send_payment(source, booking, email, booking_id
             )
             return
 
+        if not await _fiscal_payment_may_be_exposed(booking_id, payment_id):
+            await _respond(
+                source,
+                "Платёж создан, но ссылка заблокирована из-за ошибки фиксации фискальных данных. "
+                "Новый платёж не создаётся. Обратитесь в поддержку.",
+            )
+            return
+
         if not payment_url:
             payment_url = await _sbp_link_for_existing(payment_id)
         if not payment_url:
@@ -173,7 +199,6 @@ async def _idempotent_create_and_send_payment(source, booking, email, booking_id
         refreshed = await _db.get_booking(booking_id) or current
         await _send_payment_link(refreshed, booking_id, payment_url, price_rub)
 
-        # Репетитора уведомляем только при первом создании PaymentId.
         await legacy.send_to_tutor(
             refreshed["tutor_id"],
             f"✅ Занятие с {refreshed['username']} подтверждено. Ожидается оплата.",
