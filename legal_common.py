@@ -120,8 +120,34 @@ async def record_legal_event(
         )
 
 
+async def _booking_document_was_presented(user_id: int, platform: str, doc_type: str, booking_id: int) -> bool:
+    """Не плодим одинаковые presented-события для одной записи и редакции документа."""
+    await ensure_legal_schema()
+    async with _db._legacy.pool.acquire() as conn:
+        return bool(await conn.fetchval(
+            """
+            SELECT EXISTS(
+                SELECT 1
+                FROM legal_acceptances
+                WHERE subject_id=$1
+                  AND subject_role='student'
+                  AND platform=$2
+                  AND doc_type=$3
+                  AND doc_version=$4
+                  AND action='presented_before_payment'
+                  AND booking_id=$5
+            )
+            """,
+            int(user_id), platform, doc_type, DOC_VERSION, int(booking_id),
+        ))
+
+
 async def record_student_docs_presented(user_id: int, platform: str, booking_id: int | None = None):
     for doc_type in ("student_offer", "privacy_policy"):
+        if booking_id is not None and await _booking_document_was_presented(
+            user_id, platform, doc_type, booking_id
+        ):
+            continue
         await record_legal_event(
             user_id,
             "student",
