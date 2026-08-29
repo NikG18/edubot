@@ -44,15 +44,29 @@ async def _post_json(url, payload, retries=3):
         try:
             async with session.post(url, json=payload) as resp:
                 text = await resp.text()
+                parsed = None
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    parsed = None
+
                 if resp.status == 200:
-                    try:
-                        return json.loads(text)
-                    except json.JSONDecodeError:
-                        logging.error("Non-JSON response: %s", text[:500])
-                        return None
+                    if parsed is not None:
+                        return parsed
+                    logging.error("Non-JSON response: %s", text[:500])
+                    return None
+
                 if resp.status in (429, 500, 502, 503, 504) and attempt < retries - 1:
                     await asyncio.sleep(2 ** attempt)
                     continue
+
+                # Telegram и другие JSON API часто возвращают полезное описание
+                # ошибки даже при HTTP 4xx. Возвращаем его вызывающему коду, чтобы
+                # тот мог отличить harmless-сценарии (например, message is not
+                # modified) от реальных ошибок.
+                if parsed is not None:
+                    return parsed
+
                 logging.warning("HTTP send failed: status=%s body=%s", resp.status, text[:500])
                 return None
         except (aiohttp.ClientError, TimeoutError) as exc:
