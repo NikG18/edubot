@@ -1,5 +1,6 @@
 import vk_bot as app
-import legal_vk  # noqa: F401  # подключает юридический слой после vk_bot
+import payment_reuse_vk  # noqa: F401  # один T-Bank платёж на бронь, повторная выдача СБП-ссылки
+import legal_vk  # noqa: F401  # юридический слой оборачивает итоговый платёжный сценарий
 
 
 async def main():
