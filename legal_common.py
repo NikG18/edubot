@@ -79,6 +79,12 @@ async def ensure_legal_schema():
             CREATE INDEX IF NOT EXISTS idx_legal_acceptances_booking
                 ON legal_acceptances(booking_id, accepted_at DESC)
                 WHERE booking_id IS NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_student_privacy_notice_once
+                ON legal_acceptances(subject_id, subject_role, platform, doc_type, doc_version, action)
+                WHERE booking_id IS NULL
+                  AND subject_role='student'
+                  AND doc_type='privacy_policy'
+                  AND action IN ('presented_before_data_collection', 'continued_after_privacy_notice');
             """
         )
 
@@ -157,6 +163,73 @@ async def record_student_docs_presented(user_id: int, platform: str, booking_id:
             "presented",
             booking_id=booking_id,
         )
+
+
+async def student_privacy_notice_completed(user_id: int, platform: str) -> bool:
+    """Проверяет, продолжал ли пользователь после показа текущей Политики ПД."""
+    await ensure_legal_schema()
+    doc = DOCS["privacy_policy"]
+    async with _db._legacy.pool.acquire() as conn:
+        return bool(await conn.fetchval(
+            """
+            SELECT EXISTS(
+                SELECT 1
+                FROM legal_acceptances
+                WHERE subject_id=$1
+                  AND subject_role='student'
+                  AND platform=$2
+                  AND doc_type='privacy_policy'
+                  AND doc_version=$3
+                  AND doc_hash=$4
+                  AND action='continued_after_privacy_notice'
+                  AND result='continued'
+            )
+            """,
+            int(user_id), platform, DOC_VERSION, doc["hash"],
+        ))
+
+
+async def _record_student_privacy_action(user_id: int, platform: str, action: str, result: str, context: str):
+    await ensure_legal_schema()
+    doc = DOCS["privacy_policy"]
+    async with _db._legacy.pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO legal_acceptances
+                (subject_id,subject_role,platform,doc_type,doc_version,doc_hash,
+                 action,result,booking_id,metadata,accepted_at)
+            VALUES($1,'student',$2,'privacy_policy',$3,$4,$5,$6,NULL,$7::jsonb,$8)
+            ON CONFLICT DO NOTHING
+            """,
+            int(user_id),
+            platform,
+            DOC_VERSION,
+            doc["hash"],
+            action,
+            result,
+            json.dumps({"context": context}, ensure_ascii=False),
+            datetime.now(MSK),
+        )
+
+
+async def record_student_privacy_presented(user_id: int, platform: str, context: str):
+    await _record_student_privacy_action(
+        user_id,
+        platform,
+        "presented_before_data_collection",
+        "presented",
+        context,
+    )
+
+
+async def record_student_privacy_continued(user_id: int, platform: str, context: str):
+    await _record_student_privacy_action(
+        user_id,
+        platform,
+        "continued_after_privacy_notice",
+        "continued",
+        context,
+    )
 
 
 async def record_tutor_yandex_acceptance(
