@@ -70,6 +70,32 @@ async def api_call(endpoint: str, params: dict) -> dict:
         return {}
 
 
+async def get_sbp_payment_link(payment_id: str) -> Optional[str]:
+    """Возвращает функциональную ссылку СБП для уже существующего PaymentId.
+
+    Новый Init не создаётся: ссылку можно повторно получить для того же платежа и
+    снова показать пользователю, если прежнее сообщение в мессенджере потерялось.
+    """
+    if not payment_id:
+        return None
+    resp = await api_call("GetQr", {
+        "PaymentId": str(payment_id),
+        "DataType": "PAYLOAD",
+        "PaymentMethod": "SBP",
+    })
+    data = resp.get("Data")
+    if data:
+        return str(data)
+    logging.error(
+        "T-Bank GetQr(SBP) failed for payment_id=%s: ErrorCode=%s Details=%s Message=%s",
+        payment_id,
+        resp.get("ErrorCode"),
+        resp.get("Details"),
+        resp.get("Message"),
+    )
+    return None
+
+
 async def create_payment(
     booking_id: int,
     amount_kop: int,
@@ -80,11 +106,13 @@ async def create_payment(
     inn: Optional[str] = None,
     order_id_prefix: str = "booking",
 ) -> Tuple[Optional[str], Optional[str]]:
+    """Создаёт одностадийный платёж и возвращает ссылку СБП, а не карточную форму."""
     if amount_kop <= 0:
         logging.error("Некорректная сумма платежа: %s", amount_kop)
         return None, None
 
     order_id = f"{order_id_prefix}_{booking_id}_{int(__import__('time').time() * 1000)}"
+    sbp_description = description[:140]
     receipt = {
         "Email": customer_email,
         "Taxation": "usn_income",
@@ -100,19 +128,26 @@ async def create_payment(
     params = {
         "Amount": int(amount_kop),
         "OrderId": order_id,
-        "Description": description[:250],
+        "Description": sbp_description,
+        "PayType": "O",
         "Receipt": receipt,
     }
     if TINKOFF_WEBHOOK_URL:
         params["NotificationURL"] = TINKOFF_WEBHOOK_URL
 
     resp = await api_call("Init", params)
-    if resp.get("Success") and resp.get("PaymentURL") and resp.get("PaymentId"):
-        return resp["PaymentURL"], str(resp["PaymentId"])
+    if not (resp.get("Success") and resp.get("PaymentId")):
+        logging.error("T-Bank Init failed: ErrorCode=%s Details=%s Message=%s",
+                      resp.get("ErrorCode"), resp.get("Details"), resp.get("Message"))
+        return None, None
 
-    logging.error("T-Bank Init failed: ErrorCode=%s Details=%s Message=%s",
-                  resp.get("ErrorCode"), resp.get("Details"), resp.get("Message"))
-    return None, None
+    payment_id = str(resp["PaymentId"])
+    sbp_link = await get_sbp_payment_link(payment_id)
+    if not sbp_link:
+        # PaymentId возвращаем вызывающему коду, чтобы платеж не потерялся и не
+        # создавался повторный Init при временной ошибке GetQr.
+        return None, payment_id
+    return sbp_link, payment_id
 
 
 async def check_payment(payment_id: str) -> dict:
