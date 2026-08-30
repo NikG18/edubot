@@ -106,7 +106,7 @@ def build_agent_receipt(
     payment_method: str,
     closing: bool = False,
 ) -> dict:
-    """Строит ФФД 1.2 чек для услуги самозанятого принципала через агента."""
+    """Строит чек ФФД 1.2 для услуги самозанятого принципала через агента."""
     if amount_kop <= 0:
         raise ValueError("Сумма чека должна быть положительной")
     name, supplier_inn, phone = _validate_supplier(tutor_name, inn, supplier_phone)
@@ -122,6 +122,9 @@ def build_agent_receipt(
         "Tax": "none",
         "PaymentMethod": payment_method,
         "PaymentObject": "service",
+        # Обязательно для ФФД 1.2. Услуга продается как одна единица расчета.
+        "MeasurementUnit": "шт",
+        # Агентский договор: иной агент, не платежный агент/поверенный/комиссионер.
         "AgentData": {"AgentSign": "another"},
         "SupplierInfo": {
             "Phones": [phone],
@@ -131,16 +134,18 @@ def build_agent_receipt(
     }
     receipt = {
         "Email": email,
-        # T-Bank принимает usn_income и по ИНН автоматически определяет АУСН.
+        # API T-Bank использует usn_income; АУСН определяется ФНС по ИНН пользователя ККТ.
         "Taxation": "usn_income",
         "Items": [item],
     }
     if closing:
-        # Деньги уже получены как 100% предоплата. В закрывающем чеке новая
-        # безналичная оплата равна нулю, а расчет закрывается ранее внесенной суммой.
+        # Денег повторно не поступает: полная предоплата зачитывается при оказании услуги.
         receipt["Payments"] = {
+            "Cash": 0,
             "Electronic": 0,
             "AdvancePayment": int(amount_kop),
+            "Credit": 0,
+            "Provision": 0,
         }
     return receipt
 
@@ -182,8 +187,6 @@ async def create_payment(
         logging.error("Некорректная сумма платежа: %s", amount_kop)
         return None, None
 
-    # Все существующие вызовы create_payment уже передают tutor_id. Телефон
-    # поставщика поднимаем из БД здесь, чтобы одинаково покрыть занятия и пакеты.
     if not supplier_phone:
         try:
             from fiscal_agent import get_tutor_phone
@@ -240,7 +243,7 @@ async def send_closing_receipt(
     inn: str,
     supplier_phone: str,
 ) -> dict:
-    """Отправляет чек полного расчета после фактического оказания занятия."""
+    """Отправляет чек полного расчета после подтвержденного оказания занятия."""
     receipt = build_agent_receipt(
         amount_kop=amount_kop,
         description=description,
@@ -255,6 +258,18 @@ async def send_closing_receipt(
         "PaymentId": str(payment_id),
         "Receipt": receipt,
     })
+
+
+async def cancel_full_payment(payment_id: str) -> dict:
+    """Полный возврат исходного платежа.
+
+    Для полной отмены T-Bank прямо запрещает/не требует передавать Receipt: кассовый
+    контур формирует возврат по исходной операции. Частичные возвраты требуют
+    отдельного состава Receipt и здесь намеренно не реализованы.
+    """
+    if not payment_id:
+        return {}
+    return await api_call("Cancel", {"PaymentId": str(payment_id)})
 
 
 async def check_payment(payment_id: str) -> dict:
