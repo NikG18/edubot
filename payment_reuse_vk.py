@@ -9,6 +9,8 @@ import asyncio
 import database as _db
 import payments as _payments
 import vk_bot as app
+from fiscal_agent import get_tutor_phone
+from fiscal_receipts import snapshot_booking_prepayment
 
 legacy = app.legacy
 _booking_locks: dict[int, asyncio.Lock] = {}
@@ -106,6 +108,15 @@ async def _idempotent_create_and_send_payment(source, booking, email, booking_id
             await _respond(source, "Репетитор не найден.")
             return
 
+        inn = (tutor.get("inn") or "").strip()
+        if not inn:
+            await _respond(source, "Запись к репетитору недоступна. Напишите в поддержку.")
+            return
+        supplier_phone = await get_tutor_phone(current["tutor_id"])
+        if not supplier_phone:
+            await _respond(source, "Для репетитора не заполнен телефон для кассового чека. Напишите в поддержку.")
+            return
+
         if current.get("amount"):
             amount_kop = int(current["amount"])
             price_rub = amount_kop / 100
@@ -135,12 +146,11 @@ async def _idempotent_create_and_send_payment(source, booking, email, booking_id
             tutor_id=current["tutor_id"],
             tutor_name=tutor["name"],
             customer_email=email,
-            inn=tutor.get("inn", ""),
+            inn=inn,
+            supplier_phone=supplier_phone,
             order_id_prefix="booking",
         )
 
-        # PaymentId сохраняем сразу после Init, даже если GetQr временно не вернул ссылку.
-        # Иначе повторная попытка могла бы создать второй платёж.
         if payment_id:
             await legacy.update_booking(
                 booking_id,
@@ -150,12 +160,25 @@ async def _idempotent_create_and_send_payment(source, booking, email, booking_id
                 commission_percent=percent,
                 tinkoff_payment_id=payment_id,
             )
+            try:
+                await snapshot_booking_prepayment(
+                    booking_id=booking_id,
+                    payment_id=payment_id,
+                    amount_kop=amount_kop,
+                    customer_email=email,
+                    supplier_name=tutor["name"],
+                    supplier_inn=inn,
+                    supplier_phone=supplier_phone,
+                    description=description,
+                )
+            except Exception:
+                legacy.logging.exception("Не удалось сохранить фискальный snapshot booking=%s", booking_id)
 
         if not payment_id:
             await legacy.send_to_user(
                 current["user_id"],
                 current.get("user_platform", "vk"),
-                "Ошибка создания платежа. Обратитесь в поддержку.",
+                "Ошибка создания платежа. Проверьте кассовые реквизиты или обратитесь в поддержку.",
             )
             return
 
@@ -172,8 +195,6 @@ async def _idempotent_create_and_send_payment(source, booking, email, booking_id
         await _save_payment_url(booking_id, payment_url)
         refreshed = await _db.get_booking(booking_id) or current
         await _send_payment_link(refreshed, booking_id, payment_url, price_rub)
-
-        # Репетитора уведомляем только при первом создании PaymentId.
         await legacy.send_to_tutor(
             refreshed["tutor_id"],
             f"✅ Занятие с {refreshed['username']} подтверждено. Ожидается оплата.",
