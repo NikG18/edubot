@@ -106,12 +106,7 @@ def build_agent_receipt(
     payment_method: str,
     closing: bool = False,
 ) -> dict:
-    """Строит ФФД 1.2 чек для услуги самозанятого принципала через агента.
-
-    Для агентского договора используется AgentSign=another: это не платежный агент,
-    не комиссионер и не поверенный по отдельному договору поручения. Поставщиком
-    услуги в SupplierInfo является непосредственный репетитор.
-    """
+    """Строит ФФД 1.2 чек для услуги самозанятого принципала через агента."""
     if amount_kop <= 0:
         raise ValueError("Сумма чека должна быть положительной")
     name, supplier_inn, phone = _validate_supplier(tutor_name, inn, supplier_phone)
@@ -141,8 +136,8 @@ def build_agent_receipt(
         "Items": [item],
     }
     if closing:
-        # Деньги уже были получены как 100% предоплата. В закрывающем чеке новой
-        # безналичной оплаты нет: расчет закрывается ранее внесенной предоплатой.
+        # Деньги уже получены как 100% предоплата. В закрывающем чеке новая
+        # безналичная оплата равна нулю, а расчет закрывается ранее внесенной суммой.
         receipt["Payments"] = {
             "Electronic": 0,
             "AdvancePayment": int(amount_kop),
@@ -151,7 +146,6 @@ def build_agent_receipt(
 
 
 async def get_sbp_payment_link(payment_id: str) -> Optional[str]:
-    """Возвращает функциональную ссылку СБП для уже существующего PaymentId."""
     if not payment_id:
         return None
     resp = await api_call("GetQr", {
@@ -187,6 +181,16 @@ async def create_payment(
     if amount_kop <= 0:
         logging.error("Некорректная сумма платежа: %s", amount_kop)
         return None, None
+
+    # Все существующие вызовы create_payment уже передают tutor_id. Телефон
+    # поставщика поднимаем из БД здесь, чтобы одинаково покрыть занятия и пакеты.
+    if not supplier_phone:
+        try:
+            from fiscal_agent import get_tutor_phone
+            supplier_phone = await get_tutor_phone(int(tutor_id))
+        except Exception:
+            logging.exception("Не удалось получить телефон поставщика tutor_id=%s", tutor_id)
+            return None, None
 
     try:
         receipt = build_agent_receipt(
