@@ -42,7 +42,12 @@ def _stack_has_caller(name: str) -> bool:
 
 
 def _is_trial(booking) -> bool:
-    return bool(booking and str(booking.get("subject") or "").startswith(TRIAL_PREFIX))
+    return bool(
+        booking and (
+            booking.get("booking_type") == "trial"
+            or str(booking.get("subject") or "").startswith(TRIAL_PREFIX)
+        )
+    )
 
 
 def _booking_start(booking):
@@ -131,12 +136,15 @@ _original_add_booking = _db.add_booking
 
 
 async def _contextual_add_booking(tutor_id, user_id, username, subject, date, time_slot,
-                                  channel_msg_id=None, user_platform="telegram"):
+                                  channel_msg_id=None, user_platform="telegram",
+                                  booking_type="regular"):
     if _stack_has_caller("confirm_trial_booking") and not str(subject).startswith(TRIAL_PREFIX):
         subject = f"{TRIAL_PREFIX}{subject}"
+        booking_type = "trial"
     return await _original_add_booking(
         tutor_id, user_id, username, subject, date, time_slot,
         channel_msg_id=channel_msg_id, user_platform=user_platform,
+        booking_type="trial" if str(subject).startswith(TRIAL_PREFIX) else booking_type,
     )
 
 
@@ -170,7 +178,9 @@ async def _trial_aware_tutor_confirm_booking(event):
         _actor_id=event.user_id,
         _event_type="confirmed",
     )
-    clean_subject = str(booking["subject"])[len(TRIAL_PREFIX):]
+    clean_subject = str(booking["subject"])
+    if clean_subject.startswith(TRIAL_PREFIX):
+        clean_subject = clean_subject[len(TRIAL_PREFIX):]
     await legacy.send_to_user(
         booking["user_id"],
         booking.get("user_platform", "vk"),
@@ -186,39 +196,14 @@ async def _trial_aware_tutor_confirm_booking(event):
 
 legacy.tutor_confirm_booking = _trial_aware_tutor_confirm_booking
 
-_original_now_msk_naive = legacy.now_msk_naive
-
-
-def _trial_aware_now_msk_naive():
-    now = _original_now_msk_naive()
-    frame = inspect.currentframe()
-    try:
-        current = frame.f_back if frame else None
-        for _ in range(8):
-            if current is None:
-                break
-            for key in ("booking", "b"):
-                value = current.f_locals.get(key)
-                if isinstance(value, dict) and _is_trial(value):
-                    return now - timedelta(days=2)
-            current = current.f_back
-    finally:
-        del frame
-    return now
-
-
-legacy.now_msk_naive = _trial_aware_now_msk_naive
-
-
 # ---------------------------------------------------------------------------
 # Ученик: pending/confirmed можно отменять и переносить
 # ---------------------------------------------------------------------------
 async def _compat_render_my_records(user_id, *, edit_event=None, message=None):
-    bookings = await legacy.get_all_bookings()
-    user_bookings = [
-        (bid, b) for bid, b in bookings.items()
-        if b["user_id"] == user_id and b["status"] in ("pending", "confirmed", "paid")
-    ]
+    bookings = await _db.get_bookings_for_account(
+        "vk", user_id, statuses={"pending", "confirmed", "paid"}
+    )
+    user_bookings = list(bookings.items())
     if not user_bookings:
         kb = legacy.Keyboard(inline=True)
         kb.add(legacy.Callback("📊 Статистика", payload={"cmd": "student_stats"}))
@@ -236,22 +221,37 @@ async def _compat_render_my_records(user_id, *, edit_event=None, message=None):
     for bid, b in user_bookings:
         tutor = tutors.get(b["tutor_id"], {"name": "Неизвестный"})
         can_act = _student_can_change(b)
+        can_reschedule = can_act
+        if _is_trial(b):
+            can_reschedule = (
+                _booking_start(b) - legacy.now_msk_naive()
+            ) > timedelta(hours=24)
         status_text = {
             "pending": "ожидает подтверждения",
             "confirmed": "подтверждено, ожидает оплаты",
             "paid": "оплачено",
         }.get(b["status"], b["status"])
+        if _is_trial(b) and b["status"] == "confirmed":
+            status_text = "пробное подтверждено, оплата не требуется"
+        action_note = "⚠️ Действия недоступны"
+        if can_act:
+            action_note = (
+                "⚠️ Можно отменить; пробное будет считаться использованным"
+                if _is_trial(b) and not can_reschedule
+                else "✅ Можно отменить/перенести"
+            )
         text_lines.append(
             f"👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n"
             f"📅 {b['date']} 🕒 {b['time_slot']} ({status_text})\n"
-            + ("✅ Можно отменить/перенести" if can_act else "⚠️ Действия недоступны")
+            + action_note
         )
-        if can_act:
+        if can_reschedule:
             kb.add(legacy.Callback(
                 f"🔄 Перенести: {tutor['name']} {b['date']} {b['time_slot']}",
                 payload={"cmd": f"reschedule_student_{bid}"},
             ))
             kb.row()
+        if can_act:
             kb.add(legacy.Callback(
                 f"❌ Отменить: {tutor['name']} {b['date']} {b['time_slot']}",
                 payload={"cmd": f"cancel_student_{bid}"},
@@ -291,13 +291,16 @@ async def _compat_cancel_student_booking(event):
         await legacy.edit_event_message(event, "Эту запись уже нельзя отменить.")
         return
 
-    await _db.cancel_booking_record(
+    changed, current = await _db.cancel_booking_record(
         bid,
         actor_type="student",
         actor_id=event.user_id,
         reason="Отменено учеником",
         expected_statuses={"pending", "confirmed"},
     )
+    if not changed:
+        await legacy.edit_event_message(event, "Статус записи уже изменился.")
+        return
     await legacy.send_to_user(
         booking["user_id"], booking.get("user_platform", "vk"), "✅ Вы отменили занятие."
     )
@@ -308,7 +311,14 @@ async def _compat_cancel_student_booking(event):
     )
     kb = legacy.Keyboard(inline=True)
     kb.add(legacy.Callback("🔙 К моим записям", payload={"cmd": "back_to_my_records"}))
-    await legacy.edit_event_message(event, "✅ Запись отменена.", keyboard=kb.get_json())
+    cancellation_text = "✅ Запись отменена."
+    if _is_trial(current):
+        cancellation_text += (
+            " Поскольку до начала оставалось не более 24 часов, пробное считается использованным."
+            if current.get("trial_consumed")
+            else " Пробное не израсходовано — вы сможете выбрать другое время."
+        )
+    await legacy.edit_event_message(event, cancellation_text, keyboard=kb.get_json())
 
 
 async def _compat_student_reschedule_start(event):
@@ -322,6 +332,14 @@ async def _compat_student_reschedule_start(event):
     if booking["status"] == "paid":
         await legacy.edit_event_message(event, "Оплаченное занятие переносится через поддержку.")
         return
+    if _is_trial(booking):
+        if (_booking_start(booking) - legacy.now_msk_naive()) <= timedelta(hours=24):
+            await legacy.edit_event_message(
+                event,
+                "Пробное уже нельзя переносить менее чем за 24 часа. Его можно отменить, "
+                "но оно будет считаться использованным."
+            )
+            return
     if not _student_can_change(booking):
         await legacy.edit_event_message(event, "Эту запись уже нельзя перенести.")
         return
@@ -395,7 +413,7 @@ async def _compat_confirm_student_reschedule(event):
     data = await legacy.state_dispenser.get_data(event.user_id)
     bid = data["old_booking_id"]
     booking = await _db.get_booking(bid)
-    if not booking or booking["user_id"] != event.user_id:
+    if not booking or not await _db.account_owns_booking("vk", event.user_id, booking):
         await legacy.edit_event_message(event, "Запись не найдена.")
         return
     moved = await _reschedule_unpaid_in_place(

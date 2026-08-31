@@ -1,18 +1,56 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import asyncpg
 
 import database_legacy as _legacy
 from database_legacy import *
+from student_identity import (
+    LINK_CODE_TTL,
+    generate_link_code,
+    hash_link_code,
+    is_late_trial_cancellation,
+    normalize_link_code,
+)
 
 MSK = _legacy.MSK
 
 
 async def _ensure_pool():
     await _legacy._ensure_pool()
+
+
+async def _student_for_account_conn(conn, platform: str, platform_user_id: int,
+                                    *, create: bool = True) -> Optional[int]:
+    platform = str(platform or "").lower()
+    if platform not in {"telegram", "vk"}:
+        raise ValueError("platform must be 'telegram' or 'vk'")
+    platform_user_id = int(platform_user_id)
+    student_id = await conn.fetchval(
+        "SELECT student_id FROM student_accounts WHERE platform=$1 AND platform_user_id=$2",
+        platform, platform_user_id,
+    )
+    if student_id or not create:
+        return student_id
+
+    # The caller holds a transaction. This prevents two bot processes from creating
+    # two profiles for the same platform account during first use.
+    lock_key = f"student-account:{platform}:{platform_user_id}"
+    await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", lock_key)
+    student_id = await conn.fetchval(
+        "SELECT student_id FROM student_accounts WHERE platform=$1 AND platform_user_id=$2",
+        platform, platform_user_id,
+    )
+    if student_id:
+        return student_id
+    student_id = await conn.fetchval("INSERT INTO student_profiles DEFAULT VALUES RETURNING id")
+    await conn.execute(
+        "INSERT INTO student_accounts(platform,platform_user_id,student_id) VALUES($1,$2,$3)",
+        platform, platform_user_id, student_id,
+    )
+    return student_id
 
 
 async def init_db():
@@ -29,6 +67,113 @@ async def init_db():
         for sql in migrations:
             await conn.execute(sql)
         await conn.execute("UPDATE bookings SET refund_status='none' WHERE refund_status IS NULL")
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('student-identity-schema-v1', 0))"
+            )
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS student_profiles (
+                    id BIGSERIAL PRIMARY KEY,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                CREATE TABLE IF NOT EXISTS student_accounts (
+                    platform TEXT NOT NULL CHECK (platform IN ('telegram','vk')),
+                    platform_user_id BIGINT NOT NULL,
+                    student_id BIGINT NOT NULL REFERENCES student_profiles(id) ON DELETE CASCADE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY(platform, platform_user_id),
+                    UNIQUE(student_id, platform)
+                );
+                CREATE TABLE IF NOT EXISTS account_link_tokens (
+                    token_hash TEXT PRIMARY KEY,
+                    source_student_id BIGINT NOT NULL REFERENCES student_profiles(id) ON DELETE CASCADE,
+                    source_platform TEXT NOT NULL CHECK (source_platform IN ('telegram','vk')),
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    consumed_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_account_link_tokens_expiry
+                ON account_link_tokens(expires_at);
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_account_link_tokens_source
+                ON account_link_tokens(source_student_id);
+                ALTER TABLE bookings ADD COLUMN IF NOT EXISTS student_id BIGINT
+                    REFERENCES student_profiles(id);
+                ALTER TABLE bookings ADD COLUMN IF NOT EXISTS booking_type TEXT NOT NULL
+                    DEFAULT 'regular';
+                ALTER TABLE bookings ADD COLUMN IF NOT EXISTS trial_consumed BOOLEAN NOT NULL
+                    DEFAULT FALSE;
+                ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS user_platform TEXT NOT NULL
+                    DEFAULT 'telegram';
+                ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS student_id BIGINT
+                    REFERENCES student_profiles(id);
+                ALTER TABLE pending_subscriptions ADD COLUMN IF NOT EXISTS student_id BIGINT
+                    REFERENCES student_profiles(id);
+                CREATE INDEX IF NOT EXISTS idx_bookings_student ON bookings(student_id, status);
+                CREATE INDEX IF NOT EXISTS idx_trial_student_tutor
+                    ON bookings(student_id, tutor_id)
+                    WHERE booking_type='trial';
+                CREATE INDEX IF NOT EXISTS idx_subscriptions_student
+                    ON subscriptions(student_id, active);
+                """
+            )
+
+            account_rows = await conn.fetch(
+                """
+                SELECT DISTINCT platform, platform_user_id
+                FROM (
+                    SELECT COALESCE(NULLIF(user_platform,''),'telegram') AS platform,
+                           user_id AS platform_user_id FROM bookings
+                    UNION
+                    SELECT COALESCE(NULLIF(user_platform,''),'telegram'), user_id
+                    FROM pending_subscriptions
+                    UNION
+                    SELECT COALESCE(NULLIF(user_platform,''),'telegram'), user_id
+                    FROM subscriptions
+                ) accounts
+                WHERE platform IN ('telegram','vk')
+                """
+            )
+            for account in account_rows:
+                await _student_for_account_conn(
+                    conn, account["platform"], account["platform_user_id"], create=True
+                )
+
+            await conn.execute(
+                """
+                UPDATE bookings b
+                SET student_id=a.student_id
+                FROM student_accounts a
+                WHERE b.student_id IS NULL
+                  AND a.platform=COALESCE(NULLIF(b.user_platform,''),'telegram')
+                  AND a.platform_user_id=b.user_id;
+
+                UPDATE subscriptions s
+                SET student_id=a.student_id
+                FROM student_accounts a
+                WHERE s.student_id IS NULL
+                  AND a.platform=COALESCE(NULLIF(s.user_platform,''),'telegram')
+                  AND a.platform_user_id=s.user_id;
+
+                UPDATE pending_subscriptions p
+                SET student_id=a.student_id
+                FROM student_accounts a
+                WHERE p.student_id IS NULL
+                  AND a.platform=COALESCE(NULLIF(p.user_platform,''),'telegram')
+                  AND a.platform_user_id=p.user_id;
+
+                UPDATE bookings
+                SET booking_type='trial'
+                WHERE subject LIKE 'Пробное: %' AND booking_type='regular';
+
+                UPDATE bookings
+                SET trial_consumed=TRUE
+                WHERE booking_type='trial' AND status='completed';
+                """
+            )
+            await conn.execute(
+                "DELETE FROM account_link_tokens WHERE expires_at < NOW() - INTERVAL '1 day'"
+            )
         await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS booking_events (
@@ -79,6 +224,9 @@ def _booking_dict(row) -> dict:
         "tinkoff_payment_id": row["tinkoff_payment_id"],
         "payment_msg_id": row["payment_msg_id"],
         "user_platform": row["user_platform"],
+        "student_id": row["student_id"],
+        "booking_type": row["booking_type"],
+        "trial_consumed": bool(row["trial_consumed"]),
         "payment_notified": bool(row["payment_notified"]),
         "balance_credited": bool(row["balance_credited"]),
         "cancelled_by": row["cancelled_by"],
@@ -103,6 +251,303 @@ async def get_booking(booking_id: int) -> Optional[dict]:
     async with _legacy.pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM bookings WHERE id=$1", booking_id)
     return _booking_dict(row) if row else None
+
+
+async def get_student_id(platform: str, platform_user_id: int, *, create: bool = True) -> Optional[int]:
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            return await _student_for_account_conn(
+                conn, platform, platform_user_id, create=create
+            )
+
+
+async def get_bookings_for_account(platform: str, platform_user_id: int,
+                                   statuses=None) -> dict[int, dict]:
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            student_id = await _student_for_account_conn(
+                conn, platform, platform_user_id, create=True
+            )
+            if statuses:
+                rows = await conn.fetch(
+                    "SELECT * FROM bookings WHERE student_id=$1 AND status=ANY($2::text[]) ORDER BY id",
+                    student_id, list(statuses),
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT * FROM bookings WHERE student_id=$1 ORDER BY id", student_id
+                )
+    return {row["id"]: _booking_dict(row) for row in rows}
+
+
+async def account_owns_booking(platform: str, platform_user_id: int, booking) -> bool:
+    if not booking:
+        return False
+    student_id = await get_student_id(platform, platform_user_id, create=True)
+    return bool(student_id and booking.get("student_id") == student_id)
+
+
+async def is_trial_available(platform: str, platform_user_id: int, tutor_id: int) -> bool:
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            student_id = await _student_for_account_conn(
+                conn, platform, platform_user_id, create=True
+            )
+            used = await conn.fetchval(
+                """
+                SELECT EXISTS(
+                    SELECT 1 FROM bookings
+                    WHERE student_id=$1 AND tutor_id=$2 AND booking_type='trial'
+                      AND (
+                          status IN ('pending','confirmed','paid','completed')
+                          OR trial_consumed=TRUE
+                      )
+                )
+                """,
+                student_id, tutor_id,
+            )
+    return not bool(used)
+
+
+async def get_linked_accounts(platform: str, platform_user_id: int) -> dict[str, int]:
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            student_id = await _student_for_account_conn(
+                conn, platform, platform_user_id, create=True
+            )
+            rows = await conn.fetch(
+                "SELECT platform,platform_user_id FROM student_accounts WHERE student_id=$1",
+                student_id,
+            )
+    return {row["platform"]: row["platform_user_id"] for row in rows}
+
+
+async def create_account_link_code(platform: str, platform_user_id: int) -> dict:
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            student_id = await _student_for_account_conn(
+                conn, platform, platform_user_id, create=True
+            )
+            accounts = await conn.fetch(
+                "SELECT platform,platform_user_id FROM student_accounts WHERE student_id=$1",
+                student_id,
+            )
+            if len(accounts) > 1:
+                return {"status": "already_linked", "accounts": {r["platform"]: r["platform_user_id"] for r in accounts}}
+
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                f"link-code:{student_id}",
+            )
+            await conn.execute(
+                "DELETE FROM account_link_tokens WHERE source_student_id=$1", student_id
+            )
+            for _ in range(3):
+                code = generate_link_code()
+                try:
+                    async with conn.transaction():
+                        await conn.execute(
+                            """
+                            INSERT INTO account_link_tokens
+                                (token_hash,source_student_id,source_platform,expires_at)
+                            VALUES($1,$2,$3,$4)
+                            """,
+                            hash_link_code(code), student_id, platform,
+                            datetime.now(timezone.utc) + LINK_CODE_TTL,
+                        )
+                except asyncpg.UniqueViolationError:
+                    continue
+                return {"status": "created", "code": code, "expires_minutes": 10}
+    raise RuntimeError("failed to create a unique account link code")
+
+
+async def consume_account_link_code(target_platform: str, target_platform_user_id: int,
+                                    code: str) -> dict:
+    target_platform = str(target_platform or "").lower()
+    normalized = normalize_link_code(code)
+    if not normalized:
+        return {"status": "invalid"}
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            token = await conn.fetchrow(
+                """
+                SELECT * FROM account_link_tokens
+                WHERE token_hash=$1
+                FOR UPDATE
+                """,
+                hash_link_code(normalized),
+            )
+            if not token or token["consumed_at"] is not None:
+                return {"status": "invalid"}
+            if token["expires_at"] <= datetime.now(timezone.utc):
+                return {"status": "expired"}
+            if token["source_platform"] == target_platform:
+                return {"status": "same_platform"}
+
+            target_student_id = await _student_for_account_conn(
+                conn, target_platform, target_platform_user_id, create=True
+            )
+            source_student_id = token["source_student_id"]
+            for student_id in sorted({source_student_id, target_student_id}):
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    f"student-merge:{student_id}",
+                )
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    f"link-code:{student_id}",
+                )
+
+            source_accounts = await conn.fetch(
+                "SELECT platform,platform_user_id FROM student_accounts WHERE student_id=$1",
+                source_student_id,
+            )
+            target_accounts = await conn.fetch(
+                "SELECT platform,platform_user_id FROM student_accounts WHERE student_id=$1",
+                target_student_id,
+            )
+            source_map = {r["platform"]: r["platform_user_id"] for r in source_accounts}
+            target_map = {r["platform"]: r["platform_user_id"] for r in target_accounts}
+
+            if source_student_id == target_student_id:
+                await conn.execute(
+                    "UPDATE account_link_tokens SET consumed_at=NOW() WHERE token_hash=$1",
+                    token["token_hash"],
+                )
+                return {"status": "already_linked", "accounts": source_map}
+            if target_platform in source_map or token["source_platform"] in target_map:
+                return {"status": "account_conflict"}
+
+            conflicting_tutor = await conn.fetchval(
+                """
+                SELECT tutor_id
+                FROM bookings
+                WHERE student_id=ANY($1::bigint[]) AND booking_type='trial'
+                  AND (status IN ('pending','confirmed','paid','completed') OR trial_consumed=TRUE)
+                GROUP BY tutor_id
+                HAVING COUNT(DISTINCT student_id)>1
+                LIMIT 1
+                """,
+                [source_student_id, target_student_id],
+            )
+            if conflicting_tutor is not None:
+                return {"status": "trial_conflict", "tutor_id": conflicting_tutor}
+
+            await conn.execute(
+                "UPDATE bookings SET student_id=$1 WHERE student_id=$2",
+                source_student_id, target_student_id,
+            )
+            await conn.execute(
+                "UPDATE subscriptions SET student_id=$1 WHERE student_id=$2",
+                source_student_id, target_student_id,
+            )
+            await conn.execute(
+                "UPDATE pending_subscriptions SET student_id=$1 WHERE student_id=$2",
+                source_student_id, target_student_id,
+            )
+            await conn.execute(
+                "UPDATE student_accounts SET student_id=$1 WHERE student_id=$2",
+                source_student_id, target_student_id,
+            )
+            await conn.execute(
+                "DELETE FROM account_link_tokens WHERE source_student_id=$1",
+                target_student_id,
+            )
+            await conn.execute(
+                "UPDATE account_link_tokens SET source_student_id=$1 WHERE source_student_id=$2",
+                source_student_id, target_student_id,
+            )
+            await conn.execute(
+                "UPDATE account_link_tokens SET consumed_at=NOW() WHERE token_hash=$1",
+                token["token_hash"],
+            )
+            await conn.execute("DELETE FROM student_profiles WHERE id=$1", target_student_id)
+
+            accounts = {**source_map, **target_map}
+            return {
+                "status": "linked",
+                "accounts": accounts,
+                "source_platform": token["source_platform"],
+                "source_platform_user_id": source_map[token["source_platform"]],
+            }
+
+
+async def get_student_subscriptions(user_id: int, user_platform: str = "telegram") -> list:
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            student_id = await _student_for_account_conn(
+                conn, user_platform, user_id, create=True
+            )
+            rows = await conn.fetch(
+                """
+                SELECT * FROM subscriptions
+                WHERE student_id=$1 AND active=1 AND remaining_lessons>0
+                ORDER BY id
+                """,
+                student_id,
+            )
+    return [dict(row) for row in rows]
+
+
+async def add_pending_subscription(user_id: int, tutor_id: int, subject: str,
+                                   total_lessons: int, discount_percent: int,
+                                   total_price, payment_id: str,
+                                   user_platform: str = "telegram") -> int:
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            student_id = await _student_for_account_conn(
+                conn, user_platform, user_id, create=True
+            )
+            return await conn.fetchval(
+                """
+                INSERT INTO pending_subscriptions
+                    (user_id,tutor_id,subject,total_lessons,discount_percent,total_price,
+                     payment_id,user_platform,student_id)
+                VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                ON CONFLICT(payment_id) DO UPDATE SET payment_id=EXCLUDED.payment_id
+                RETURNING id
+                """,
+                user_id, tutor_id, subject, total_lessons, discount_percent,
+                total_price, payment_id, user_platform, student_id,
+            )
+
+
+async def activate_subscription(payment_id: str) -> bool:
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            pending = await conn.fetchrow(
+                "SELECT * FROM pending_subscriptions WHERE payment_id=$1 FOR UPDATE",
+                payment_id,
+            )
+            if not pending:
+                return False
+            student_id = pending["student_id"]
+            if not student_id:
+                student_id = await _student_for_account_conn(
+                    conn, pending["user_platform"] or "telegram", pending["user_id"], create=True
+                )
+            await conn.execute(
+                """
+                INSERT INTO subscriptions
+                    (user_id,tutor_id,subject,total_lessons,remaining_lessons,
+                     discount_percent,active,user_platform,student_id)
+                VALUES($1,$2,$3,$4,$4,$5,1,$6,$7)
+                """,
+                pending["user_id"], pending["tutor_id"], pending["subject"],
+                pending["total_lessons"], pending["discount_percent"],
+                pending["user_platform"] or "telegram", student_id,
+            )
+            await conn.execute("DELETE FROM pending_subscriptions WHERE id=$1", pending["id"])
+            return True
 
 
 async def _add_booking_event(conn, booking_id: int, event_type: str, old_status=None, new_status=None,
@@ -150,26 +595,52 @@ async def _sync_booking_record_safely(booking_id: int):
 
 
 async def add_booking(tutor_id, user_id, username, subject, date, time_slot,
-                      channel_msg_id=None, user_platform="telegram"):
+                      channel_msg_id=None, user_platform="telegram", booking_type="regular"):
     """Создаёт бронь и сразу начинает неизменяемую историю событий."""
     await _ensure_pool()
+    booking_type = str(booking_type or "regular").lower()
+    if booking_type not in {"regular", "trial"}:
+        raise ValueError("booking_type must be 'regular' or 'trial'")
     async with _legacy.pool.acquire() as conn:
         try:
             async with conn.transaction():
+                student_id = await _student_for_account_conn(
+                    conn, user_platform, user_id, create=True
+                )
+                if booking_type == "trial":
+                    await conn.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                        f"trial:{student_id}:{int(tutor_id)}",
+                    )
+                    already_has_trial = await conn.fetchval(
+                        """
+                        SELECT EXISTS(
+                            SELECT 1 FROM bookings
+                            WHERE student_id=$1 AND tutor_id=$2 AND booking_type='trial'
+                              AND (
+                                  status IN ('pending','confirmed','paid','completed')
+                                  OR trial_consumed=TRUE
+                              )
+                        )
+                        """,
+                        student_id, tutor_id,
+                    )
+                    if already_has_trial:
+                        return None
                 booking_id = await conn.fetchval(
                     """
                     INSERT INTO bookings
                         (tutor_id,user_id,username,subject,date,time_slot,status,reminded,
-                         channel_msg_id,user_platform)
-                    VALUES($1,$2,$3,$4,$5,$6,'pending',0,$7,$8)
+                         channel_msg_id,user_platform,student_id,booking_type)
+                    VALUES($1,$2,$3,$4,$5,$6,'pending',0,$7,$8,$9,$10)
                     RETURNING id
                     """,
                     tutor_id, user_id, username, subject, date, time_slot,
-                    channel_msg_id, user_platform,
+                    channel_msg_id, user_platform, student_id, booking_type,
                 )
                 await _add_booking_event(
                     conn, booking_id, "created", None, "pending", "student", user_id,
-                    {"platform": user_platform},
+                    {"platform": user_platform, "booking_type": booking_type},
                 )
         except asyncpg.UniqueViolationError:
             return None
@@ -193,6 +664,7 @@ async def update_booking(booking_id, **kwargs):
         "tinkoff_payment_id", "payment_msg_id", "user_platform", "payment_notified",
         "balance_credited", "date", "time_slot", "subject", "username",
         "cancelled_by", "cancel_reason", "cancelled_at", "refund_status", "refund_updated_at",
+        "trial_consumed",
     }
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
@@ -211,6 +683,17 @@ async def update_booking(booking_id, **kwargs):
                 if old["status"] == "paid" and (old["refund_status"] or "none") == "none":
                     fields.setdefault("refund_status", "required")
                     fields.setdefault("refund_updated_at", datetime.now(tz=MSK))
+            if old["booking_type"] == "trial" and old["status"] != target_status:
+                if target_status == "completed":
+                    fields["trial_consumed"] = True
+                elif target_status == "cancelled" and actor_type == "student":
+                    try:
+                        fields["trial_consumed"] = is_late_trial_cancellation(
+                            old["date"], old["time_slot"], datetime.now(tz=MSK).replace(tzinfo=None)
+                        )
+                    except (ValueError, TypeError, AttributeError):
+                        logging.exception("Cannot calculate trial cancellation boundary for booking %s", booking_id)
+                        fields["trial_consumed"] = True
             fields["updated_at"] = datetime.now(tz=MSK)
             set_clause = ", ".join(f"{key}=${i}" for i, key in enumerate(fields, start=1))
             values = list(fields.values()) + [booking_id]
@@ -227,6 +710,8 @@ async def update_booking(booking_id, **kwargs):
                         "amount": fields.get("amount", old["amount"]),
                         "payment_id": fields.get("tinkoff_payment_id", old["tinkoff_payment_id"]),
                     })
+                if old["booking_type"] == "trial" and "trial_consumed" in fields:
+                    details["trial_consumed"] = bool(fields["trial_consumed"])
                 await _add_booking_event(
                     conn, booking_id, event_type or fields["status"],
                     old["status"], fields["status"], actor_type, actor_id, details,
@@ -270,19 +755,33 @@ async def change_booking_status(booking_id: int, new_status: str, *, event_type:
                 if old["status"] == "paid" and refund_status == "none":
                     refund_status = "required"
                     refund_updated_at = datetime.now(tz=MSK)
+            trial_consumed = bool(old["trial_consumed"])
+            if old["booking_type"] == "trial":
+                if new_status == "completed":
+                    trial_consumed = True
+                elif new_status == "cancelled" and actor_type == "student":
+                    try:
+                        trial_consumed = is_late_trial_cancellation(
+                            old["date"], old["time_slot"], datetime.now(tz=MSK).replace(tzinfo=None)
+                        )
+                    except (ValueError, TypeError, AttributeError):
+                        logging.exception("Cannot calculate trial cancellation boundary for booking %s", booking_id)
+                        trial_consumed = True
             updated = await conn.fetchrow(
                 """
                 UPDATE bookings
                 SET status=$1,cancelled_by=$2,cancel_reason=$3,cancelled_at=$4,
-                    refund_status=$5,refund_updated_at=$6,updated_at=NOW()
-                WHERE id=$7 RETURNING *
+                    refund_status=$5,refund_updated_at=$6,trial_consumed=$7,updated_at=NOW()
+                WHERE id=$8 RETURNING *
                 """,
                 new_status, cancelled_by, cancel_reason, cancelled_at,
-                refund_status, refund_updated_at, booking_id,
+                refund_status, refund_updated_at, trial_consumed, booking_id,
             )
             event_details = dict(details or {})
             if reason:
                 event_details["reason"] = reason
+            if old["booking_type"] == "trial":
+                event_details["trial_consumed"] = trial_consumed
             await _add_booking_event(
                 conn, booking_id, event_type or new_status, old["status"], new_status,
                 actor_type, actor_id, event_details,
@@ -471,13 +970,18 @@ async def mark_booking_refunded(booking_id: int, admin_id: int) -> bool:
 
 
 async def cleanup_old_bookings():
-    """Автоматически завершает оплаченные уроки и фиксирует время завершения."""
+    """Автоматически завершает оплаченные и бесплатные пробные уроки."""
     await _ensure_pool()
     now = datetime.now(MSK).replace(tzinfo=None)
     completed_ids = []
     affected = set()
     async with _legacy.pool.acquire() as conn:
-        rows = await conn.fetch("SELECT * FROM bookings WHERE status='paid'")
+        rows = await conn.fetch(
+            """
+            SELECT * FROM bookings
+            WHERE status='paid' OR (status='confirmed' AND booking_type='trial')
+            """
+        )
         for row in rows:
             try:
                 end_part = row["time_slot"].split("-")[-1].replace(".", ":")
@@ -489,14 +993,23 @@ async def cleanup_old_bookings():
                 continue
             async with conn.transaction():
                 current = await conn.fetchrow("SELECT * FROM bookings WHERE id=$1 FOR UPDATE", row["id"])
-                if not current or current["status"] != "paid":
+                if not current or not (
+                    current["status"] == "paid"
+                    or (current["status"] == "confirmed" and current["booking_type"] == "trial")
+                ):
                     continue
                 await conn.execute(
-                    "UPDATE bookings SET status='completed',updated_at=NOW() WHERE id=$1",
+                    """
+                    UPDATE bookings
+                    SET status='completed',
+                        trial_consumed=CASE WHEN booking_type='trial' THEN TRUE ELSE trial_consumed END,
+                        updated_at=NOW()
+                    WHERE id=$1
+                    """,
                     row["id"],
                 )
                 await _add_booking_event(
-                    conn, row["id"], "completed", "paid", "completed", "system", None,
+                    conn, row["id"], "completed", current["status"], "completed", "system", None,
                     {"reason": "Время занятия завершилось"},
                 )
                 completed_ids.append(row["id"])

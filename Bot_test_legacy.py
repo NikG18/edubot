@@ -27,7 +27,9 @@ from database import (
     get_pending_email_request, delete_pending_email_request, close_db, cleanup_old_bookings,
     add_pending_subscription, activate_subscription, get_pending_subscription_by_payment_id ,delete_pending_subscription ,
     is_autopay_enabled, set_autopay_enabled, get_booking, get_booked_slots,
-    mark_booking_paid_once, mark_booking_payment_failed, reschedule_booking, move_booking_in_place
+    mark_booking_paid_once, mark_booking_payment_failed, reschedule_booking, move_booking_in_place,
+    create_account_link_code, consume_account_link_code, get_bookings_for_account,
+    is_trial_available
 )
 from aiogram.exceptions import TelegramBadRequest
 from payments import create_payment, check_payment
@@ -271,6 +273,7 @@ async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="💳 Оплата")],
         #[KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
         [KeyboardButton(text="✉️ Связь с преподавателем")],
+        [KeyboardButton(text="🔗 Связать VK и Telegram")],
         [KeyboardButton(text="🆘 Поддержка")],
         [KeyboardButton(text="❓ Помощь")],
     ]
@@ -454,6 +457,67 @@ async def back_to_menu(call: CallbackQuery, state: FSMContext):
         logging.exception("Не удалось показать главное меню")
 
 
+async def _finish_account_link(message: Message, code: str):
+    result = await consume_account_link_code("telegram", message.from_user.id, code)
+    status = result["status"]
+    if status in {"linked", "already_linked"}:
+        await message.answer(
+            "✅ Аккаунты VK и Telegram связаны. Записи, абонементы и лимит пробных "
+            "теперь относятся к одному профилю.",
+            reply_markup=await get_main_menu(message.from_user.id),
+        )
+        if status == "linked":
+            await send_to_user(
+                result["source_platform_user_id"],
+                result["source_platform"],
+                "✅ Ваши аккаунты VK и Telegram успешно связаны.",
+            )
+        return
+    messages = {
+        "invalid": "❌ Код не найден или уже использован. Создайте новый код во втором боте.",
+        "expired": "⌛ Срок действия кода истёк. Создайте новый код во втором боте.",
+        "same_platform": "❌ Этот код создан в Telegram. Введите его в VK-боте.",
+        "account_conflict": "⚠️ Один из аккаунтов уже связан с другим профилем. Напишите в поддержку.",
+        "trial_conflict": (
+            "⚠️ В обоих профилях уже есть пробное у одного и того же репетитора. "
+            "Автоматически объединить профили нельзя — напишите в поддержку."
+        ),
+    }
+    await message.answer(messages.get(status, "❌ Не удалось связать аккаунты. Напишите в поддержку."))
+
+
+async def _send_account_link_code(message: Message):
+    result = await create_account_link_code("telegram", message.from_user.id)
+    if result["status"] == "already_linked":
+        await message.answer("✅ Этот Telegram уже связан с VK.")
+        return
+    await message.answer(
+        "Откройте VK-бот и отправьте ему сообщение:\n\n"
+        f"<code>Связать {result['code']}</code>\n\n"
+        "Код одноразовый и действует 10 минут. Передавайте его только между своими аккаунтами."
+    )
+
+
+@dp.message(Command("link"))
+async def link_accounts_command(message: Message):
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) == 2:
+        await _finish_account_link(message, parts[1])
+        return
+    await _send_account_link_code(message)
+
+
+@dp.message(F.text == "🔗 Связать VK и Telegram")
+async def link_accounts_button(message: Message):
+    await _send_account_link_code(message)
+
+
+@dp.message(F.text.regexp(r"(?i)^связать[\s:=-]+[23456789a-hj-np-z\s-]+$"))
+async def link_accounts_code(message: Message):
+    code = re.split(r"[\s:=-]+", message.text or "", maxsplit=1)[-1]
+    await _finish_account_link(message, code)
+
+
 # ==================== ИНФОРМАЦИЯ О РЕПЕТИТОРАХ ====================
 @dp.message(F.text.in_(["ℹ️ Информация о репетиторах"]))
 async def repet(message: types.Message):
@@ -515,6 +579,12 @@ async def start_trials_booking(call: CallbackQuery, state: FSMContext):
         if call.message.content_type != 'text':
             await call.message.delete()
         await call.message.answer("Репетитор не найден.")
+        return
+    if not await is_trial_available("telegram", call.from_user.id, tid):
+        await call.message.answer(
+            "Пробное занятие с этим репетитором уже было использовано или у вас уже есть активная заявка. "
+            "Следующее занятие можно записать как обычное."
+        )
         return
 
     await state.update_data(tutor_id=tid, tutor_name=tutor["name"])
@@ -706,9 +776,22 @@ async def confirm_trial_booking(call: CallbackQuery, state: FSMContext, bot: Bot
     username = user.username or user.full_name
     uid = user.id
 
-    new_id = await add_booking(tid, uid, username, subject, date, slot, user_platform='telegram')
+    if not await is_trial_available("telegram", uid, tid):
+        await call.message.edit_text(
+            "Пробное занятие с этим репетитором уже использовано или заявка уже создана."
+        )
+        await state.clear()
+        return
+
+    new_id = await add_booking(
+        tid, uid, username, subject, date, slot,
+        user_platform='telegram', booking_type='trial'
+    )
     if new_id is None:
-        await call.message.edit_text("⚠️ Этот слот только что заняли. Выберите другое время.")
+        if not await is_trial_available("telegram", uid, tid):
+            await call.message.edit_text("Пробное занятие с этим репетитором уже использовано или заявка уже создана.")
+        else:
+            await call.message.edit_text("⚠️ Этот слот только что заняли. Выберите другое время.")
         await state.clear()
         await call.message.answer("Главное меню:", reply_markup=await get_main_menu(uid))
         return
@@ -1096,8 +1179,8 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
 async def show_student_stats(call: CallbackQuery):
     await safe_answer(call)
     user_id = call.from_user.id
-    bookings = await get_all_bookings()
-    completed = sum(1 for b in bookings.values() if b["user_id"] == user_id and b["status"] == "completed")
+    bookings = await get_bookings_for_account("telegram", user_id, statuses={"completed"})
+    completed = len(bookings)
     subs = await get_student_subscriptions(user_id)
     sub_text = ""
     tutors = await get_all_tutors()
@@ -1408,9 +1491,11 @@ async def back_to_payment_menu(call: CallbackQuery):
 @dp.callback_query(F.data == "pay_booking")
 async def pay_booking_list(call: CallbackQuery):
     user_id = call.from_user.id
-    bookings = await get_all_bookings()
-    unpaid = [(bid, b) for bid, b in bookings.items()
-              if b["user_id"] == user_id and b["status"] == "confirmed"]
+    bookings = await get_bookings_for_account("telegram", user_id, statuses={"confirmed"})
+    unpaid = [
+        (bid, b) for bid, b in bookings.items()
+        if b.get("booking_type") != "trial"
+    ]
     if not unpaid:
         await call.message.edit_text("У вас нет неоплаченных занятий.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_payment_menu")]
@@ -3727,6 +3812,9 @@ async def help(message: types.Message):
         "За час до начала подтверждённого занятия и ученик, и преподаватель получают автоматическое напоминание.\n\n"
         "⚠️ <b>Важные правила</b>\n"
         "• Отмена и перенос занятия возможны <b>не позднее чем за 24 часа</b> до его начала.\n"
+        "• Каждому ученику доступно одно пробное занятие у каждого репетитора независимо от предмета. "
+        "При отмене более чем за 24 часа пробное сохраняется; при поздней отмене или неявке считается использованным.\n"
+        "• Кнопка <b>«Связать VK и Telegram»</b> объединяет ваши записи, абонементы и лимит пробных в двух ботах.\n"
         "• Все записи, изменения и подтверждения сохраняются автоматически.\n"
         "• Для возврата в главное меню используйте кнопку <b>«Назад в меню»</b> или команду /start.\n"
         "• Если у вас нет доступа к нужному разделу, обратитесь в поддержку – администратор поможет с настройками."
@@ -3810,7 +3898,8 @@ async def send_reminders(bot: Bot):
     now = now_msk_naive()
     bookings = await get_all_bookings()
     for bid, b in bookings.items():
-        if b.get("status") != "paid":
+        is_confirmed_trial = b.get("status") == "confirmed" and b.get("booking_type") == "trial"
+        if b.get("status") != "paid" and not is_confirmed_trial:
             continue
         if b.get("reminded"):
             continue

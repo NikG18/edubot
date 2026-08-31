@@ -34,8 +34,12 @@ def valid_email(value: str) -> bool:
     return bool(value and len(value) <= 254 and EMAIL_RE.fullmatch(value))
 
 
-async def actor_is_booking_owner(booking: Optional[dict], actor_id: int) -> bool:
-    return bool(booking and booking.get("user_id") == actor_id)
+async def actor_is_booking_owner(booking: Optional[dict], actor_id: int,
+                                 platform: str = "telegram") -> bool:
+    if not booking:
+        return False
+    from database import account_owns_booking
+    return await account_owns_booking(platform, actor_id, booking)
 
 
 async def actor_is_tutor_for_booking(booking: Optional[dict], actor_platform_id: int, platform: str) -> bool:
