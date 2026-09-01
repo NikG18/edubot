@@ -5,6 +5,7 @@ from student_identity import (
     generate_link_code,
     hash_link_code,
     is_late_trial_cancellation,
+    normalize_email,
     normalize_link_code,
 )
 
@@ -40,6 +41,11 @@ class TrialCancellationTests(unittest.TestCase):
     def test_less_than_24_hours_consumes_trial(self):
         now = datetime(2026, 8, 30, 12, 0)
         self.assertTrue(is_late_trial_cancellation("31.08.2026", "11:59-12:59", now))
+
+
+class EmailNormalizationTests(unittest.TestCase):
+    def test_email_is_trimmed_and_casefolded(self):
+        self.assertEqual(normalize_email("  Student@Example.COM "), "student@example.com")
 
 
 if __name__ == "__main__":

@@ -14,6 +14,11 @@ LINK_CODE_TTL = timedelta(minutes=10)
 _LINK_CODE_RE = re.compile(r"^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$")
 
 
+def normalize_email(value: str) -> str:
+    """Нормализует e-mail для внутреннего сопоставления без изменения адреса."""
+    return (value or "").strip().casefold()
+
+
 def generate_link_code() -> str:
     """Return a copy-friendly, high-entropy, one-time account link code."""
     return "".join(secrets.choice(LINK_CODE_ALPHABET) for _ in range(LINK_CODE_LENGTH))

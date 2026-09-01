@@ -29,7 +29,7 @@ def _stack_has_caller(name: str) -> bool:
 
 async def _contextual_add_booking(tutor_id, user_id, username, subject, date, time_slot,
                                   channel_msg_id=None, user_platform="telegram",
-                                  booking_type="regular"):
+                                  booking_type="regular", trial_email=None):
     if _stack_has_caller("confirm_trial_booking"):
         booking_type = "trial"
     return await _db.add_booking(
@@ -37,6 +37,7 @@ async def _contextual_add_booking(tutor_id, user_id, username, subject, date, ti
         channel_msg_id=channel_msg_id,
         user_platform=user_platform,
         booking_type=booking_type,
+        trial_email=trial_email,
     )
 
 
@@ -395,7 +396,7 @@ async def _trial_aware_tutor_confirm_booking(call, bot, state):
             "✅ Бесплатное пробное занятие подтверждено!\n"
             f"📚 {booking['subject']}\n"
             f"📅 {booking['date']} 🕒 {booking['time_slot']}\n\n"
-            "Оплата и email не требуются."
+            "Оплата не требуется."
         ),
     )
     await state.clear()

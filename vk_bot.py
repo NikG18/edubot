@@ -137,7 +137,7 @@ _original_add_booking = _db.add_booking
 
 async def _contextual_add_booking(tutor_id, user_id, username, subject, date, time_slot,
                                   channel_msg_id=None, user_platform="telegram",
-                                  booking_type="regular"):
+                                  booking_type="regular", trial_email=None):
     if _stack_has_caller("confirm_trial_booking") and not str(subject).startswith(TRIAL_PREFIX):
         subject = f"{TRIAL_PREFIX}{subject}"
         booking_type = "trial"
@@ -145,6 +145,7 @@ async def _contextual_add_booking(tutor_id, user_id, username, subject, date, ti
         tutor_id, user_id, username, subject, date, time_slot,
         channel_msg_id=channel_msg_id, user_platform=user_platform,
         booking_type="trial" if str(subject).startswith(TRIAL_PREFIX) else booking_type,
+        trial_email=trial_email,
     )
 
 
@@ -188,7 +189,7 @@ async def _trial_aware_tutor_confirm_booking(event):
             "✅ Бесплатное пробное занятие подтверждено!\n"
             f"📚 {clean_subject}\n"
             f"📅 {booking['date']} 🕒 {booking['time_slot']}\n\n"
-            "Оплата и email не требуются."
+            "Оплата не требуется."
         ),
     )
     await legacy.edit_event_message(event, "✅ Бесплатное пробное занятие подтверждено. Оплата не требуется.")
