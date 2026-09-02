@@ -711,7 +711,7 @@ async def _show_admin_booking(call, booking_id: int):
         f"{cancelled_line}"
     )
     buttons = []
-    if booking["status"] in {"pending", "confirmed", "paid"}:
+    if booking["status"] in {"pending", "confirmed", "paid", "completed"}:
         buttons.append([
             legacy.InlineKeyboardButton(
                 text="❌ Отменить занятие",
@@ -805,10 +805,11 @@ async def admin_booking_cancel_confirm(call: legacy.CallbackQuery):
         await call.message.edit_text("Занятие не найдено.")
         return
     warning = ""
-    if booking["status"] == "paid":
+    if booking["status"] in {"paid", "completed"} and (booking.get("amount") or 0) > 0:
         warning = (
-            "\n\n⚠️ Занятие оплачено. После отмены возврат будет отмечен как "
-            "<b>требуется</b>, но деньги автоматически не возвращаются."
+            "\n\n⚠️ Это оплаченное занятие. После отмены оно будет исключено из статистики "
+            "за месяц занятия, а возврат будет отмечен как <b>требуется</b>. "
+            "Фактический возврат денег выполняется отдельно."
         )
     keyboard = legacy.InlineKeyboardMarkup(inline_keyboard=[
         [legacy.InlineKeyboardButton(text="✅ Да, отменить", callback_data=f"admin_do_booking_cancel_{booking_id}")],
