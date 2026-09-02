@@ -109,6 +109,10 @@ def build_agent_receipt(
     """Строит чек ФФД 1.2 для услуги самозанятого принципала через агента."""
     if amount_kop <= 0:
         raise ValueError("Сумма чека должна быть положительной")
+    if payment_method not in {"full_prepayment", "full_payment"}:
+        raise ValueError("Неподдерживаемый способ расчета для занятия")
+    if closing and payment_method != "full_payment":
+        raise ValueError("Закрывающий чек должен иметь способ расчета full_payment")
     name, supplier_inn, phone = _validate_supplier(tutor_name, inn, supplier_phone)
     email = (customer_email or "").strip()
     if not email:
@@ -133,6 +137,9 @@ def build_agent_receipt(
         },
     }
     receipt = {
+        # CloudKassir работает через интеграцию в T-Bank. Для новой кассы формат
+        # должен совпадать и в кабинете эквайринга, и в каждом объекте Receipt.
+        "FfdVersion": "1.2",
         "Email": email,
         # API T-Bank использует usn_income; АУСН определяется ФНС по ИНН пользователя ККТ.
         "Taxation": "usn_income",
