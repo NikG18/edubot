@@ -6,6 +6,7 @@ import database as _db
 import Bot_test_legacy as legacy
 from Bot_test_legacy import *
 from booking_records import format_dt, render_event, sync_booking_record
+from fiscal_agent import get_tutor_phone, normalize_supplier_phone, set_tutor_phone
 
 
 def _is_trial(booking) -> bool:
@@ -546,15 +547,116 @@ _original_admin_actions_keyboard = legacy.admin_actions_keyboard
 
 def admin_actions_keyboard():
     keyboard = _original_admin_actions_keyboard()
-    button = legacy.InlineKeyboardButton(
+    bookings_button = legacy.InlineKeyboardButton(
         text="📚 Управление занятиями",
         callback_data="admin_bookings",
     )
-    keyboard.inline_keyboard.insert(1, [button])
+    phones_button = legacy.InlineKeyboardButton(
+        text="📞 Телефоны репетиторов",
+        callback_data="admin_tutor_phones",
+    )
+    keyboard.inline_keyboard.insert(1, [bookings_button])
+    keyboard.inline_keyboard.insert(2, [phones_button])
     return keyboard
 
 
 legacy.admin_actions_keyboard = admin_actions_keyboard
+
+
+class FiscalAdminStates(legacy.StatesGroup):
+    waiting_tutor_phone = legacy.State()
+
+
+async def _tutor_phone_keyboard():
+    tutors = await _db.get_all_tutors()
+    buttons = []
+    for tutor_id, tutor in tutors.items():
+        phone = await get_tutor_phone(tutor_id)
+        label = f"{tutor['name']} · {phone or 'телефон не указан'}"
+        buttons.append([
+            legacy.InlineKeyboardButton(
+                text=label[:60],
+                callback_data=f"admin_tutor_phone_{tutor_id}",
+            )
+        ])
+    buttons.append([
+        legacy.InlineKeyboardButton(
+            text="🔙 В админ-панель",
+            callback_data="admin_panel_open",
+        )
+    ])
+    return legacy.InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@legacy.dp.callback_query(legacy.F.data == "admin_tutor_phones")
+async def admin_tutor_phones(call: legacy.CallbackQuery, state: legacy.FSMContext):
+    await legacy.safe_answer(call)
+    if call.from_user.id != legacy.ADMING_ID:
+        return
+    await state.clear()
+    await call.message.edit_text(
+        "📞 <b>Телефоны репетиторов</b>\n\n"
+        "Выберите репетитора. Номер попадёт в реквизиты поставщика "
+        "агентского фискального чека.",
+        reply_markup=await _tutor_phone_keyboard(),
+    )
+
+
+@legacy.dp.callback_query(legacy.F.data.regexp(r"^admin_tutor_phone_\d+$"))
+async def admin_tutor_phone_start(call: legacy.CallbackQuery, state: legacy.FSMContext):
+    await legacy.safe_answer(call)
+    if call.from_user.id != legacy.ADMING_ID:
+        return
+    tutor_id = int(call.data.rsplit("_", 1)[1])
+    tutors = await _db.get_all_tutors()
+    tutor = tutors.get(tutor_id)
+    if not tutor:
+        await call.message.edit_text("Репетитор не найден.")
+        return
+    current = await get_tutor_phone(tutor_id)
+    await state.update_data(fiscal_phone_tutor_id=tutor_id)
+    await state.set_state(FiscalAdminStates.waiting_tutor_phone)
+    await call.message.edit_text(
+        f"Репетитор: <b>{legacy.html.quote(str(tutor['name']))}</b>\n"
+        f"Текущий телефон: <code>{legacy.html.quote(current or 'не указан')}</code>\n\n"
+        "Отправьте контактный телефон поставщика, например "
+        "<code>+79991234567</code>. Пробелы, скобки и дефисы допустимы."
+    )
+
+
+@legacy.dp.message(FiscalAdminStates.waiting_tutor_phone)
+async def admin_tutor_phone_save(message: legacy.Message, state: legacy.FSMContext):
+    if message.from_user.id != legacy.ADMING_ID:
+        await state.clear()
+        return
+    phone = normalize_supplier_phone(message.text)
+    if not phone:
+        await message.answer(
+            "Некорректный номер. Отправьте от 7 до 18 цифр, "
+            "например <code>+79991234567</code>."
+        )
+        return
+    data = await state.get_data()
+    tutor_id = data.get("fiscal_phone_tutor_id")
+    saved = await set_tutor_phone(tutor_id, phone) if tutor_id else None
+    await state.clear()
+    if not saved:
+        await message.answer("Репетитор не найден, телефон не сохранён.")
+        return
+    await message.answer(
+        f"✅ Телефон для <b>{legacy.html.quote(str(saved['name']))}</b> сохранён: "
+        f"<code>{legacy.html.quote(saved['phone'])}</code>",
+        reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=[
+            [legacy.InlineKeyboardButton(
+                text="📞 К телефонам репетиторов",
+                callback_data="admin_tutor_phones",
+            )],
+            [legacy.InlineKeyboardButton(
+                text="🔙 В админ-панель",
+                callback_data="admin_panel_open",
+            )],
+        ]),
+    )
 
 
 async def _show_admin_booking(call, booking_id: int):
