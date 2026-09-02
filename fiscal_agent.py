@@ -48,6 +48,29 @@ async def get_tutor_phone(tutor_id: int) -> str:
     return normalize_supplier_phone(value)
 
 
+async def set_tutor_phone(tutor_id: int, value: str):
+    """Сохраняет нормализованный контакт поставщика и возвращает обновлённую запись."""
+    phone = normalize_supplier_phone(value)
+    if not phone:
+        raise ValueError(
+            "Телефон должен содержать от 7 до 18 цифр, например +79991234567."
+        )
+    await ensure_fiscal_schema()
+    async with _db._legacy.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "UPDATE tutors SET phone=$1 WHERE id=$2 RETURNING id, name, phone",
+            phone,
+            int(tutor_id),
+        )
+    if not row:
+        return None
+    return {
+        "id": int(row["id"]),
+        "name": row["name"],
+        "phone": normalize_supplier_phone(row["phone"]),
+    }
+
+
 def install(legacy):
     """Добавляет phone к словарям get_all_tutors() конкретного bot legacy-модуля."""
     if getattr(legacy, "_fiscal_supplier_layer_installed", False):
