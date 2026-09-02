@@ -111,6 +111,165 @@ https://developer.tbank.ru/eacq/api/cancel
 - `payment_reuse_telegram.py`, `payment_reuse_vk.py` — обязательная проверка ИНН/телефона и сохранение snapshot;
 - `fiscal_admin.py` — безопасные smoke-команды.
 
+## Пошаговый smoke на Timeweb
+
+Все команды ниже выполняются только в тестовом worktree. Production-каталог
+`/home/nikg18/edubots/bot` и ветку `main` не изменять.
+
+### 1. Обновить тестовую ветку
+
+```bash
+cd /home/nikg18/edubots/bot-legal-test
+git status --short
+git branch --show-current
+```
+
+Если `git status --short` вывел хотя бы одну строку, остановиться: сначала нужно
+разобраться с локальными изменениями, не выполнять `reset` или `stash` вслепую.
+Если рабочее дерево чистое:
+
+```bash
+git fetch origin
+git switch feature/agent-fiscal-receipts
+git pull --ff-only origin feature/agent-fiscal-receipts
+git rev-parse --short HEAD
+```
+
+### 2. Проверить код до запуска
+
+```bash
+PY=/home/nikg18/edubots/venv/bin/python
+$PY -m py_compile Bot_test.py vk_bot.py fiscal_agent.py fiscal_receipts.py \
+  fiscal_admin.py payments.py payment_reuse_telegram.py payment_reuse_vk.py \
+  Bot_test_legal.py vk_bot_legal.py webhook_server.py
+$PY -m unittest tests.test_fiscal_receipts_payload -v
+```
+
+Обе команды должны завершиться без traceback, тесты — со статусом `OK`.
+
+### 3. Проверить, откуда запускаются systemd-сервисы
+
+```bash
+sudo systemctl show telegram-bot.service \
+  -p WorkingDirectory -p ExecStart -p EnvironmentFiles --no-pager
+sudo systemctl show vk-bot.service \
+  -p WorkingDirectory -p ExecStart -p EnvironmentFiles --no-pager
+```
+
+Продолжать можно только если оба `WorkingDirectory` указывают на
+`/home/nikg18/edubots/bot-legal-test`, а `ExecStart` — на тестовые entrypoint:
+`Bot_test_legal.py` и `vk_bot_legal.py`. Если там production-каталог
+`/home/nikg18/edubots/bot`, сервисы не перезапускать.
+
+Чтобы CLI увидела базу и реквизиты T-Bank, загрузить указанный в
+`EnvironmentFiles` файл, не печатая его содержимое:
+
+```bash
+set -a
+source /АБСОЛЮТНЫЙ/ПУТЬ/ИЗ/EnvironmentFiles
+set +a
+for var in DATABASE_URL TINKOFF_TERMINAL_KEY TINKOFF_SECRET_KEY TINKOFF_WEBHOOK_URL; do
+  if printenv "$var" >/dev/null; then echo "$var=OK"; else echo "$var=MISSING"; fi
+done
+```
+
+Значения секретов в чат и в терминальный вывод не копировать.
+
+### 4. Подготовить репетитора
+
+```bash
+$PY fiscal_admin.py list-tutors
+```
+
+У выбранного тестового репетитора должны быть `inn_present: true` и
+`phone_present: true`. Телефон теперь редактируется там же, где остальные поля:
+админ-панель → редактирование репетитора → выбрать репетитора →
+«📞 Изменить телефон». CLI-запасной вариант:
+
+```bash
+$PY fiscal_admin.py set-phone ID_РЕПЕТИТОРА '+79991234567'
+```
+
+### 5. Предварительно посмотреть оба JSON чека
+
+Сумма задается в копейках; `1000` — это 10 рублей. Команды ничего не отправляют
+в банк:
+
+```bash
+$PY fiscal_admin.py preview --amount 1000 \
+  --description 'Тестовое занятие' --email 'ВАШ_EMAIL' \
+  --tutor-name 'ИМЯ_РЕПЕТИТОРА' --inn 'ИНН_РЕПЕТИТОРА' \
+  --phone '+79991234567'
+
+$PY fiscal_admin.py preview --amount 1000 \
+  --description 'Тестовое занятие' --email 'ВАШ_EMAIL' \
+  --tutor-name 'ИМЯ_РЕПЕТИТОРА' --inn 'ИНН_РЕПЕТИТОРА' \
+  --phone '+79991234567' --closing
+```
+
+В первом JSON проверить `PaymentMethod=full_prepayment`; во втором —
+`PaymentMethod=full_payment` и `Payments.AdvancePayment=1000`. В обоих:
+`FfdVersion=1.2`, `AgentSign=another`, правильные имя, ИНН и телефон поставщика.
+
+### 6. Запустить тестовые боты
+
+Этот шаг допустим только после проверки путей в пункте 3:
+
+```bash
+sudo systemctl restart telegram-bot.service
+sudo systemctl restart vk-bot.service
+sudo systemctl --no-pager --full status telegram-bot.service vk-bot.service
+sudo journalctl -u telegram-bot.service -n 80 --no-pager
+sudo journalctl -u vk-bot.service -n 80 --no-pager
+```
+
+Не запускать второй процесс polling с тем же токеном параллельно systemd-сервису.
+
+### 7. Выполнить реальную контрольную оплату
+
+1. В T-Бизнес проверить привязку CloudKassir к тестируемому магазину, ФФД 1.2 и
+   отсутствие одновременной фискализации через «Т-Чеки».
+2. Временно назначить одному обычному занятию небольшую цену, например 10 рублей.
+3. С аккаунта ученика создать новую **обычную одиночную** запись. Не использовать
+   пробное занятие или абонемент.
+4. С аккаунта репетитора подтвердить запись.
+5. Ученик вводит e-mail, получает СБП-ссылку и оплачивает реальные 10 рублей.
+6. Сохранить номер занятия из админ-панели → «📚 Управление занятиями» →
+   «🟢 Оплаченные».
+7. В операции T-Bank и в CloudKassir проверить первый чек: 100% предоплата,
+   услуга, иной агент, правильные реквизиты репетитора. Затем проверить чек у ОФД.
+
+Если статус оплаты не обновился сразу, подождать до 5 минут: polling служит
+резервом для webhook.
+
+### 8. Отправить и проверить закрывающий чек
+
+Только после фактического проведения тестового занятия:
+
+```bash
+$PY fiscal_admin.py close-booking НОМЕР_ЗАНЯТИЯ --force-test
+```
+
+Нормальный результат: `"ok": true`, `"already_sent": false`,
+`"status": "submitted"`. Проверить в T-Bank, CloudKassir и ОФД второй чек:
+полный расчет, зачет аванса на всю сумму, новая электронная оплата — 0.
+
+Проверка защиты от дубля:
+
+```bash
+$PY fiscal_admin.py close-booking НОМЕР_ЗАНЯТИЯ --force-test
+```
+
+Ожидается `"ok": true`, `"already_sent": true`. Если первая команда вернула
+`status: unknown`, повторно ее не выполнять: сначала вручную проверить T-Bank и
+CloudKassir. `--force-test` нельзя использовать в production.
+
+### 9. После smoke
+
+Вернуть обычную цену занятия и сохранить скриншоты обоих чеков. Ветку не сливать
+в `main` до проверки всех реквизитов. Абонементы и частичные возвраты этим smoke
+не покрыты.
+
 ## Smoke одиночного занятия
 
 Перед smoke:
