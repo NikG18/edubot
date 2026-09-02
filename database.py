@@ -23,6 +23,38 @@ async def _ensure_pool():
     await _legacy._ensure_pool()
 
 
+def _booking_stats_period(booking) -> Optional[tuple[int, int, int]]:
+    """Возвращает (tutor_id, year, month) по дате занятия для точного перерасчёта."""
+    if not booking:
+        return None
+    try:
+        lesson_date = datetime.strptime(str(booking["date"]), "%d.%m.%Y")
+        return int(booking["tutor_id"]), lesson_date.year, lesson_date.month
+    except (KeyError, TypeError, ValueError):
+        logging.warning("Не удалось определить месяц статистики для занятия %s", booking)
+        return None
+
+
+async def _recalculate_booking_stats(booking):
+    period = _booking_stats_period(booking)
+    if not period:
+        return
+    tutor_id, year, month = period
+    await _legacy.recalculate_monthly_stats(tutor_id, year, month)
+
+
+def _cancel_requires_refund(booking) -> bool:
+    """Возврат нужен для реально оплаченного занятия, даже если оно уже completed."""
+    if not booking:
+        return False
+    return (
+        booking["status"] in {"paid", "completed"}
+        and (booking["refund_status"] or "none") == "none"
+        and int(booking["amount"] or 0) > 0
+        and bool(booking["tinkoff_payment_id"])
+    )
+
+
 async def _student_for_account_conn(conn, platform: str, platform_user_id: int,
                                     *, create: bool = True) -> Optional[int]:
     platform = str(platform or "").lower()
@@ -769,17 +801,19 @@ async def update_booking(booking_id, **kwargs):
     if not fields:
         return await get_booking(booking_id)
     should_sync = any(k not in {"channel_msg_id", "reminded", "payment_msg_id"} for k in fields)
+    stats_affected = False
     async with _legacy.pool.acquire() as conn:
         async with conn.transaction():
             old = await conn.fetchrow("SELECT * FROM bookings WHERE id=$1 FOR UPDATE", booking_id)
             if not old:
                 return None
             target_status = fields.get("status", old["status"])
+            refund_required = _cancel_requires_refund(old)
             if target_status == "cancelled" and old["status"] != "cancelled":
                 fields.setdefault("cancelled_by", actor_type)
                 fields.setdefault("cancel_reason", reason)
                 fields.setdefault("cancelled_at", datetime.now(tz=MSK))
-                if old["status"] == "paid" and (old["refund_status"] or "none") == "none":
+                if refund_required:
                     fields.setdefault("refund_status", "required")
                     fields.setdefault("refund_updated_at", datetime.now(tz=MSK))
             if old["booking_type"] == "trial" and old["status"] != target_status:
@@ -801,6 +835,7 @@ async def update_booking(booking_id, **kwargs):
                 *values,
             )
             if "status" in fields and old["status"] != fields["status"]:
+                stats_affected = "completed" in {old["status"], fields["status"]}
                 details = {}
                 if reason:
                     details["reason"] = reason
@@ -815,12 +850,14 @@ async def update_booking(booking_id, **kwargs):
                     conn, booking_id, event_type or fields["status"],
                     old["status"], fields["status"], actor_type, actor_id, details,
                 )
-                if fields["status"] == "cancelled" and old["status"] == "paid":
+                if fields["status"] == "cancelled" and refund_required:
                     await _add_booking_event(
                         conn, booking_id, "refund_pending", "cancelled", "cancelled",
                         actor_type, actor_id,
                         {"amount": old["amount"], "payment_id": old["tinkoff_payment_id"]},
                     )
+    if stats_affected:
+        await _recalculate_booking_stats(updated)
     if should_sync:
         await _sync_booking_record_safely(booking_id)
     return _booking_dict(updated)
@@ -833,6 +870,7 @@ async def change_booking_status(booking_id: int, new_status: str, *, event_type:
     if new_status not in allowed:
         raise ValueError(f"Некорректный статус: {new_status}")
     await _ensure_pool()
+    stats_affected = False
     async with _legacy.pool.acquire() as conn:
         async with conn.transaction():
             old = await conn.fetchrow("SELECT * FROM bookings WHERE id=$1 FOR UPDATE", booking_id)
@@ -847,11 +885,12 @@ async def change_booking_status(booking_id: int, new_status: str, *, event_type:
             cancelled_by = old["cancelled_by"]
             cancel_reason = old["cancel_reason"]
             cancelled_at = old["cancelled_at"]
+            refund_required = _cancel_requires_refund(old)
             if new_status == "cancelled":
                 cancelled_by = actor_type
                 cancel_reason = reason
                 cancelled_at = datetime.now(tz=MSK)
-                if old["status"] == "paid" and refund_status == "none":
+                if refund_required:
                     refund_status = "required"
                     refund_updated_at = datetime.now(tz=MSK)
             trial_consumed = bool(old["trial_consumed"])
@@ -876,6 +915,7 @@ async def change_booking_status(booking_id: int, new_status: str, *, event_type:
                 new_status, cancelled_by, cancel_reason, cancelled_at,
                 refund_status, refund_updated_at, trial_consumed, booking_id,
             )
+            stats_affected = "completed" in {old["status"], new_status}
             event_details = dict(details or {})
             if reason:
                 event_details["reason"] = reason
@@ -885,12 +925,14 @@ async def change_booking_status(booking_id: int, new_status: str, *, event_type:
                 conn, booking_id, event_type or new_status, old["status"], new_status,
                 actor_type, actor_id, event_details,
             )
-            if new_status == "cancelled" and old["status"] == "paid" and refund_status == "required":
+            if new_status == "cancelled" and refund_required:
                 await _add_booking_event(
                     conn, booking_id, "refund_pending", "cancelled", "cancelled",
                     actor_type, actor_id,
                     {"amount": old["amount"], "payment_id": old["tinkoff_payment_id"]},
                 )
+    if stats_affected:
+        await _recalculate_booking_stats(updated)
     await _sync_booking_record_safely(booking_id)
     return True, _booking_dict(updated)
 
@@ -915,7 +957,7 @@ async def admin_cancel_booking(booking_id: int, admin_id: int,
         actor_type="admin",
         actor_id=admin_id,
         reason=reason,
-        expected_statuses={"pending", "confirmed", "paid"},
+        expected_statuses={"pending", "confirmed", "paid", "completed"},
     )
 
 
@@ -1064,6 +1106,7 @@ async def mark_booking_refunded(booking_id: int, admin_id: int) -> bool:
                 conn, booking_id, "refunded", row["status"], row["status"], "admin", admin_id,
                 {"amount": row["amount"], "payment_id": row["tinkoff_payment_id"]},
             )
+    await _recalculate_booking_stats(row)
     await _sync_booking_record_safely(booking_id)
     return True
 
@@ -1073,7 +1116,7 @@ async def cleanup_old_bookings():
     await _ensure_pool()
     now = datetime.now(MSK).replace(tzinfo=None)
     completed_ids = []
-    affected = set()
+    affected_periods = set()
     async with _legacy.pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -1112,9 +1155,9 @@ async def cleanup_old_bookings():
                     {"reason": "Время занятия завершилось"},
                 )
                 completed_ids.append(row["id"])
-                affected.add(row["tutor_id"])
-    for tutor_id in affected:
-        await _legacy.recalculate_monthly_stats(tutor_id, now.year, now.month)
+                affected_periods.add((row["tutor_id"], end_dt.year, end_dt.month))
+    for tutor_id, year, month in affected_periods:
+        await _legacy.recalculate_monthly_stats(tutor_id, year, month)
     for booking_id in completed_ids:
         await _sync_booking_record_safely(booking_id)
     return completed_ids
