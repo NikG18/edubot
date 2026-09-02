@@ -13,63 +13,108 @@ class FiscalAdminStates(legacy.BaseStateGroup):
     waiting_tutor_phone = "waiting_tutor_phone"
 
 
-_original_vk_main_menu = legacy.get_main_menu
-
-
-async def _vk_main_menu_with_tutor_phones(user_id: int):
-    raw_keyboard = await _original_vk_main_menu(user_id)
-    if user_id != legacy.ADMIN_VK_ID:
-        return raw_keyboard
-    keyboard = legacy.json.loads(raw_keyboard)
-    phone_label = "📞 Телефоны репетиторов"
-    already_added = any(
-        button.get("action", {}).get("label") == phone_label
-        for row in keyboard.get("buttons", [])
-        for button in row
-    )
-    if not already_added:
-        keyboard.setdefault("buttons", []).append([{
-            "action": {
-                "type": "text",
-                "payload": "{}",
-                "label": phone_label,
-            },
-            "color": "primary",
-        }])
-    return legacy.json.dumps(keyboard, ensure_ascii=False)
-
-
-legacy.get_main_menu = _vk_main_menu_with_tutor_phones
-
-
-@legacy.bot.on.private_message(text=["📞 Телефоны репетиторов", "/tutor_phone"])
-async def vk_admin_tutor_phones(message: legacy.Message):
-    if message.from_id != legacy.ADMIN_VK_ID:
-        await message.answer("⛔ Доступ запрещён.")
-        return
-    tutors = await _db.get_all_tutors()
-    if not tutors:
-        await message.answer(
-            "Репетиторов пока нет.",
-            keyboard=await legacy.get_main_menu(message.from_id),
-        )
-        return
-    lines = [
-        "📞 Телефоны репетиторов",
-        "",
-        "Отправьте ID и контактный телефон поставщика через пробел:",
-        "например: 3 +79991234567",
-        "",
+def _vk_tutor_edit_keyboard():
+    keyboard = legacy.Keyboard(inline=True)
+    buttons = [
+        ("Изменить имя", "edit_name"),
+        ("Изменить описание", "edit_desc"),
+        ("Изменить Telegram ID", "edit_telegram_id"),
+        ("Изменить VK ID", "edit_vk_id"),
+        ("🆔 Изменить ИНН", "edit_inn"),
+        ("📞 Изменить телефон", "edit_phone"),
+        ("📚 Управление предметами", "manage_subjects"),
+        ("💰 Изменить комиссию", "edit_commission"),
+        ("🔄 Режим комиссии", "toggle_commission_mode"),
+        ("🔙 К списку", "admin_edit_list"),
     ]
-    for tutor_id, tutor in tutors.items():
-        phone = await get_tutor_phone(tutor_id)
-        lines.append(f"{tutor_id} · {tutor['name']} · {phone or 'телефон не указан'}")
-    lines.extend(["", "Для отмены отправьте: отмена"])
+    for index, (label, command) in enumerate(buttons):
+        keyboard.add(legacy.Callback(label, payload={"cmd": command}))
+        if index != len(buttons) - 1:
+            keyboard.row()
+    return keyboard.get_json()
+
+
+async def _vk_show_tutor_editor(event, tutor_id: int):
+    tutors = await legacy.get_all_tutors()
+    tutor = tutors.get(tutor_id)
+    if not tutor:
+        await legacy.edit_event_message(event, "Репетитор не найден.")
+        return False
+    phone = await get_tutor_phone(tutor_id)
+    await legacy.edit_event_message(
+        event,
+        f"Редактирование: {tutor['name']}\n"
+        f"Телефон для чека: {phone or 'не указан'}\n\n"
+        "Что хотите изменить?",
+        keyboard=_vk_tutor_edit_keyboard(),
+    )
+    return True
+
+
+async def _vk_edit_tutor_choice(event):
+    tutor_id = int(event.payload["cmd"].split("_")[-1])
     await legacy.state_dispenser.set(
-        message.from_id,
+        event.user_id,
+        legacy.AdminStates.waiting_edit_choice,
+    )
+    await legacy.state_dispenser.update(event.user_id, edit_tutor_id=tutor_id)
+    await _vk_show_tutor_editor(event, tutor_id)
+
+
+async def _vk_back_to_edit_tutor(event):
+    data = await legacy.state_dispenser.get_data(event.user_id)
+    tutor_id = data.get("edit_tutor_id")
+    if not tutor_id:
+        await legacy.edit_event_message(event, "Репетитор не выбран.")
+        return
+    await legacy.state_dispenser.set(
+        event.user_id,
+        legacy.AdminStates.waiting_edit_choice,
+    )
+    await legacy.state_dispenser.update(event.user_id, edit_tutor_id=tutor_id)
+    await _vk_show_tutor_editor(event, tutor_id)
+
+
+_original_vk_edit_field_choice = legacy.edit_field_choice
+
+
+async def _vk_edit_field_choice(event):
+    field = event.payload["cmd"].removeprefix("edit_")
+    if field != "phone":
+        return await _original_vk_edit_field_choice(event)
+
+    data = await legacy.state_dispenser.get_data(event.user_id)
+    tutor_id = data.get("edit_tutor_id")
+    tutors = await legacy.get_all_tutors()
+    tutor = tutors.get(tutor_id)
+    if not tutor:
+        await legacy.edit_event_message(event, "Репетитор не найден.")
+        return
+    current = await get_tutor_phone(tutor_id)
+    await legacy.state_dispenser.set(
+        event.user_id,
         FiscalAdminStates.waiting_tutor_phone,
     )
-    await message.answer("\n".join(lines))
+    await legacy.state_dispenser.update(
+        event.user_id,
+        edit_tutor_id=tutor_id,
+        fiscal_phone_tutor_id=tutor_id,
+    )
+    await legacy.edit_event_message(
+        event,
+        f"Репетитор: {tutor['name']}\n"
+        f"Текущий телефон: {current or 'не указан'}\n\n"
+        "Отправьте контактный телефон поставщика, например +79991234567. "
+        "Пробелы, скобки и дефисы допустимы. Для отмены отправьте: отмена",
+    )
+
+
+legacy.get_tutor_phone = get_tutor_phone
+legacy._vk_tutor_edit_keyboard = _vk_tutor_edit_keyboard
+legacy._vk_show_tutor_editor = _vk_show_tutor_editor
+legacy.edit_tutor_choice = _vk_edit_tutor_choice
+legacy.back_to_edit_tutor = _vk_back_to_edit_tutor
+legacy.edit_field_choice = _vk_edit_field_choice
 
 
 @legacy.bot.on.private_message(state=FiscalAdminStates.waiting_tutor_phone)
@@ -78,6 +123,8 @@ async def vk_admin_tutor_phone_save(message: legacy.Message):
         await legacy.state_dispenser.delete(message.from_id)
         return
     value = (message.text or "").strip()
+    data = await legacy.state_dispenser.get_data(message.from_id)
+    tutor_id = data.get("fiscal_phone_tutor_id")
     if value.lower() in {"отмена", "назад", "cancel"}:
         await legacy.state_dispenser.delete(message.from_id)
         await message.answer(
@@ -85,29 +132,26 @@ async def vk_admin_tutor_phone_save(message: legacy.Message):
             keyboard=await legacy.get_main_menu(message.from_id),
         )
         return
-    parts = value.split(maxsplit=1)
-    if len(parts) != 2 or not parts[0].isdigit():
-        await message.answer(
-            "Введите ID репетитора и телефон через пробел, "
-            "например: 3 +79991234567"
-        )
-        return
-    tutor_id = int(parts[0])
-    phone = normalize_supplier_phone(parts[1])
+    phone = normalize_supplier_phone(value)
     if not phone:
         await message.answer(
             "Некорректный номер. Укажите от 7 до 18 цифр, "
-            "например: 3 +79991234567"
+            "например: +79991234567"
         )
         return
-    saved = await set_tutor_phone(tutor_id, phone)
+    saved = await set_tutor_phone(tutor_id, phone) if tutor_id else None
     if not saved:
-        await message.answer("Репетитор с таким ID не найден. Попробуйте ещё раз.")
+        await message.answer("Репетитор не найден. Откройте его карточку заново.")
+        await legacy.state_dispenser.delete(message.from_id)
         return
-    await legacy.state_dispenser.delete(message.from_id)
+    await legacy.state_dispenser.set(
+        message.from_id,
+        legacy.AdminStates.waiting_edit_choice,
+    )
+    await legacy.state_dispenser.update(message.from_id, edit_tutor_id=tutor_id)
     await message.answer(
         f"✅ Телефон для {saved['name']} сохранён: {saved['phone']}",
-        keyboard=await legacy.get_main_menu(message.from_id),
+        keyboard=_vk_tutor_edit_keyboard(),
     )
 
 
