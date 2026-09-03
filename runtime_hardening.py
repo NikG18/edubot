@@ -112,7 +112,6 @@ def _install_background_job_guards(legacy) -> None:
         original_send_pending = legacy.send_pending_reminders
 
         async def guarded_send_pending(*args, **kwargs):
-            # The legacy loops call this only at the scheduled 09/15/21 MSK hours.
             bucket = datetime.now(MSK).strftime("%Y%m%d%H")
             if not await _claim_job_once("pending-booking-reminders", bucket):
                 return None
@@ -173,6 +172,7 @@ def _install_vk_stats_only_admin_guard(legacy) -> None:
         "confirm_delete",
         "add_another_subject",
         "finish_adding_subjects",
+        "support_reply_start",
     )
     for name in blocked_callbacks:
         if hasattr(legacy, name):
