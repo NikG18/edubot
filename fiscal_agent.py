@@ -4,10 +4,16 @@
 Для агентского чека T-Bank требует SupplierInfo с телефоном, именем и ИНН
 поставщика. Этот слой добавляет поле phone без изменения базового интерфейса БД
 и публикует его в get_all_tutors().
+
+Здесь же установлен небольшой compatibility-патч для актуальных wrapper-entrypoint:
+в меню преподавателя скрыты связывание Telegram/VK и учебные материалы. Учебные
+материалы остаются в меню администратора; связывание аккаунтов остаётся доступно
+ученикам и администратору.
 """
 
 import asyncio
 import re
+import sys
 
 import database as _db
 
@@ -71,8 +77,82 @@ async def set_tutor_phone(tutor_id: int, value: str):
     }
 
 
+def _install_telegram_role_menu(legacy):
+    if getattr(legacy, "_role_menu_visibility_installed", False):
+        return
+    original = legacy.get_main_menu
+
+    async def _get_main_menu(user_id: int):
+        is_admin = user_id == legacy.ADMING_ID
+        is_tutor = await legacy.get_tutor_by_telegram_id(user_id) is not None
+        if is_admin or not is_tutor:
+            return await original(user_id)
+
+        # Для преподавателя намеренно нет учебных материалов и связывания
+        # Telegram/VK. Остальные пункты преподавательского меню сохраняются.
+        buttons = [
+            [legacy.KeyboardButton(text="📚 Информация о занятиях")],
+            [legacy.KeyboardButton(text="👨‍🏫 Панель преподавателя")],
+            [legacy.KeyboardButton(text="✉️ Связь с учеником")],
+            [legacy.KeyboardButton(text="🆘 Поддержка")],
+            [legacy.KeyboardButton(text="❓ Помощь")],
+        ]
+        return legacy.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+    legacy.get_main_menu = _get_main_menu
+    legacy._role_menu_visibility_installed = True
+
+
+def _install_vk_role_menu(legacy):
+    if getattr(legacy, "_role_menu_visibility_installed", False):
+        return
+    original = legacy.get_main_menu
+
+    async def _get_main_menu(user_id: int) -> str:
+        is_admin = user_id == legacy.ADMIN_VK_ID
+        is_tutor = await legacy.get_tutor_by_vk_id(user_id) is not None
+        if is_admin or not is_tutor:
+            return await original(user_id)
+
+        kb = legacy.Keyboard(inline=False, one_time=False)
+        rows = [
+            ("📚 Информация о занятиях", legacy.KeyboardButtonColor.PRIMARY),
+            ("👨‍🏫 Панель преподавателя", legacy.KeyboardButtonColor.POSITIVE),
+            ("✉️ Связь с учеником", legacy.KeyboardButtonColor.PRIMARY),
+            ("🆘 Поддержка", legacy.KeyboardButtonColor.PRIMARY),
+            ("❓ Помощь", legacy.KeyboardButtonColor.PRIMARY),
+        ]
+        for index, (label, color) in enumerate(rows):
+            kb.add(legacy.Text(label), color=color)
+            if index != len(rows) - 1:
+                kb.row()
+        return kb.get_json()
+
+    legacy.get_main_menu = _get_main_menu
+    legacy._role_menu_visibility_installed = True
+
+
+def install_role_menu_visibility(legacy):
+    """Скрывает лишние пункты только из преподавательского главного меню."""
+    name = getattr(legacy, "__name__", "")
+    if name.endswith("Bot_test_legacy"):
+        _install_telegram_role_menu(legacy)
+    elif name.endswith("vk_bot_legacy"):
+        _install_vk_role_menu(legacy)
+
+
+def _install_loaded_role_menus():
+    # В актуальных wrapper-entrypoint legacy-модуль полностью импортируется до
+    # fiscal_agent, поэтому патч можно безопасно установить при импорте этого слоя.
+    for module_name in ("Bot_test_legacy", "vk_bot_legacy"):
+        legacy = sys.modules.get(module_name)
+        if legacy is not None and hasattr(legacy, "get_main_menu"):
+            install_role_menu_visibility(legacy)
+
+
 def install(legacy):
     """Добавляет phone к словарям get_all_tutors() конкретного bot legacy-модуля."""
+    install_role_menu_visibility(legacy)
     if getattr(legacy, "_fiscal_supplier_layer_installed", False):
         return
 
@@ -93,3 +173,6 @@ def install(legacy):
 
     legacy.get_all_tutors = _get_all_tutors_with_phone
     legacy._fiscal_supplier_layer_installed = True
+
+
+_install_loaded_role_menus()
