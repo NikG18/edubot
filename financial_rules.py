@@ -23,8 +23,8 @@ def commission_rate(
     Rules:
     - 25% base rate;
     - 20% from 21 lessons after two full months of work;
-    - 15% from 41 lessons after four full months *and* more than 100 lessons
-      during the first 60 days;
+    - 15% from 41 lessons when EITHER four full months of work have passed OR
+      more than 100 lessons were completed during the first 60 days;
     - an achieved 20%/15% rate is retained for one following calendar month
       if the current month's volume alone would move it upward.
     """
@@ -32,8 +32,13 @@ def commission_rate(
     months = max(0, int(full_months_since_first_lesson or 0))
     first_60 = max(0, int(first_60_days_lessons or 0))
 
-    if lessons >= 41 and months >= 4 and first_60 > 100:
-        return CommissionDecision(15, "41+ lessons, 4+ full months, first 60 days >100 lessons")
+    if lessons >= 41 and (months >= 4 or first_60 > 100):
+        reason = (
+            "41+ lessons and 4+ full months"
+            if months >= 4
+            else "41+ lessons and first 60 days >100 lessons"
+        )
+        return CommissionDecision(15, reason)
     if lessons >= 21 and months >= 2:
         return CommissionDecision(20, "21+ lessons after 2 full months")
 
