@@ -1,7 +1,8 @@
 """Financial correctness layer installed on top of the legacy database API.
 
-The existing UI keeps calling the same function names. This module replaces only
-calculation functions, leaving booking/payment state transitions untouched.
+Automatic commission is a MONTHLY tier for a third-party tutor. Direct owner lessons
+remain zero-commission. Manual mode keeps the immutable booking snapshots so later
+admin edits do not rewrite historical months.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 from datetime import date
 
 import database as _db
+import payments
 from financial_rules import (
     booking_commission_rub,
     booking_revenue_rub,
@@ -63,10 +65,7 @@ async def _early_unlock_date(conn, tutor_id: int, first_lesson: date):
         """,
         int(tutor_id), first_lesson,
     )
-    return early_fifteen_unlock_date(
-        [row["lesson_date"] for row in rows],
-        first_lesson,
-    )
+    return early_fifteen_unlock_date([row["lesson_date"] for row in rows], first_lesson)
 
 
 def _previous_month(year: int, month: int) -> tuple[int, int]:
@@ -82,7 +81,7 @@ def _month_end_date(year: int, month: int) -> date:
 
 
 async def calculate_auto_commission(tutor_id: int, year: int, month: int):
-    """Progressive rate with permanent early 15% unlock and one retention month."""
+    """Progressive MONTHLY rate with permanent early unlock and one retention month."""
     await _db._ensure_pool()
     first = await _first_lesson_date(int(tutor_id))
     async with _db._legacy.pool.acquire() as conn:
@@ -122,6 +121,22 @@ async def calculate_auto_commission(tutor_id: int, year: int, month: int):
         return retained.percent, lessons
 
 
+async def _month_rows(conn, tutor_id: int, year: int, month: int):
+    return await conn.fetch(
+        """
+        SELECT b.*, s.price AS fallback_price
+        FROM bookings b
+        LEFT JOIN subjects s ON s.tutor_id=b.tutor_id AND s.name=b.subject
+        WHERE b.tutor_id=$1
+          AND b.stats_counted=TRUE
+          AND EXTRACT(YEAR FROM to_date(b.date,'DD.MM.YYYY'))=$2
+          AND EXTRACT(MONTH FROM to_date(b.date,'DD.MM.YYYY'))=$3
+        ORDER BY b.id
+        """,
+        int(tutor_id), int(year), int(month),
+    )
+
+
 async def recalculate_monthly_stats(tutor_id: int, year: int, month: int):
     await _db._ensure_pool()
     tutors = await _db.get_all_tutors()
@@ -130,33 +145,30 @@ async def recalculate_monthly_stats(tutor_id: int, year: int, month: int):
         return
 
     async with _db._legacy.pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT b.*, s.price AS fallback_price
-            FROM bookings b
-            LEFT JOIN subjects s ON s.tutor_id=b.tutor_id AND s.name=b.subject
-            WHERE b.tutor_id=$1
-              AND b.stats_counted=TRUE
-              AND EXTRACT(YEAR FROM to_date(b.date,'DD.MM.YYYY'))=$2
-              AND EXTRACT(MONTH FROM to_date(b.date,'DD.MM.YYYY'))=$3
-            ORDER BY b.id
-            """,
-            int(tutor_id), int(year), int(month),
-        )
-
+        rows = await _month_rows(conn, tutor_id, year, month)
         paid_rows = [dict(row) for row in rows if row["booking_type"] != "trial"]
         lessons = len(paid_rows)
-        total_income = 0.0
-        commission = 0.0
-        for booking in paid_rows:
-            revenue = booking_revenue_rub(booking, booking.get("fallback_price"))
-            total_income += revenue
-            commission += booking_commission_rub(booking, revenue)
+        total_income = sum(
+            booking_revenue_rub(booking, booking.get("fallback_price"))
+            for booking in paid_rows
+        )
 
-        if tutor.get("commission_mode") == "auto":
+        direct_owner = payments.is_operator_tutor(tutor.get("inn"))
+        if direct_owner:
+            display_percent = 0
+            commission = 0.0
+        elif tutor.get("commission_mode") == "auto":
             display_percent, _ = await calculate_auto_commission(tutor_id, year, month)
+            # The achieved auto tier applies to the entire tutor month.
+            commission = total_income * float(display_percent) / 100.0
         else:
             display_percent = int(tutor.get("commission_percent", 25))
+            # Manual mode preserves the rate snapshot on each booking so an admin
+            # edit today does not rewrite already-completed historical lessons.
+            commission = 0.0
+            for booking in paid_rows:
+                revenue = booking_revenue_rub(booking, booking.get("fallback_price"))
+                commission += booking_commission_rub(booking, revenue)
 
         net = total_income - commission
         await conn.execute(
@@ -199,30 +211,43 @@ async def get_tutor_financials(tutor_id: int, year: int = None, month: int = Non
             "commission_percent": float(row["commission_percent"] or 0),
         }
 
+    # Rebuild every month before all-time aggregation so auto tiers are applied to
+    # complete months rather than stale per-booking snapshots.
     async with _db._legacy.pool.acquire() as conn:
-        rows = await conn.fetch(
+        periods = await conn.fetch(
             """
-            SELECT b.*, s.price AS fallback_price
-            FROM bookings b
-            LEFT JOIN subjects s ON s.tutor_id=b.tutor_id AND s.name=b.subject
-            WHERE b.tutor_id=$1 AND b.stats_counted=TRUE AND b.booking_type<>'trial'
-            ORDER BY b.id
+            SELECT DISTINCT
+                EXTRACT(YEAR FROM to_date(date,'DD.MM.YYYY'))::int AS year,
+                EXTRACT(MONTH FROM to_date(date,'DD.MM.YYYY'))::int AS month
+            FROM bookings
+            WHERE tutor_id=$1 AND stats_counted=TRUE AND booking_type<>'trial'
+            ORDER BY year, month
             """,
             int(tutor_id),
         )
-    total_income = 0.0
-    commission = 0.0
-    for row in rows:
-        booking = dict(row)
-        revenue = booking_revenue_rub(booking, booking.get("fallback_price"))
-        total_income += revenue
-        commission += booking_commission_rub(booking, revenue)
+    for period in periods:
+        await recalculate_monthly_stats(tutor_id, period["year"], period["month"])
+
+    async with _db._legacy.pool.acquire() as conn:
+        totals = await conn.fetchrow(
+            """
+            SELECT COALESCE(SUM(lessons_count),0) AS lessons,
+                   COALESCE(SUM(total_income),0) AS income,
+                   COALESCE(SUM(commission_amount),0) AS commission,
+                   COALESCE(SUM(net_income),0) AS net
+            FROM monthly_stats WHERE tutor_id=$1
+            """,
+            int(tutor_id),
+        )
+    tutors = await _db.get_all_tutors()
+    tutor = tutors.get(int(tutor_id), {})
+    display_percent = 0 if payments.is_operator_tutor(tutor.get("inn")) else int(tutor.get("commission_percent", 25))
     return {
-        "total_lessons": len(rows),
-        "total_income": total_income,
-        "commission_amount": commission,
-        "net_income": total_income - commission,
-        "commission_percent": 0,
+        "total_lessons": int(totals["lessons"] or 0),
+        "total_income": float(totals["income"] or 0),
+        "commission_amount": float(totals["commission"] or 0),
+        "net_income": float(totals["net"] or 0),
+        "commission_percent": display_percent,
     }
 
 
