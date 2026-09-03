@@ -5,10 +5,11 @@
 поставщика. Этот слой добавляет поле phone без изменения базового интерфейса БД
 и публикует его в get_all_tutors().
 
-Здесь же установлен небольшой compatibility-патч для актуальных wrapper-entrypoint:
-в меню преподавателя скрыты связывание Telegram/VK и учебные материалы. Учебные
-материалы остаются в меню администратора; связывание аккаунтов остаётся доступно
-ученикам и администратору.
+Здесь же установлены небольшие compatibility-патчи для актуальных wrapper-entrypoint:
+в меню преподавателя скрыты связывание Telegram/VK и учебные материалы; исправлен
+возврат из выбора пакета абонемента к предметам в Telegram. Учебные материалы
+остаются в меню администратора; связывание аккаунтов остаётся доступно ученикам и
+администратору.
 """
 
 import asyncio
@@ -88,8 +89,6 @@ def _install_telegram_role_menu(legacy):
         if is_admin or not is_tutor:
             return await original(user_id)
 
-        # Для преподавателя намеренно нет учебных материалов и связывания
-        # Telegram/VK. Остальные пункты преподавательского меню сохраняются.
         buttons = [
             [legacy.KeyboardButton(text="📚 Информация о занятиях")],
             [legacy.KeyboardButton(text="👨‍🏫 Панель преподавателя")],
@@ -132,18 +131,74 @@ def _install_vk_role_menu(legacy):
     legacy._role_menu_visibility_installed = True
 
 
+def _install_telegram_subscription_navigation(legacy):
+    """Чинит «Назад» из выбора пакета к списку предметов выбранного репетитора."""
+    if getattr(legacy, "_subscription_navigation_fix_installed", False):
+        return
+    if not hasattr(legacy, "back_to_buy_subjects"):
+        return
+
+    async def _safe_back_to_buy_subjects(call, state):
+        await safe_answer(call)
+        data = await state.get_data()
+        tid = data.get("buy_tutor_id")
+        if not tid:
+            await state.clear()
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 К оплате", callback_data="back_to_payment_menu")]
+            ])
+            await call.message.edit_text(
+                "Данные выбора абонемента потеряны. Выберите репетитора заново.",
+                reply_markup=keyboard,
+            )
+            return
+
+        tutors = await get_all_tutors()
+        tutor = tutors.get(tid)
+        if not tutor:
+            await state.clear()
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 К оплате", callback_data="back_to_payment_menu")]
+            ])
+            await call.message.edit_text("Репетитор не найден.", reply_markup=keyboard)
+            return
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+        for subj, price in tutor["subjects"].items():
+            keyboard.inline_keyboard.append([
+                InlineKeyboardButton(
+                    text=f"{subj} ({price} руб.)",
+                    callback_data=f"buy_subject_{subj}",
+                )
+            ])
+        keyboard.inline_keyboard.append([
+            InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_buy_tutors")
+        ])
+        await call.message.edit_text(
+            f"Выберите предмет для абонемента у {tutor['name']}:",
+            reply_markup=keyboard,
+        )
+        await state.set_state(BuySubscriptionStates.choosing_subject)
+
+    # Handler уже зарегистрирован aiogram при импорте legacy-модуля. Меняем код
+    # существующего callable, поэтому диспетчер продолжает ссылаться на тот же объект.
+    legacy.back_to_buy_subjects.__code__ = _safe_back_to_buy_subjects.__code__
+    legacy._subscription_navigation_fix_installed = True
+
+
 def install_role_menu_visibility(legacy):
     """Скрывает лишние пункты только из преподавательского главного меню."""
     name = getattr(legacy, "__name__", "")
     if name.endswith("Bot_test_legacy"):
         _install_telegram_role_menu(legacy)
+        _install_telegram_subscription_navigation(legacy)
     elif name.endswith("vk_bot_legacy"):
         _install_vk_role_menu(legacy)
 
 
 def _install_loaded_role_menus():
     # В актуальных wrapper-entrypoint legacy-модуль полностью импортируется до
-    # fiscal_agent, поэтому патч можно безопасно установить при импорте этого слоя.
+    # fiscal_agent, поэтому патчи можно безопасно установить при импорте этого слоя.
     for module_name in ("Bot_test_legacy", "vk_bot_legacy"):
         legacy = sys.modules.get(module_name)
         if legacy is not None and hasattr(legacy, "get_main_menu"):
