@@ -1,4 +1,3 @@
-import json
 import logging
 
 import messaging_legacy as _legacy
@@ -15,22 +14,28 @@ async def edit_telegram_message(chat_id: int, message_id: int, text: str, reply_
         "text": text,
         "parse_mode": "HTML",
     }
-    if reply_markup:
-        if isinstance(reply_markup, str):
-            try:
-                reply_markup = json.loads(reply_markup)
-            except json.JSONDecodeError:
-                reply_markup = None
-        if reply_markup:
-            payload["reply_markup"] = _legacy._clean_none(reply_markup)
-    result = await _legacy._post_json(
-        f"https://api.telegram.org/bot{_legacy.TELEGRAM_BOT_TOKEN}/editMessageText",
-        payload,
-    )
+    normalized_markup = _legacy._normalize_telegram_reply_markup(reply_markup)
+    if normalized_markup:
+        payload["reply_markup"] = normalized_markup
+
+    url = f"https://api.telegram.org/bot{_legacy.TELEGRAM_BOT_TOKEN}/editMessageText"
+    result = await _legacy._post_json(url, payload)
     if result and result.get("ok"):
         return True
-    description = (result or {}).get("description", "")
+    description = str((result or {}).get("description", ""))
     if "message is not modified" in description.lower():
         return True
+
+    # Same safety net as sendMessage: forwarded/user-generated text can contain raw
+    # HTML metacharacters. Preserve normal bot formatting, but retry malformed HTML
+    # once as plain text instead of losing the update.
+    if _legacy._telegram_parse_error(result):
+        plain_payload = dict(payload)
+        plain_payload.pop("parse_mode", None)
+        plain_result = await _legacy._post_json(url, plain_payload)
+        if plain_result and plain_result.get("ok"):
+            return True
+        result = plain_result
+
     logging.warning("Telegram API editMessageText failed: %s", result)
     return False
