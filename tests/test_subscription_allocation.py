@@ -1,6 +1,6 @@
 import unittest
 
-from subscription_hardening import allocated_unit_amount
+from subscription_rules import allocated_unit_amount
 
 
 class SubscriptionAllocationTests(unittest.TestCase):
