@@ -3,6 +3,7 @@ import payment_reuse_telegram  # noqa: F401
 import legal_telegram  # noqa: F401
 from financial_hardening import install_financial_hardening
 from student_stats_hardening import install_student_stats_hardening
+from student_account_hardening import install_student_account_hardening
 from pricing_text_hardening import install_pricing_text_hardening
 from tutor_archive_hardening import install_tutor_archive_hardening
 from subscription_booking import install_telegram_subscription_booking
@@ -18,6 +19,7 @@ from runtime_hardening import install_telegram_hardening
 
 install_financial_hardening(app)
 install_student_stats_hardening(app)
+install_student_account_hardening(app, "telegram")
 install_pricing_text_hardening(app)
 install_tutor_archive_hardening(app)
 install_telegram_subscription_booking(app)
