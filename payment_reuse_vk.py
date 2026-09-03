@@ -112,10 +112,14 @@ async def _idempotent_create_and_send_payment(source, booking, email, booking_id
         if not inn:
             await _respond(source, "Запись к репетитору недоступна. Напишите в поддержку.")
             return
-        supplier_phone = await get_tutor_phone(current["tutor_id"])
-        if not supplier_phone:
-            await _respond(source, "Для репетитора не заполнен телефон для кассового чека. Напишите в поддержку.")
-            return
+        direct_service = _payments.is_operator_tutor(inn)
+        if direct_service:
+            supplier_phone = _payments.OPERATOR_PHONE
+        else:
+            supplier_phone = await get_tutor_phone(current["tutor_id"])
+            if not supplier_phone:
+                await _respond(source, "Для репетитора не заполнен телефон для кассового чека. Напишите в поддержку.")
+                return
 
         if current.get("amount"):
             amount_kop = int(current["amount"])
@@ -127,13 +131,16 @@ async def _idempotent_create_and_send_payment(source, booking, email, booking_id
                 return
             amount_kop = int(price_rub) * 100
 
-        now = legacy.now_msk_naive()
-        if tutor.get("commission_mode") == "auto":
-            percent, _ = await legacy.calculate_auto_commission(
-                current["tutor_id"], now.year, now.month
-            )
+        if direct_service:
+            percent = 0
         else:
-            percent = tutor.get("commission_percent", 25)
+            now = legacy.now_msk_naive()
+            if tutor.get("commission_mode") == "auto":
+                percent, _ = await legacy.calculate_auto_commission(
+                    current["tutor_id"], now.year, now.month
+                )
+            else:
+                percent = tutor.get("commission_percent", 25)
 
         description = (
             f"Занятие: {current['subject']} с {tutor['name']} "
