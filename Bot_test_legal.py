@@ -3,12 +3,16 @@ import payment_reuse_telegram  # noqa: F401  # один T-Bank платёж на
 import legal_telegram  # noqa: F401  # юридический слой оборачивает итоговый платёжный сценарий
 from financial_hardening import install_financial_hardening
 from subscription_booking import install_telegram_subscription_booking
+from subscription_cancel_hardening import install_subscription_cancel_release
+from completion_hardening import install_telegram_completion_hardening
 from runtime_hardening import install_telegram_hardening
 
-# Сначала ставим бизнес-правила, затем абонементный слой поверх уже зарегистрированных
-# handlers, и последним — межпроцессные runtime-guards.
+# Порядок важен: финансовые правила → абонементы → возврат резерва при отменах →
+# ручное подтверждение проведения → межпроцессные runtime-guards.
 install_financial_hardening(app)
 install_telegram_subscription_booking(app)
+install_subscription_cancel_release(app)
+install_telegram_completion_hardening(app)
 install_telegram_hardening(app)
 
 
