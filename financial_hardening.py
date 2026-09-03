@@ -6,10 +6,15 @@ calculation functions, leaving booking/payment state transitions untouched.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 import database as _db
-from financial_rules import booking_commission_rub, booking_revenue_rub, commission_rate
+from financial_rules import (
+    booking_commission_rub,
+    booking_revenue_rub,
+    commission_rate,
+    early_fifteen_unlock_date,
+)
 
 
 async def _first_lesson_date(tutor_id: int):
@@ -26,7 +31,6 @@ async def _first_lesson_date(tutor_id: int):
 
 
 def _full_months_since(first: date, year: int, month: int) -> int:
-    """Number of completed calendar-month boundaries before the target month."""
     return max(0, (int(year) - first.year) * 12 + (int(month) - first.month))
 
 
@@ -45,19 +49,24 @@ async def _month_lesson_count(conn, tutor_id: int, year: int, month: int) -> int
     ) or 0)
 
 
-async def _first_60_day_count(conn, tutor_id: int, first_lesson: date) -> int:
-    return int(await conn.fetchval(
+async def _early_unlock_date(conn, tutor_id: int, first_lesson: date):
+    rows = await conn.fetch(
         """
-        SELECT COUNT(*)
+        SELECT to_date(date,'DD.MM.YYYY') AS lesson_date
         FROM bookings
         WHERE tutor_id=$1
           AND stats_counted=TRUE
           AND booking_type<>'trial'
           AND to_date(date,'DD.MM.YYYY') >= $2
-          AND to_date(date,'DD.MM.YYYY') < $3
+          AND to_date(date,'DD.MM.YYYY') < ($2 + INTERVAL '4 months')
+        ORDER BY lesson_date, id
         """,
-        int(tutor_id), first_lesson, first_lesson + timedelta(days=60),
-    ) or 0)
+        int(tutor_id), first_lesson,
+    )
+    return early_fifteen_unlock_date(
+        [row["lesson_date"] for row in rows],
+        first_lesson,
+    )
 
 
 def _previous_month(year: int, month: int) -> tuple[int, int]:
@@ -66,53 +75,54 @@ def _previous_month(year: int, month: int) -> tuple[int, int]:
     return int(year), int(month) - 1
 
 
+def _month_end_date(year: int, month: int) -> date:
+    if int(month) == 12:
+        return date(int(year) + 1, 1, 1)
+    return date(int(year), int(month) + 1, 1)
+
+
 async def calculate_auto_commission(tutor_id: int, year: int, month: int):
-    """Progressive rate with qualification and exactly one retention month."""
+    """Progressive rate with permanent early 15% unlock and one retention month."""
     await _db._ensure_pool()
     first = await _first_lesson_date(int(tutor_id))
     async with _db._legacy.pool.acquire() as conn:
         lessons = await _month_lesson_count(conn, tutor_id, year, month)
         if not first:
             return 25, lessons
-        first_60 = await _first_60_day_count(conn, tutor_id, first)
 
-        # First calculate the current month's naturally achieved rate.
+        unlock_date = await _early_unlock_date(conn, tutor_id, first)
+        target_month_end = _month_end_date(year, month)
+        early_unlocked = bool(unlock_date and unlock_date < target_month_end)
+
         natural = commission_rate(
             lessons_this_month=lessons,
             full_months_since_first_lesson=_full_months_since(first, year, month),
-            first_60_days_lessons=first_60,
+            early_fifteen_unlocked=early_unlocked,
             previous_month_percent=None,
         )
         if natural.percent < 25:
             return natural.percent, lessons
 
-        # Retention may happen for one month only. We therefore recompute the
-        # previous month's NATURAL rate and never read an already-retained value.
         py, pm = _previous_month(year, month)
         previous_lessons = await _month_lesson_count(conn, tutor_id, py, pm)
+        previous_month_end = _month_end_date(py, pm)
+        previous_early_unlocked = bool(unlock_date and unlock_date < previous_month_end)
         previous_natural = commission_rate(
             lessons_this_month=previous_lessons,
             full_months_since_first_lesson=_full_months_since(first, py, pm),
-            first_60_days_lessons=first_60,
+            early_fifteen_unlocked=previous_early_unlocked,
             previous_month_percent=None,
         )
         retained = commission_rate(
             lessons_this_month=lessons,
             full_months_since_first_lesson=_full_months_since(first, year, month),
-            first_60_days_lessons=first_60,
+            early_fifteen_unlocked=early_unlocked,
             previous_month_percent=previous_natural.percent,
         )
         return retained.percent, lessons
 
 
 async def recalculate_monthly_stats(tutor_id: int, year: int, month: int):
-    """Rebuild statistics from immutable booking snapshots.
-
-    Free trials contribute a lesson count only to trial-specific UX, not to paid
-    financial statistics. Commission is summed per booking, so owner lessons with
-    commission_percent=0 remain zero-commission even if the tutor profile has a
-    different current rate.
-    """
     await _db._ensure_pool()
     tutors = await _db.get_all_tutors()
     tutor = tutors.get(int(tutor_id))
@@ -189,7 +199,6 @@ async def get_tutor_financials(tutor_id: int, year: int = None, month: int = Non
             "commission_percent": float(row["commission_percent"] or 0),
         }
 
-    # All-time totals are also booking-snapshot based rather than current-rate based.
     async with _db._legacy.pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -218,7 +227,6 @@ async def get_tutor_financials(tutor_id: int, year: int = None, month: int = Non
 
 
 def install_financial_hardening(app) -> None:
-    """Patch all aliases used by legacy Telegram/VK and database helper code."""
     legacy = app.legacy
     targets = (_db, _db._legacy, legacy)
     for target in targets:
