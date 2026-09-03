@@ -76,13 +76,21 @@ async def _confirm_regular(legacy, booking: dict, actor_id: int, *, telegram_bot
         return {"kind": "email_required"}
 
     if telegram_bot is not None:
-        await legacy.create_and_send_payment(source, telegram_bot, booking, email, booking_id)
+        delivery = await legacy.create_and_send_payment(source, telegram_bot, booking, email, booking_id)
     else:
-        await legacy.create_and_send_payment(source, booking, email, booking_id)
+        delivery = await legacy.create_and_send_payment(source, booking, email, booking_id)
 
+    if isinstance(delivery, dict):
+        if delivery.get("payment_id") and delivery.get("link_sent"):
+            return {"kind": "payment_created"}
+        if delivery.get("payment_id"):
+            return {"kind": "payment_created_link_pending"}
+        return {"kind": "payment_failed"}
+
+    # Compatibility fallback for an older payment layer.
     refreshed = await _db.get_booking(booking_id)
     if refreshed and refreshed.get("tinkoff_payment_id"):
-        return {"kind": "payment_created"}
+        return {"kind": "payment_created_link_pending"}
     return {"kind": "payment_failed"}
 
 
@@ -129,6 +137,11 @@ async def _telegram_confirm(call, bot, state):
         await call.message.edit_text("✅ Заявка подтверждена. Ожидаем e-mail ученика для создания платежа.")
     elif result["kind"] == "payment_created":
         await call.message.edit_text("✅ Заявка подтверждена. Ссылка на оплату отправлена ученику.")
+    elif result["kind"] == "payment_created_link_pending":
+        await call.message.edit_text(
+            "⚠️ Платёж создан, но ссылку ученику доставить не удалось. "
+            "Новый платёж создавать не нужно: ученик может снова открыть раздел «Оплата» и получить ссылку на тот же PaymentId."
+        )
     else:
         await call.message.edit_text(
             "⚠️ Заявка подтверждена, но платёж создать не удалось. "
@@ -200,6 +213,12 @@ def install_vk_tutor_confirmation(app) -> None:
             await legacy.edit_event_message(event, "✅ Заявка подтверждена. Ожидаем e-mail ученика для создания платежа.")
         elif result["kind"] == "payment_created":
             await legacy.edit_event_message(event, "✅ Заявка подтверждена. Ссылка на оплату отправлена ученику.")
+        elif result["kind"] == "payment_created_link_pending":
+            await legacy.edit_event_message(
+                event,
+                "⚠️ Платёж создан, но ссылку ученику доставить не удалось. "
+                "Новый платёж создавать не нужно: ученик может снова открыть раздел «Оплата» и получить ссылку на тот же PaymentId.",
+            )
         else:
             await legacy.edit_event_message(
                 event,
@@ -207,7 +226,6 @@ def install_vk_tutor_confirmation(app) -> None:
                 "Ученик может повторить оплату из раздела «Оплата».",
             )
 
-    # VK's universal dispatcher resolves the module global dynamically.
     legacy.tutor_confirm_booking = vk_confirm
     app.tutor_confirm_booking = vk_confirm
     legacy._cross_platform_tutor_confirmation_vk = True
