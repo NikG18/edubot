@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 
 @dataclass(frozen=True)
@@ -11,11 +12,54 @@ class CommissionDecision:
     reason: str
 
 
+def add_calendar_months(value: date, months: int) -> date:
+    """Add calendar months without external dependencies."""
+    month_index = value.month - 1 + int(months)
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    month_lengths = (31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
+                     31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    return date(year, month, min(value.day, month_lengths[month - 1]))
+
+
+def early_fifteen_unlock_date(
+    lesson_dates: list[date] | tuple[date, ...],
+    first_lesson_date: date,
+    *,
+    threshold: int = 100,
+    window_days: int = 60,
+    eligibility_months: int = 4,
+) -> date | None:
+    """Return the first date when the 4-month wait is permanently bypassed.
+
+    During the first four calendar months of work, a tutor can unlock access to the
+    15% tier early by completing at least ``threshold`` lessons in any rolling
+    ``window_days``-day window. Once reached, the unlock is permanent; future months
+    use the ordinary 41+ lesson condition exactly as if four months had elapsed.
+    """
+    if not first_lesson_date or threshold <= 0 or window_days <= 0:
+        return None
+
+    cutoff = add_calendar_months(first_lesson_date, eligibility_months)
+    dates = sorted(
+        d for d in lesson_dates
+        if isinstance(d, date) and first_lesson_date <= d < cutoff
+    )
+    left = 0
+    for right, current in enumerate(dates):
+        # A 60-day inclusive window allows a maximum date difference of 59 days.
+        while left <= right and (current - dates[left]).days >= window_days:
+            left += 1
+        if right - left + 1 >= int(threshold):
+            return current
+    return None
+
+
 def commission_rate(
     *,
     lessons_this_month: int,
     full_months_since_first_lesson: int,
-    first_60_days_lessons: int,
+    early_fifteen_unlocked: bool = False,
     previous_month_percent: int | None = None,
 ) -> CommissionDecision:
     """Calculate progressive agent commission.
@@ -23,20 +67,22 @@ def commission_rate(
     Rules:
     - 25% base rate;
     - 20% from 21 lessons after two full months of work;
-    - 15% from 41 lessons when EITHER four full months of work have passed OR
-      more than 100 lessons were completed during the first 60 days;
-    - an achieved 20%/15% rate is retained for one following calendar month
-      if the current month's volume alone would move it upward.
+    - 15% from 41 lessons after four full months of work;
+    - the four-month wait for 15% is permanently bypassed if, during those first
+      four months, the tutor completes at least 100 lessons in any 60-day window;
+    - after that early unlock, the tutor follows the normal 15% rule: 41+ lessons
+      in a month, without needing to repeat the 100-in-60 achievement;
+    - an achieved 20%/15% rate is retained for one following calendar month if the
+      current month's volume alone would otherwise move it upward.
     """
     lessons = max(0, int(lessons_this_month or 0))
     months = max(0, int(full_months_since_first_lesson or 0))
-    first_60 = max(0, int(first_60_days_lessons or 0))
 
-    if lessons >= 41 and (months >= 4 or first_60 > 100):
+    if lessons >= 41 and (months >= 4 or bool(early_fifteen_unlocked)):
         reason = (
-            "41+ lessons and 4+ full months"
-            if months >= 4
-            else "41+ lessons and first 60 days >100 lessons"
+            "41+ lessons after early 15% unlock"
+            if months < 4 and early_fifteen_unlocked
+            else "41+ lessons after 4 full months"
         )
         return CommissionDecision(15, reason)
     if lessons >= 21 and months >= 2:
