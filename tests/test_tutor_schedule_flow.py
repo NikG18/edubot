@@ -47,6 +47,26 @@ class TutorScheduleStateTests(unittest.TestCase):
             )
         )
 
+    def test_delete_cancel_returns_to_selected_day(self):
+        delete_start = async_function("del_slot_start")
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Constant)
+                and node.value == "back_to_schedule_day"
+                for node in ast.walk(delete_start)
+            )
+        )
+
+        back_handler = async_function("back_to_schedule_day")
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_show_day_management"
+                for node in ast.walk(back_handler)
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3324,7 +3324,7 @@ async def add_range_start(call: CallbackQuery, state: FSMContext):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="60 минут", callback_data="dur_60")],
         [InlineKeyboardButton(text="90 минут", callback_data="dur_90")],
-        [InlineKeyboardButton(text="🔙 Отмена", callback_data="back_to_schedule")]
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="back_to_schedule_day")]
     ])
     await call.message.edit_text("Выберите длительность занятия:", reply_markup=keyboard)
     await state.set_state(TutorScheduleStates.range_duration)
@@ -3354,7 +3354,7 @@ async def range_break_back(call: CallbackQuery, state: FSMContext):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="60 минут", callback_data="dur_60")],
         [InlineKeyboardButton(text="90 минут", callback_data="dur_90")],
-        [InlineKeyboardButton(text="🔙 Отмена", callback_data="back_to_schedule")]
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="back_to_schedule_day")]
     ])
     await call.message.edit_text("Выберите длительность занятия:", reply_markup=keyboard)
     await state.set_state(TutorScheduleStates.range_duration)
@@ -3437,10 +3437,20 @@ async def del_slot_start(call: CallbackQuery, state: FSMContext):
         await call.message.edit_text("Нет слотов для удаления.")
         return
     buttons = [[InlineKeyboardButton(text=s, callback_data=f"delslot_{s}")] for s in slots]
-    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_schedule")])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_schedule_day")])
     await call.message.edit_text("Выберите слот для удаления:",
                                  reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await state.set_state(TutorScheduleStates.delete_slot)
+
+
+@dp.callback_query(
+    F.data == "back_to_schedule_day",
+    StateFilter(TutorScheduleStates.delete_slot, TutorScheduleStates.range_duration),
+)
+async def back_to_schedule_day(call: CallbackQuery, state: FSMContext):
+    """Отменяет выбор действия и возвращает к управлению выбранным днём."""
+    await safe_answer(call)
+    await _show_day_management(call, state)
 
 
 @dp.callback_query(F.data.startswith("delslot_"), StateFilter(TutorScheduleStates.delete_slot))
