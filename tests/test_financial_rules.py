@@ -24,19 +24,29 @@ class FinancialRulesTests(unittest.TestCase):
             20,
         )
 
-    def test_fifteen_requires_first_sixty_day_qualification(self):
-        not_qualified = commission_rate(
-            lessons_this_month=50,
-            full_months_since_first_lesson=5,
-            first_60_days_lessons=100,
+    def test_fifteen_percent_after_four_months_without_first_sixty_qualification(self):
+        decision = commission_rate(
+            lessons_this_month=41,
+            full_months_since_first_lesson=4,
+            first_60_days_lessons=0,
         )
-        qualified = commission_rate(
-            lessons_this_month=50,
-            full_months_since_first_lesson=5,
+        self.assertEqual(decision.percent, 15)
+
+    def test_fifteen_percent_from_first_sixty_qualification_before_four_months(self):
+        decision = commission_rate(
+            lessons_this_month=41,
+            full_months_since_first_lesson=2,
             first_60_days_lessons=101,
         )
-        self.assertEqual(not_qualified.percent, 20)
-        self.assertEqual(qualified.percent, 15)
+        self.assertEqual(decision.percent, 15)
+
+    def test_fifteen_percent_requires_one_of_the_two_qualification_paths(self):
+        decision = commission_rate(
+            lessons_this_month=50,
+            full_months_since_first_lesson=3,
+            first_60_days_lessons=100,
+        )
+        self.assertEqual(decision.percent, 20)
 
     def test_rate_is_retained_for_one_following_month(self):
         self.assertEqual(
