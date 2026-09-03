@@ -12,6 +12,7 @@ from completion_hardening import install_vk_completion_hardening
 from vk_payment_hardening import install_vk_payment_hardening
 from access_hardening import install_vk_materials_guard
 from vk_access_hardening import install_vk_reply_authorization
+from contact_delivery_hardening import install_vk_contact_delivery_hardening
 from runtime_hardening import install_vk_hardening
 
 install_financial_hardening(app)
@@ -24,6 +25,7 @@ install_vk_completion_hardening(app)
 install_vk_payment_hardening(app)
 install_vk_materials_guard(app)
 install_vk_reply_authorization(app)
+install_vk_contact_delivery_hardening(app)
 install_vk_hardening(app)
 
 
