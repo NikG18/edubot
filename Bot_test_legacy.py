@@ -138,7 +138,7 @@ STUDENT_INFO_TEXT = (
     "• За приведение друга — скидка 10% на все занятия в течение 30 дней\n"
     "• При покупке абонемента на 12 занятий — скидка 5%\n"
     "• При единовременной оплате 24 занятий — скидка 10%\n"
-    "• При единовременной оплате 36 занятий — скидка 20%\n"
+    "• При единовременной оплате 36 занятий — скидка 15%\n"
     "• Скидка для семей, у которых у нас занимаются более 1 ребенка — 20%\n\n"
     "Скидка при покупке абонемента не суммируется с другими акциями.\n"
     "Скидки суммируются с учётом условий. Подробности уточняйте у администратора.\n"
@@ -1726,7 +1726,7 @@ async def buy_subscription_subject(call: CallbackQuery, state: FSMContext):
     price = tutor["subjects"][subject]
     text = f"Выберите пакет занятий по предмету «{subject}»:\n"
     buttons = []
-    packages = [(12, 5), (24, 10), (36, 20)]
+    packages = [(12, 5), (24, 10), (36, 15)]
     for count, discount in packages:
         total = price * count * (1 - discount/100)
         buttons.append([InlineKeyboardButton(
@@ -1754,7 +1754,7 @@ async def buy_subscription_package(call: CallbackQuery, state: FSMContext):
     tutors = await get_all_tutors()
     tutor = tutors[tid]
     price = tutor["subjects"][subject]
-    discount = {12:5, 24:10, 36:20}[count]
+    discount = {12: 5, 24: 10, 36: 15}[count]
     total = price * count * (1 - discount/100)
 
     await state.update_data(package=count, total=total, discount=discount)
@@ -1788,7 +1788,7 @@ async def back_to_buy_packages(call: CallbackQuery, state: FSMContext):
     price = tutor["subjects"][subject]
     text = f"Выберите пакет занятий по предмету «{subject}»:\n"
     buttons = []
-    packages = [(12, 5), (24, 10), (36, 20)]
+    packages = [(12, 5), (24, 10), (36, 15)]
     for c, d in packages:
         total = price * c * (1 - d/100)
         buttons.append([InlineKeyboardButton(

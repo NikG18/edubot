@@ -1,10 +1,9 @@
 """Единые бизнес-правила для пакетов занятий и скидок."""
 
 SUBSCRIPTION_PACKAGES = (
-    (4, 0),
-    (8, 3),
     (12, 5),
     (24, 10),
+    (36, 15),
 )
 
 SUBSCRIPTION_DISCOUNTS = dict(SUBSCRIPTION_PACKAGES)
