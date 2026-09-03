@@ -7,6 +7,7 @@ import Bot_test_legacy as legacy
 from Bot_test_legacy import *
 from booking_records import format_dt, render_event, sync_booking_record
 from fiscal_agent import get_tutor_phone, normalize_supplier_phone, set_tutor_phone
+from payments import refund_booking_payment
 
 
 def _is_trial(booking) -> bool:
@@ -721,8 +722,8 @@ async def _show_admin_booking(call, booking_id: int):
     if booking.get("refund_status") in {"required", "pending"}:
         buttons.append([
             legacy.InlineKeyboardButton(
-                text="↩️ Отметить возврат выполненным",
-                callback_data=f"admin_booking_refund_{booking_id}",
+                text="↩️ Вернуть деньги клиенту",
+                callback_data=f"admin_booking_refund_confirm_{booking_id}",
             )
         ])
     buttons.append([
@@ -807,9 +808,9 @@ async def admin_booking_cancel_confirm(call: legacy.CallbackQuery):
     warning = ""
     if booking["status"] in {"paid", "completed"} and (booking.get("amount") or 0) > 0:
         warning = (
-            "\n\n⚠️ Это оплаченное занятие. После отмены оно будет исключено из статистики "
-            "за месяц занятия, а возврат будет отмечен как <b>требуется</b>. "
-            "Фактический возврат денег выполняется отдельно."
+            "\n\n⚠️ Это оплаченное занятие. После отмены возврат будет отмечен как "
+            "<b>требуется</b>, но статистика пока не уменьшится. Занятие будет "
+            "исключено только после подтверждения полного возврата банком."
         )
     keyboard = legacy.InlineKeyboardMarkup(inline_keyboard=[
         [legacy.InlineKeyboardButton(text="✅ Да, отменить", callback_data=f"admin_do_booking_cancel_{booking_id}")],
@@ -851,17 +852,67 @@ async def admin_booking_cancel_do(call: legacy.CallbackQuery):
     await _show_admin_booking(call, booking_id)
 
 
-@legacy.dp.callback_query(legacy.F.data.startswith("admin_booking_refund_"))
-async def admin_booking_refund(call: legacy.CallbackQuery):
+@legacy.dp.callback_query(legacy.F.data.regexp(r"^admin_booking_refund_confirm_\d+$"))
+async def admin_booking_refund_confirm(call: legacy.CallbackQuery):
     await legacy.safe_answer(call)
     if call.from_user.id != legacy.ADMING_ID:
         return
     booking_id = int(call.data.rsplit("_", 1)[1])
-    ok = await _db.mark_booking_refunded(booking_id, call.from_user.id)
-    if not ok:
-        await call.message.edit_text("Возврат уже отмечен или не требуется.")
+    booking = await _db.get_booking(booking_id)
+    if not booking or booking.get("refund_status") not in {"required", "pending"}:
+        await call.message.edit_text("Возврат уже подтверждён или не требуется.")
         return
-    await _show_admin_booking(call, booking_id)
+    amount = (booking.get("amount") or 0) / 100
+    keyboard = legacy.InlineKeyboardMarkup(inline_keyboard=[
+        [legacy.InlineKeyboardButton(
+            text=f"✅ Вернуть {amount:.2f} ₽",
+            callback_data=f"admin_do_booking_refund_{booking_id}",
+        )],
+        [legacy.InlineKeyboardButton(
+            text="🔙 Назад",
+            callback_data=f"admin_booking_view_{booking_id}",
+        )],
+    ])
+    await call.message.edit_text(
+        f"Подтвердите полный возврат <b>{amount:.2f} ₽</b> клиенту за занятие "
+        f"#{booking_id}.\n\nДеньги действительно будут возвращены через Т‑Банк. "
+        "Статистика уменьшится только после банковского подтверждения.",
+        reply_markup=keyboard,
+    )
+
+
+@legacy.dp.callback_query(legacy.F.data.regexp(r"^admin_do_booking_refund_\d+$"))
+async def admin_booking_refund_do(call: legacy.CallbackQuery):
+    await legacy.safe_answer(call)
+    if call.from_user.id != legacy.ADMING_ID:
+        return
+    booking_id = int(call.data.rsplit("_", 1)[1])
+    result = await refund_booking_payment(booking_id, call.from_user.id)
+    if result.get("success"):
+        await _show_admin_booking(call, booking_id)
+        return
+    if result.get("pending"):
+        await call.message.edit_text(
+            "⏳ Т‑Банк принял запрос на возврат, но ещё не подтвердил его завершение. "
+            "Статистика пока не изменена; бот проверит статус автоматически.",
+            reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=[
+                [legacy.InlineKeyboardButton(
+                    text="🔙 К занятию",
+                    callback_data=f"admin_booking_view_{booking_id}",
+                )]
+            ]),
+        )
+        return
+    await call.message.edit_text(
+        "❌ Т‑Банк не подтвердил возврат. Деньги и статистика не изменены. "
+        "Откройте занятие и повторите попытку позже.",
+        reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=[
+            [legacy.InlineKeyboardButton(
+                text="🔙 К занятию",
+                callback_data=f"admin_booking_view_{booking_id}",
+            )]
+        ]),
+    )
 
 
 @legacy.dp.callback_query(legacy.F.data.startswith("admin_booking_history_"))

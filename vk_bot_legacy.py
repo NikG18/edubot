@@ -38,7 +38,12 @@ from messaging import (
     send_to_user, send_to_tutor, send_telegram_message,
     send_telegram_message_get_id, close_messaging
 )
-from bot_common import now_msk_naive, valid_email
+from bot_common import (
+    booking_needs_payment_poll,
+    now_msk_naive,
+    process_booking_payment_status,
+    valid_email,
+)
 
 
 class StateDispenserWithUpdate(BuiltinStateDispenser):
@@ -3251,19 +3256,20 @@ async def periodic_cleanup():
 async def check_pending_payments():
     bookings = await get_all_bookings()
     for bid, b in bookings.items():
-        if b.get("status") != "confirmed" or not b.get("tinkoff_payment_id"):
+        if not booking_needs_payment_poll(b):
             continue
         payment_state = await check_payment(b["tinkoff_payment_id"])
-        status = payment_state.get("Status")
-        if payment_state.get("Success") and status in ("CONFIRMED", "AUTHORIZED"):
-            changed, booking = await mark_booking_paid_once(bid)
+        if not payment_state.get("Success"):
+            continue
+        status = str(payment_state.get("Status") or "").upper()
+        changed, booking = await process_booking_payment_status(bid, status)
+        if status in ("CONFIRMED", "AUTHORIZED"):
             if changed and booking:
                 await send_to_user(booking["user_id"], booking.get("user_platform", "vk"),
                                    "✅ Оплата получена! Занятие подтверждено.")
                 await send_to_tutor(booking["tutor_id"],
                                     f"✅ Оплата за занятие {booking['date']} {booking['time_slot']} получена.")
         elif status in ("REJECTED", "CANCELED"):
-            changed, booking = await mark_booking_payment_failed(bid)
             if changed and booking:
                 await send_to_user(booking["user_id"], booking.get("user_platform", "vk"),
                                    "❌ Платёж не прошёл. Запись отменена.")

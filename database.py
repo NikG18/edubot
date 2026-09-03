@@ -55,6 +55,21 @@ def _cancel_requires_refund(booking) -> bool:
     )
 
 
+def _stats_counted_after_status_change(old_status: str, new_status: str,
+                                       currently_counted: bool,
+                                       refund_required: bool) -> bool:
+    """Определяет участие занятия в статистике после смены статуса.
+
+    Проведённое оплаченное занятие остаётся в статистике после административной
+    отмены до тех пор, пока банк не подтвердит полный возврат.
+    """
+    if new_status == "completed":
+        return True
+    if new_status == "cancelled":
+        return bool(old_status == "completed" and currently_counted and refund_required)
+    return bool(currently_counted)
+
+
 async def _student_for_account_conn(conn, platform: str, platform_user_id: int,
                                     *, create: bool = True) -> Optional[int]:
     platform = str(platform or "").lower()
@@ -96,6 +111,7 @@ async def init_db():
             "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ",
             "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_status TEXT DEFAULT 'none'",
             "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_updated_at TIMESTAMPTZ",
+            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS stats_counted BOOLEAN",
         ]
         for sql in migrations:
             await conn.execute(sql)
@@ -251,6 +267,30 @@ async def init_db():
             )
             """
         )
+        # Миграция выполняется только для NULL, поэтому уже обработанные возвраты
+        # не меняются при последующих перезапусках. Ранее отменённые проведённые
+        # занятия сохраняем в статистике: это не затрагивает существующий тестовый
+        # возврат задним числом.
+        await conn.execute(
+            """
+            UPDATE bookings
+            SET stats_counted=TRUE
+            WHERE stats_counted IS NULL AND status='completed';
+
+            UPDATE bookings b
+            SET stats_counted=TRUE
+            WHERE b.stats_counted IS NULL
+              AND b.status='cancelled'
+              AND EXISTS (
+                  SELECT 1 FROM booking_events e
+                  WHERE e.booking_id=b.id AND e.old_status='completed'
+              );
+
+            UPDATE bookings SET stats_counted=FALSE WHERE stats_counted IS NULL;
+            ALTER TABLE bookings ALTER COLUMN stats_counted SET DEFAULT FALSE;
+            ALTER TABLE bookings ALTER COLUMN stats_counted SET NOT NULL;
+            """
+        )
 
 
 def _booking_dict(row) -> dict:
@@ -276,6 +316,7 @@ def _booking_dict(row) -> dict:
         "trial_email": row["trial_email"],
         "payment_notified": bool(row["payment_notified"]),
         "balance_credited": bool(row["balance_credited"]),
+        "stats_counted": bool(row["stats_counted"]),
         "cancelled_by": row["cancelled_by"],
         "cancel_reason": row["cancel_reason"],
         "cancelled_at": row["cancelled_at"],
@@ -795,7 +836,7 @@ async def update_booking(booking_id, **kwargs):
         "tinkoff_payment_id", "payment_msg_id", "user_platform", "payment_notified",
         "balance_credited", "date", "time_slot", "subject", "username",
         "cancelled_by", "cancel_reason", "cancelled_at", "refund_status", "refund_updated_at",
-        "trial_consumed",
+        "trial_consumed", "stats_counted",
     }
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
@@ -809,6 +850,13 @@ async def update_booking(booking_id, **kwargs):
                 return None
             target_status = fields.get("status", old["status"])
             refund_required = _cancel_requires_refund(old)
+            if target_status != old["status"]:
+                fields.setdefault(
+                    "stats_counted",
+                    _stats_counted_after_status_change(
+                        old["status"], target_status, old["stats_counted"], refund_required
+                    ),
+                )
             if target_status == "cancelled" and old["status"] != "cancelled":
                 fields.setdefault("cancelled_by", actor_type)
                 fields.setdefault("cancel_reason", reason)
@@ -894,6 +942,9 @@ async def change_booking_status(booking_id: int, new_status: str, *, event_type:
                     refund_status = "required"
                     refund_updated_at = datetime.now(tz=MSK)
             trial_consumed = bool(old["trial_consumed"])
+            stats_counted = _stats_counted_after_status_change(
+                old["status"], new_status, old["stats_counted"], refund_required
+            )
             if old["booking_type"] == "trial":
                 if new_status == "completed":
                     trial_consumed = True
@@ -909,11 +960,12 @@ async def change_booking_status(booking_id: int, new_status: str, *, event_type:
                 """
                 UPDATE bookings
                 SET status=$1,cancelled_by=$2,cancel_reason=$3,cancelled_at=$4,
-                    refund_status=$5,refund_updated_at=$6,trial_consumed=$7,updated_at=NOW()
-                WHERE id=$8 RETURNING *
+                    refund_status=$5,refund_updated_at=$6,trial_consumed=$7,
+                    stats_counted=$8,updated_at=NOW()
+                WHERE id=$9 RETURNING *
                 """,
                 new_status, cancelled_by, cancel_reason, cancelled_at,
-                refund_status, refund_updated_at, trial_consumed, booking_id,
+                refund_status, refund_updated_at, trial_consumed, stats_counted, booking_id,
             )
             stats_affected = "completed" in {old["status"], new_status}
             event_details = dict(details or {})
@@ -1091,24 +1143,76 @@ async def mark_booking_payment_failed(booking_id: int) -> tuple[bool, Optional[d
     return True, _booking_dict(updated)
 
 
-async def mark_booking_refunded(booking_id: int, admin_id: int) -> bool:
+async def mark_booking_refund_pending(booking_id: int, admin_id: int) -> tuple[bool, Optional[dict]]:
+    """Фиксирует, что банк принял запрос, но полный возврат ещё не подтверждён."""
     await _ensure_pool()
     async with _legacy.pool.acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow("SELECT * FROM bookings WHERE id=$1 FOR UPDATE", booking_id)
-            if not row or (row["refund_status"] or "none") not in {"required", "pending"}:
-                return False
-            await conn.execute(
-                "UPDATE bookings SET refund_status='refunded',refund_updated_at=NOW(),updated_at=NOW() WHERE id=$1",
+            if not row:
+                return False, None
+            refund_status = row["refund_status"] or "none"
+            if refund_status == "refunded":
+                return False, _booking_dict(row)
+            if refund_status not in {"required", "pending"}:
+                return False, _booking_dict(row)
+            if refund_status == "pending":
+                return False, _booking_dict(row)
+            updated = await conn.fetchrow(
+                """
+                UPDATE bookings
+                SET refund_status='pending',refund_updated_at=NOW(),updated_at=NOW()
+                WHERE id=$1 RETURNING *
+                """,
                 booking_id,
             )
             await _add_booking_event(
-                conn, booking_id, "refunded", row["status"], row["status"], "admin", admin_id,
+                conn, booking_id, "refund_requested", row["status"], row["status"],
+                "admin", admin_id,
                 {"amount": row["amount"], "payment_id": row["tinkoff_payment_id"]},
             )
-    await _recalculate_booking_stats(row)
     await _sync_booking_record_safely(booking_id)
-    return True
+    return True, _booking_dict(updated)
+
+
+async def confirm_booking_refunded(booking_id: int, *, actor_type: str = "payment",
+                                   actor_id: int = None) -> tuple[bool, Optional[dict]]:
+    """Идемпотентно подтверждает полный возврат и только тогда уменьшает статистику."""
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow("SELECT * FROM bookings WHERE id=$1 FOR UPDATE", booking_id)
+            if not row:
+                return False, None
+            if (row["refund_status"] or "none") == "refunded":
+                return False, _booking_dict(row)
+            if (row["refund_status"] or "none") not in {"required", "pending"}:
+                return False, _booking_dict(row)
+            updated = await conn.fetchrow(
+                """
+                UPDATE bookings
+                SET refund_status='refunded',refund_updated_at=NOW(),updated_at=NOW(),
+                    balance_credited=FALSE,stats_counted=FALSE
+                WHERE id=$1 RETURNING *
+                """,
+                booking_id,
+            )
+            await _add_booking_event(
+                conn, booking_id, "refunded", row["status"], row["status"], actor_type, actor_id,
+                {"amount": row["amount"], "payment_id": row["tinkoff_payment_id"]},
+            )
+    if row["stats_counted"]:
+        await _recalculate_booking_stats(updated)
+    await _sync_booking_record_safely(booking_id)
+    return True, _booking_dict(updated)
+
+
+async def mark_booking_refunded(booking_id: int, admin_id: int) -> bool:
+    """Совместимая оболочка для старого административного обработчика."""
+    changed, _booking = await confirm_booking_refunded(
+        booking_id, actor_type="admin", actor_id=admin_id
+    )
+    return changed
 
 
 async def cleanup_old_bookings():
@@ -1145,6 +1249,7 @@ async def cleanup_old_bookings():
                     UPDATE bookings
                     SET status='completed',
                         trial_consumed=CASE WHEN booking_type='trial' THEN TRUE ELSE trial_consumed END,
+                        stats_counted=TRUE,
                         updated_at=NOW()
                     WHERE id=$1
                     """,

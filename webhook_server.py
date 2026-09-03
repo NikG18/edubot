@@ -7,7 +7,7 @@ from database import (
     get_booking_id_by_payment_id,
 )
 from messaging import send_to_user
-from bot_common import process_booking_payment_status
+from bot_common import FULL_REFUND_STATUSES, process_booking_payment_status
 
 
 def _valid_notification(payload: dict) -> bool:
@@ -31,7 +31,7 @@ async def _handle_notification(request: web.Request):
         return web.Response(status=403, text="forbidden")
 
     payment_id = str(payload.get("PaymentId") or "")
-    status = str(payload.get("Status") or "")
+    status = str(payload.get("Status") or "").upper()
 
     if not payment_id or not status:
         return web.Response(status=400, text="missing fields")
@@ -78,6 +78,12 @@ async def _handle_notification(request: web.Request):
                 await send_to_user(
                     booking["user_id"], booking.get("user_platform", "telegram"),
                     "❌ Платёж не прошёл. Запись отменена."
+                )
+            elif status in FULL_REFUND_STATUSES:
+                logging.info(
+                    "Полный возврат подтверждён webhook: booking=%s payment_id=%s",
+                    booking_id,
+                    payment_id,
                 )
 
     # T-Bank ожидает HTTP 200 и OK.

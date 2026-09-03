@@ -2,7 +2,6 @@ import os
 import json
 import hashlib
 import logging
-import sys
 import aiohttp
 import ssl
 from typing import Optional, Tuple
@@ -12,6 +11,7 @@ TINKOFF_SECRET_KEY = os.environ.get("TINKOFF_SECRET_KEY")
 TINKOFF_WEBHOOK_URL = os.environ.get("TINKOFF_WEBHOOK_URL", "")
 API_BASE = "https://securepay.tinkoff.ru/v2/"
 CASHBOX_BASE = "https://securepay.tinkoff.ru/cashbox/"
+FULL_REFUND_STATUSES = frozenset({"REFUNDED", "REVERSED"})
 
 if not TINKOFF_TERMINAL_KEY or not TINKOFF_SECRET_KEY:
     logging.warning("TINKOFF_TERMINAL_KEY/TINKOFF_SECRET_KEY не заданы")
@@ -311,9 +311,9 @@ def _bank_error(response: dict) -> dict:
 async def refund_full_payment(payment_id: str, *, external_request_id: str = None) -> dict:
     """Безопасный полный возврат с проверкой состояния до и после Cancel.
 
-    Возвращает success=True только когда T-Bank уже показывает REFUNDED. Если первый
-    Cancel успел исполниться, но ответ потерялся, повторный вызов увидит REFUNDED на
-    начальном GetState и не отправит второй возврат.
+    Возвращает success=True только когда T-Bank уже показывает конечный статус
+    REFUNDED/REVERSED. Если банк принял запрос, но ещё обрабатывает его, возвращает
+    pending=True — окончание подтвердят webhook или резервный GetState.
     """
     payment_id = str(payment_id or "").strip()
     if not payment_id:
@@ -321,10 +321,10 @@ async def refund_full_payment(payment_id: str, *, external_request_id: str = Non
 
     state_before = await check_payment(payment_id)
     status_before = _payment_status(state_before)
-    if state_before.get("Success") and status_before == "REFUNDED":
+    if state_before.get("Success") and status_before in FULL_REFUND_STATUSES:
         return {
             "success": True,
-            "status": "REFUNDED",
+            "status": status_before,
             "already_refunded": True,
             "state_before": state_before,
         }
@@ -335,7 +335,15 @@ async def refund_full_payment(payment_id: str, *, external_request_id: str = Non
             "status": status_before,
             **_bank_error(state_before),
         }
-    if status_before != "CONFIRMED":
+    if status_before == "REFUNDING":
+        return {
+            "success": False,
+            "pending": True,
+            "stage": "await_refund",
+            "status": status_before,
+            "state_before": state_before,
+        }
+    if status_before not in {"CONFIRMED", "AUTHORIZED"}:
         return {
             "success": False,
             "stage": "precondition",
@@ -348,10 +356,10 @@ async def refund_full_payment(payment_id: str, *, external_request_id: str = Non
         external_request_id=external_request_id,
     )
     cancel_status = _payment_status(cancel_response)
-    if cancel_response.get("Success") and cancel_status == "REFUNDED":
+    if cancel_response.get("Success") and cancel_status in FULL_REFUND_STATUSES:
         return {
             "success": True,
-            "status": "REFUNDED",
+            "status": cancel_status,
             "already_refunded": False,
             "cancel_response": cancel_response,
         }
@@ -359,11 +367,24 @@ async def refund_full_payment(payment_id: str, *, external_request_id: str = Non
     # Для СБП и при сетевой неопределенности результат всегда подтверждаем GetState.
     state_after = await check_payment(payment_id)
     status_after = _payment_status(state_after)
-    if state_after.get("Success") and status_after == "REFUNDED":
+    if state_after.get("Success") and status_after in FULL_REFUND_STATUSES:
         return {
             "success": True,
-            "status": "REFUNDED",
+            "status": status_after,
             "already_refunded": False,
+            "cancel_response": cancel_response,
+            "state_after": state_after,
+        }
+
+    if cancel_response.get("Success") or (
+        state_after.get("Success")
+        and status_after in {"CONFIRMED", "AUTHORIZED", "REFUNDING"}
+    ):
+        return {
+            "success": False,
+            "pending": True,
+            "stage": "await_refund",
+            "status": status_after or cancel_status or status_before,
             "cancel_response": cancel_response,
             "state_after": state_after,
         }
@@ -379,38 +400,39 @@ async def refund_full_payment(payment_id: str, *, external_request_id: str = Non
     }
 
 
-async def _refund_booking_and_mark(booking_id: int, admin_id: int) -> bool:
-    """Реальный возврат для существующей кнопки админ-панели.
+async def refund_booking_payment(booking_id: int, admin_id: int) -> dict:
+    """Запрашивает полный возврат и синхронизирует его подтверждённый статус с БД."""
+    from database import (
+        add_booking_event,
+        confirm_booking_refunded,
+        get_booking,
+        mark_booking_refund_pending,
+    )
 
-    payments.py загружается после database.py в обоих ботах. Поэтому ниже мы подменяем
-    только публичную функцию mark_booking_refunded: сначала T-Bank, затем фиксация в БД.
-    """
-    database = sys.modules.get("database")
-    if database is None:
-        return False
-    original = getattr(database, "_tbank_original_mark_booking_refunded", None)
-    if original is None:
-        return False
-
-    booking = await database.get_booking(int(booking_id))
+    booking = await get_booking(int(booking_id))
     if not booking:
-        return False
+        return {"success": False, "error": "booking_not_found"}
     refund_status = booking.get("refund_status") or "none"
     if refund_status == "refunded":
-        return False
+        return {"success": True, "already_refunded": True, "status": "REFUNDED"}
     if refund_status not in {"required", "pending"}:
-        return False
+        return {"success": False, "error": "refund_not_required"}
 
     payment_id = str(booking.get("tinkoff_payment_id") or "").strip()
     if not payment_id:
         logging.error("Невозможно вернуть booking=%s: отсутствует tinkoff_payment_id", booking_id)
-        return False
+        return {"success": False, "error": "missing_payment_id"}
 
     result = await refund_full_payment(
         payment_id,
         external_request_id=f"booking-refund-{int(booking_id)}",
     )
     if not result.get("success"):
+        if result.get("pending"):
+            changed, current = await mark_booking_refund_pending(int(booking_id), admin_id)
+            if current and current.get("refund_status") == "refunded":
+                return {**result, "success": True, "pending": False, "already_refunded": True}
+            return {**result, "pending": True, "database_changed": changed}
         logging.error(
             "T-Bank refund failed booking=%s payment_id=%s stage=%s status=%s code=%s details=%s",
             booking_id,
@@ -421,7 +443,7 @@ async def _refund_booking_and_mark(booking_id: int, admin_id: int) -> bool:
             result.get("details") or result.get("message") or result.get("error"),
         )
         try:
-            await database.add_booking_event(
+            await add_booking_event(
                 int(booking_id),
                 "refund_failed",
                 old_status=booking.get("status"),
@@ -437,25 +459,13 @@ async def _refund_booking_and_mark(booking_id: int, admin_id: int) -> bool:
             )
         except Exception:
             logging.exception("Не удалось записать refund_failed для booking=%s", booking_id)
-        return False
+        return result
 
-    marked = await original(int(booking_id), admin_id)
-    if marked:
-        return True
-    current = await database.get_booking(int(booking_id))
-    return bool(current and current.get("refund_status") == "refunded")
-
-
-def _install_database_refund_hook():
-    """Подключает T-Bank к уже существующей кнопке без изменения старых handlers."""
-    database = sys.modules.get("database")
-    if database is None or not hasattr(database, "mark_booking_refunded"):
-        return
-    if getattr(database, "_tbank_refund_hook_installed", False):
-        return
-    database._tbank_original_mark_booking_refunded = database.mark_booking_refunded
-    database.mark_booking_refunded = _refund_booking_and_mark
-    database._tbank_refund_hook_installed = True
-
-
-_install_database_refund_hook()
+    changed, current = await confirm_booking_refunded(
+        int(booking_id),
+        actor_type="admin",
+        actor_id=admin_id,
+    )
+    if changed or (current and current.get("refund_status") == "refunded"):
+        return {**result, "success": True, "database_changed": changed}
+    return {**result, "success": False, "error": "database_state_not_eligible"}

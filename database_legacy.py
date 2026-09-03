@@ -769,7 +769,7 @@ async def get_tutor_first_lesson_date(tutor_id: int):
     async with pool.acquire() as conn:
         value = await conn.fetchval(
             """SELECT MIN(to_date(date,'DD.MM.YYYY'))
-               FROM bookings WHERE tutor_id=$1 AND status='completed'""",
+               FROM bookings WHERE tutor_id=$1 AND stats_counted=TRUE""",
             tutor_id
         )
     return datetime.combine(value, datetime.min.time()) if value else None
@@ -780,7 +780,7 @@ async def calculate_auto_commission(tutor_id: int, year: int, month: int):
     async with pool.acquire() as conn:
         lessons = await conn.fetchval(
             """SELECT COUNT(*) FROM bookings
-               WHERE tutor_id=$1 AND status='completed'
+               WHERE tutor_id=$1 AND stats_counted=TRUE
                  AND EXTRACT(YEAR FROM to_date(date,'DD.MM.YYYY'))=$2
                  AND EXTRACT(MONTH FROM to_date(date,'DD.MM.YYYY'))=$3""",
             tutor_id, year, month
@@ -812,7 +812,7 @@ async def recalculate_monthly_stats(tutor_id: int, year: int, month: int):
         async with pool.acquire() as conn:
             lessons = await conn.fetchval(
                 """SELECT COUNT(*) FROM bookings
-                   WHERE tutor_id=$1 AND status='completed'
+                   WHERE tutor_id=$1 AND stats_counted=TRUE
                      AND EXTRACT(YEAR FROM to_date(date,'DD.MM.YYYY'))=$2
                      AND EXTRACT(MONTH FROM to_date(date,'DD.MM.YYYY'))=$3""",
                 tutor_id, year, month
@@ -827,7 +827,7 @@ async def recalculate_monthly_stats(tutor_id: int, year: int, month: int):
                    ),0)
                FROM bookings b
                LEFT JOIN subjects s ON s.tutor_id=b.tutor_id AND s.name=b.subject
-               WHERE b.tutor_id=$1 AND b.status='completed'
+               WHERE b.tutor_id=$1 AND b.stats_counted=TRUE
                  AND EXTRACT(YEAR FROM to_date(b.date,'DD.MM.YYYY'))=$2
                  AND EXTRACT(MONTH FROM to_date(b.date,'DD.MM.YYYY'))=$3""",
             tutor_id, year, month
@@ -874,9 +874,9 @@ async def get_tutor_financials(tutor_id: int, year: int = None, month: int = Non
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            """SELECT COUNT(*) FILTER (WHERE b.status='completed') AS lessons,
+            """SELECT COUNT(*) FILTER (WHERE b.stats_counted=TRUE) AS lessons,
                       COALESCE(SUM(
-                        CASE WHEN b.status='completed' THEN
+                        CASE WHEN b.stats_counted=TRUE THEN
                           CASE WHEN b.amount>0 THEN b.amount/100.0 ELSE s.price::numeric END
                         ELSE 0 END
                       ),0) AS total_income
@@ -931,7 +931,7 @@ async def get_students_stats():
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT user_id, MAX(username) AS username,
-                   COUNT(*) FILTER (WHERE status='completed') AS completed_lessons
+                   COUNT(*) FILTER (WHERE stats_counted=TRUE) AS completed_lessons
             FROM bookings GROUP BY user_id
         """)
     result = []
@@ -952,7 +952,7 @@ async def get_students_stats_by_month(year, month):
         rows = await conn.fetch(
             """SELECT user_id, MAX(username) AS username, COUNT(*) AS cnt
                FROM bookings
-               WHERE status='completed'
+               WHERE stats_counted=TRUE
                  AND EXTRACT(YEAR FROM to_date(date,'DD.MM.YYYY'))=$1
                  AND EXTRACT(MONTH FROM to_date(date,'DD.MM.YYYY'))=$2
                GROUP BY user_id""",
