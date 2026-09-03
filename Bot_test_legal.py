@@ -3,10 +3,12 @@ import payment_reuse_telegram  # noqa: F401
 import legal_telegram  # noqa: F401
 from financial_hardening import install_financial_hardening
 from student_stats_hardening import install_student_stats_hardening
-from student_account_hardening import install_student_account_hardening, install_booking_account_context
+from student_account_hardening import install_student_account_hardening
 from pricing_text_hardening import install_pricing_text_hardening
 from tutor_archive_hardening import install_tutor_archive_hardening
 from subscription_booking import install_telegram_subscription_booking
+from tutor_confirmation_hardening import install_telegram_tutor_confirmation
+from telegram_email_hardening import install_telegram_email_hardening
 from subscription_cancel_hardening import install_subscription_cancel_release
 from completion_hardening import install_telegram_completion_hardening
 from access_hardening import install_telegram_materials_guard
@@ -23,7 +25,8 @@ install_student_account_hardening(app, "telegram")
 install_pricing_text_hardening(app)
 install_tutor_archive_hardening(app)
 install_telegram_subscription_booking(app)
-install_booking_account_context(app, "telegram")
+install_telegram_tutor_confirmation(app)
+install_telegram_email_hardening(app)
 install_subscription_cancel_release(app)
 install_telegram_completion_hardening(app)
 install_telegram_materials_guard(app)
