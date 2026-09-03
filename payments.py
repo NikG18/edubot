@@ -13,6 +13,13 @@ API_BASE = "https://securepay.tinkoff.ru/v2/"
 CASHBOX_BASE = "https://securepay.tinkoff.ru/cashbox/"
 FULL_REFUND_STATUSES = frozenset({"REFUNDED", "REVERSED"})
 
+# Если занятие оказывает сам владелец ККТ/ИП, это обычная реализация собственной
+# услуги, а не агентская операция. Значения можно переопределить окружением, но
+# production-default соответствует реквизитам ИП Ганжи Никиты Тимуровича.
+OPERATOR_INN = os.environ.get("FISCAL_OPERATOR_INN", "390612116215").strip()
+OPERATOR_NAME = os.environ.get("FISCAL_OPERATOR_NAME", "ИП Ганжа Никита Тимурович").strip()
+OPERATOR_PHONE = os.environ.get("FISCAL_OPERATOR_PHONE", "+79331209603").strip()
+
 if not TINKOFF_TERMINAL_KEY or not TINKOFF_SECRET_KEY:
     logging.warning("TINKOFF_TERMINAL_KEY/TINKOFF_SECRET_KEY не заданы")
 
@@ -83,6 +90,60 @@ async def cashbox_call(endpoint: str, params: dict) -> dict:
     return await _post(CASHBOX_BASE + endpoint, payload, f"cashbox/{endpoint}")
 
 
+def is_operator_tutor(inn: Optional[str]) -> bool:
+    """True, если непосредственный исполнитель — сам ИП-владелец кассы."""
+    normalized = str(inn or "").strip()
+    return bool(OPERATOR_INN and normalized == OPERATOR_INN)
+
+
+def _validate_customer_email(customer_email: str) -> str:
+    email = (customer_email or "").strip()
+    if not email:
+        raise ValueError("Для электронного чека нужен e-mail покупателя")
+    return email
+
+
+def _validate_receipt_amount(amount_kop: int, payment_method: str, closing: bool):
+    if amount_kop <= 0:
+        raise ValueError("Сумма чека должна быть положительной")
+    if payment_method not in {"full_prepayment", "full_payment"}:
+        raise ValueError("Неподдерживаемый способ расчета для занятия")
+    if closing and payment_method != "full_payment":
+        raise ValueError("Закрывающий чек должен иметь способ расчета full_payment")
+
+
+def _base_receipt_item(amount_kop: int, description: str, payment_method: str) -> dict:
+    return {
+        "Name": description[:128],
+        "Price": int(amount_kop),
+        "Quantity": 1,
+        "Amount": int(amount_kop),
+        "Tax": "none",
+        "PaymentMethod": payment_method,
+        "PaymentObject": "service",
+        "MeasurementUnit": "шт",
+    }
+
+
+def _base_receipt(customer_email: str, item: dict, *, amount_kop: int, closing: bool) -> dict:
+    receipt = {
+        "FfdVersion": "1.2",
+        "Email": _validate_customer_email(customer_email),
+        # T-Bank принимает протокольное значение usn_income для данного магазина.
+        "Taxation": "usn_income",
+        "Items": [item],
+    }
+    if closing:
+        receipt["Payments"] = {
+            "Cash": 0,
+            "Electronic": 0,
+            "AdvancePayment": int(amount_kop),
+            "Credit": 0,
+            "Provision": 0,
+        }
+    return receipt
+
+
 def _validate_supplier(tutor_name: str, inn: Optional[str], supplier_phone: Optional[str]):
     name = (tutor_name or "").strip()
     supplier_inn = (inn or "").strip()
@@ -94,6 +155,22 @@ def _validate_supplier(tutor_name: str, inn: Optional[str], supplier_phone: Opti
     if not (phone.startswith("+") and phone[1:].isdigit() and len(phone) <= 19):
         raise ValueError("Телефон поставщика должен быть в формате +<цифры>")
     return name[:200], supplier_inn, phone
+
+
+def build_direct_receipt(
+    *,
+    amount_kop: int,
+    description: str,
+    customer_email: str,
+    payment_method: str,
+    closing: bool = False,
+) -> dict:
+    """Чек собственной услуги ИП без агентских реквизитов позиции."""
+    _validate_receipt_amount(amount_kop, payment_method, closing)
+    item = _base_receipt_item(amount_kop, description, payment_method)
+    # Намеренно отсутствуют AgentData и SupplierInfo: исполнитель совпадает с
+    # пользователем ККТ, поэтому это не агентская реализация.
+    return _base_receipt(customer_email, item, amount_kop=amount_kop, closing=closing)
 
 
 def build_agent_receipt(
@@ -108,54 +185,18 @@ def build_agent_receipt(
     closing: bool = False,
 ) -> dict:
     """Строит чек ФФД 1.2 для услуги самозанятого принципала через агента."""
-    if amount_kop <= 0:
-        raise ValueError("Сумма чека должна быть положительной")
-    if payment_method not in {"full_prepayment", "full_payment"}:
-        raise ValueError("Неподдерживаемый способ расчета для занятия")
-    if closing and payment_method != "full_payment":
-        raise ValueError("Закрывающий чек должен иметь способ расчета full_payment")
+    _validate_receipt_amount(amount_kop, payment_method, closing)
     name, supplier_inn, phone = _validate_supplier(tutor_name, inn, supplier_phone)
-    email = (customer_email or "").strip()
-    if not email:
-        raise ValueError("Для электронного чека нужен e-mail покупателя")
-
-    item = {
-        "Name": description[:128],
-        "Price": int(amount_kop),
-        "Quantity": 1,
-        "Amount": int(amount_kop),
-        "Tax": "none",
-        "PaymentMethod": payment_method,
-        "PaymentObject": "service",
-        # Обязательно для ФФД 1.2. Услуга продается как одна единица расчета.
-        "MeasurementUnit": "шт",
-        # Агентский договор: иной агент, не платежный агент/поверенный/комиссионер.
+    item = _base_receipt_item(amount_kop, description, payment_method)
+    item.update({
         "AgentData": {"AgentSign": "another"},
         "SupplierInfo": {
             "Phones": [phone],
             "Name": name,
             "Inn": supplier_inn,
         },
-    }
-    receipt = {
-        # CloudKassir работает через интеграцию в T-Bank. Для новой кассы формат
-        # должен совпадать и в кабинете эквайринга, и в каждом объекте Receipt.
-        "FfdVersion": "1.2",
-        "Email": email,
-        # API T-Bank использует usn_income; АУСН определяется ФНС по ИНН пользователя ККТ.
-        "Taxation": "usn_income",
-        "Items": [item],
-    }
-    if closing:
-        # Денег повторно не поступает: полная предоплата зачитывается при оказании услуги.
-        receipt["Payments"] = {
-            "Cash": 0,
-            "Electronic": 0,
-            "AdvancePayment": int(amount_kop),
-            "Credit": 0,
-            "Provision": 0,
-        }
-    return receipt
+    })
+    return _base_receipt(customer_email, item, amount_kop=amount_kop, closing=closing)
 
 
 async def get_sbp_payment_link(payment_id: str) -> Optional[str]:
@@ -190,29 +231,37 @@ async def create_payment(
     supplier_phone: Optional[str] = None,
     order_id_prefix: str = "booking",
 ) -> Tuple[Optional[str], Optional[str]]:
-    """Создаёт одностадийный СБП-платёж с агентским чеком 100% предоплаты."""
+    """Создаёт СБП-платёж: прямой для услуг владельца ИП, агентский для остальных."""
     if amount_kop <= 0:
         logging.error("Некорректная сумма платежа: %s", amount_kop)
         return None, None
 
-    if not supplier_phone:
-        try:
-            from fiscal_agent import get_tutor_phone
-            supplier_phone = await get_tutor_phone(int(tutor_id))
-        except Exception:
-            logging.exception("Не удалось получить телефон поставщика tutor_id=%s", tutor_id)
-            return None, None
-
+    direct_service = is_operator_tutor(inn)
     try:
-        receipt = build_agent_receipt(
-            amount_kop=amount_kop,
-            description=description,
-            customer_email=customer_email,
-            tutor_name=tutor_name,
-            inn=inn or "",
-            supplier_phone=supplier_phone or "",
-            payment_method="full_prepayment",
-        )
+        if direct_service:
+            receipt = build_direct_receipt(
+                amount_kop=amount_kop,
+                description=description,
+                customer_email=customer_email,
+                payment_method="full_prepayment",
+            )
+        else:
+            if not supplier_phone:
+                try:
+                    from fiscal_agent import get_tutor_phone
+                    supplier_phone = await get_tutor_phone(int(tutor_id))
+                except Exception:
+                    logging.exception("Не удалось получить телефон поставщика tutor_id=%s", tutor_id)
+                    return None, None
+            receipt = build_agent_receipt(
+                amount_kop=amount_kop,
+                description=description,
+                customer_email=customer_email,
+                tutor_name=tutor_name,
+                inn=inn or "",
+                supplier_phone=supplier_phone or "",
+                payment_method="full_prepayment",
+            )
     except ValueError as exc:
         logging.error("Фискальные реквизиты платежа некорректны: %s", exc)
         return None, None
@@ -251,17 +300,26 @@ async def send_closing_receipt(
     inn: str,
     supplier_phone: str,
 ) -> dict:
-    """Отправляет чек полного расчета после подтвержденного оказания занятия."""
-    receipt = build_agent_receipt(
-        amount_kop=amount_kop,
-        description=description,
-        customer_email=customer_email,
-        tutor_name=tutor_name,
-        inn=inn,
-        supplier_phone=supplier_phone,
-        payment_method="full_payment",
-        closing=True,
-    )
+    """Отправляет закрывающий чек с тем же прямым/агентским режимом, что и предоплата."""
+    if is_operator_tutor(inn):
+        receipt = build_direct_receipt(
+            amount_kop=amount_kop,
+            description=description,
+            customer_email=customer_email,
+            payment_method="full_payment",
+            closing=True,
+        )
+    else:
+        receipt = build_agent_receipt(
+            amount_kop=amount_kop,
+            description=description,
+            customer_email=customer_email,
+            tutor_name=tutor_name,
+            inn=inn,
+            supplier_phone=supplier_phone,
+            payment_method="full_payment",
+            closing=True,
+        )
     return await cashbox_call("SendClosingReceipt", {
         "PaymentId": str(payment_id),
         "Receipt": receipt,
@@ -364,7 +422,6 @@ async def refund_full_payment(payment_id: str, *, external_request_id: str = Non
             "cancel_response": cancel_response,
         }
 
-    # Для СБП и при сетевой неопределенности результат всегда подтверждаем GetState.
     state_after = await check_payment(payment_id)
     status_after = _payment_status(state_after)
     if state_after.get("Success") and status_after in FULL_REFUND_STATUSES:
