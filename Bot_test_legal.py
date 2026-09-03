@@ -11,6 +11,7 @@ from completion_hardening import install_telegram_completion_hardening
 from access_hardening import install_telegram_materials_guard
 from input_hardening import install_telegram_input_hardening
 from callback_hardening import install_telegram_callback_hardening
+from delivery_hardening import install_delivery_hardening
 from runtime_hardening import install_telegram_hardening
 
 install_financial_hardening(app)
@@ -23,6 +24,7 @@ install_telegram_completion_hardening(app)
 install_telegram_materials_guard(app)
 install_telegram_input_hardening(app)
 install_telegram_callback_hardening(app)
+install_delivery_hardening(app)
 install_telegram_hardening(app)
 
 
