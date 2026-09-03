@@ -4,11 +4,16 @@ import legal_vk  # noqa: F401  # юридический слой оборачи�
 import legal_vk_dedupe  # noqa: F401  # последний слой убирает повторную отправку документов
 from financial_hardening import install_financial_hardening
 from subscription_booking import install_vk_subscription_booking
+from subscription_cancel_hardening import install_subscription_cancel_release
+from completion_hardening import install_vk_completion_hardening
 from runtime_hardening import install_vk_hardening
 
-# Бизнес-правила и абонементный слой подключаются поверх существующих compatibility-слоёв.
+# В VK остаются пользовательские/преподавательские сценарии и статистика. Факт проведения
+# подтверждается только в Telegram-админке, но одинаковые правила БД применяются в обоих процессах.
 install_financial_hardening(app)
 install_vk_subscription_booking(app)
+install_subscription_cancel_release(app)
+install_vk_completion_hardening(app)
 install_vk_hardening(app)
 
 
