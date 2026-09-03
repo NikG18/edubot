@@ -291,8 +291,6 @@ def install_telegram_callback_hardening(app) -> None:
         await call.message.edit_text("Ищем доступные слоты на ближайшие 7 дней...")
         await legacy.show_trial_dates(call, state, tutor_id)
 
-    # The buy_tutor and back_to_buy_subjects handlers are already registered. Patch
-    # their code objects so the dispatcher keeps the same callable references.
     if hasattr(legacy, "buy_subscription_tutor"):
         _replace_registered_code(legacy.buy_subscription_tutor, _subscription_tutor_short)
     if hasattr(legacy, "back_to_buy_subjects"):
@@ -332,20 +330,16 @@ def install_telegram_callback_hardening(app) -> None:
         )
         await state.set_state(legacy.BuySubscriptionStates.choosing_package)
 
-    # Restart fallbacks: old state-filtered handlers simply do not match after a
-    # process restart. These later handlers give the user an explicit recovery path.
     @legacy.dp.callback_query(legacy.F.data.startswith("buy_tutor_"))
     async def subscription_tutor_restart_fallback(call: legacy.CallbackQuery, state: legacy.FSMContext):
-        await _subscription_tutor_short(call, state)
+        await legacy.buy_subscription_tutor(call, state)
 
     @legacy.dp.callback_query(legacy.F.data == "back_to_buy_subjects")
     async def subscription_back_restart_fallback(call: legacy.CallbackQuery, state: legacy.FSMContext):
-        await _subscription_back_subjects_short(call, state)
+        await legacy.back_to_buy_subjects(call, state)
 
     @legacy.dp.callback_query(legacy.F.data.startswith("buy_package_"))
     async def subscription_package_restart_fallback(call: legacy.CallbackQuery, state: legacy.FSMContext):
-        # With a valid choosing_package state the original handler runs first. If
-        # execution reaches this fallback, the ephemeral purchase state was lost.
         data = await state.get_data()
         if data.get("buy_tutor_id") and data.get("buy_subject"):
             return
