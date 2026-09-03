@@ -4,6 +4,7 @@ import legal_vk  # noqa: F401  # юридический слой оборачи�
 import legal_vk_dedupe  # noqa: F401  # последний слой убирает повторную отправку документов
 from financial_hardening import install_financial_hardening
 from student_stats_hardening import install_student_stats_hardening
+from tutor_archive_hardening import install_tutor_archive_hardening
 from subscription_booking import install_vk_subscription_booking
 from subscription_cancel_hardening import install_subscription_cancel_release
 from completion_hardening import install_vk_completion_hardening
@@ -15,6 +16,7 @@ from runtime_hardening import install_vk_hardening
 # и учебные материалы доступны администратору только в Telegram.
 install_financial_hardening(app)
 install_student_stats_hardening(app)
+install_tutor_archive_hardening(app)
 install_vk_subscription_booking(app)
 install_subscription_cancel_release(app)
 install_vk_completion_hardening(app)
