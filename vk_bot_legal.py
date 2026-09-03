@@ -11,6 +11,7 @@ from subscription_booking import install_vk_subscription_booking
 from subscription_cancel_hardening import install_subscription_cancel_release
 from completion_hardening import install_vk_completion_hardening
 from vk_payment_hardening import install_vk_payment_hardening
+from vk_email_hardening import install_vk_email_hardening
 from access_hardening import install_vk_materials_guard
 from vk_access_hardening import install_vk_reply_authorization
 from contact_delivery_hardening import install_vk_contact_delivery_hardening
@@ -26,6 +27,7 @@ install_vk_subscription_booking(app)
 install_subscription_cancel_release(app)
 install_vk_completion_hardening(app)
 install_vk_payment_hardening(app)
+install_vk_email_hardening(app)
 install_vk_materials_guard(app)
 install_vk_reply_authorization(app)
 install_vk_contact_delivery_hardening(app)
