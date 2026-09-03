@@ -1,0 +1,38 @@
+name: Audit hardening checks
+
+on:
+  push:
+    branches:
+      - fix/audit-hardening-2026-09-03
+  pull_request:
+
+jobs:
+  compile-and-pure-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile every Python source file
+        run: |
+          python - <<'PY'
+          import pathlib, py_compile
+          failed = []
+          for path in pathlib.Path('.').rglob('*.py'):
+              try:
+                  py_compile.compile(str(path), doraise=True)
+              except Exception as exc:
+                  failed.append((str(path), repr(exc)))
+          if failed:
+              for path, exc in failed:
+                  print(f'{path}: {exc}')
+              raise SystemExit(1)
+          print('All Python files compile successfully')
+          PY
+      - name: Run pure regression tests
+        run: |
+          python -m unittest -v \
+            tests.test_pricing \
+            tests.test_student_identity \
+            tests.test_financial_rules
