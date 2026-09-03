@@ -14,8 +14,7 @@ import student_account_hardening as accounts
 
 
 def _clean_trial_subject(subject: str) -> str:
-    value = str(subject or "")
-    return value.removeprefix("Пробное: ")
+    return str(subject or "").removeprefix("Пробное: ")
 
 
 async def _confirm_trial(legacy, booking: dict, actor_id: int) -> bool:
@@ -27,8 +26,6 @@ async def _confirm_trial(legacy, booking: dict, actor_id: int) -> bool:
         actor_id=int(actor_id),
         reason="Бесплатное пробное подтверждено преподавателем",
         expected_statuses={"pending"},
-        amount=0,
-        commission_percent=0,
     )
     if not changed:
         return False
@@ -129,65 +126,13 @@ async def _telegram_confirm(call, bot, state):
             f"Остаток: {result['remaining']} занятий."
         )
     elif result["kind"] == "email_required":
-        await call.message.edit_text(
-            "✅ Заявка подтверждена. Ожидаем e-mail ученика для создания платежа."
-        )
+        await call.message.edit_text("✅ Заявка подтверждена. Ожидаем e-mail ученика для создания платежа.")
     elif result["kind"] == "payment_created":
         await call.message.edit_text("✅ Заявка подтверждена. Ссылка на оплату отправлена ученику.")
     else:
         await call.message.edit_text(
-            "⚠️ Заявка подтверждена, но платёж создать не удалось. Ученик может повторить оплату из раздела «Оплата»."
-        )
-
-
-async def _vk_confirm(event):
-    try:
-        booking_id = int(event.payload["cmd"].rsplit("_", 1)[1])
-    except (KeyError, TypeError, ValueError, IndexError):
-        await answer_event(event, "Некорректная кнопка подтверждения.", snackbar=True)
-        return
-    booking = await _confirmation_db.get_booking(booking_id)
-    if not booking:
-        await edit_event_message(event, "Заявка не найдена.")
-        return
-    tutor_id = await get_tutor_by_vk_id(event.user_id)
-    if tutor_id != booking.get("tutor_id"):
-        await answer_event(event, "Доступ запрещён.", snackbar=True)
-        return
-    if booking.get("status") != "pending":
-        await edit_event_message(event, "Заявка уже обработана.")
-        return
-
-    if booking.get("booking_type") == "trial":
-        changed = await _confirmation_confirm_trial(legacy, booking, event.user_id)
-        await edit_event_message(
-            event,
-            "✅ Бесплатное пробное занятие подтверждено. Оплата не требуется."
-            if changed else "Заявка уже обработана.",
-        )
-        return
-
-    result = await _confirmation_confirm_regular(
-        legacy,
-        booking,
-        event.user_id,
-        telegram_bot=None,
-        source=event,
-    )
-    if result["kind"] == "subscription":
-        await edit_event_message(
-            event,
-            "✅ Занятие подтверждено. Оплата списана из абонемента.\n"
-            f"Остаток: {result['remaining']} занятий.",
-        )
-    elif result["kind"] == "email_required":
-        await edit_event_message(event, "✅ Заявка подтверждена. Ожидаем e-mail ученика для создания платежа.")
-    elif result["kind"] == "payment_created":
-        await edit_event_message(event, "✅ Заявка подтверждена. Ссылка на оплату отправлена ученику.")
-    else:
-        await edit_event_message(
-            event,
-            "⚠️ Заявка подтверждена, но платёж создать не удалось. Ученик может повторить оплату из раздела «Оплата».",
+            "⚠️ Заявка подтверждена, но платёж создать не удалось. "
+            "Ученик может повторить оплату из раздела «Оплата»."
         )
 
 
@@ -210,14 +155,59 @@ def install_vk_tutor_confirmation(app) -> None:
     legacy = app.legacy
     if getattr(legacy, "_cross_platform_tutor_confirmation_vk", False):
         return
-    legacy._confirmation_db = _db
-    legacy._confirmation_confirm_trial = _confirm_trial
-    legacy._confirmation_confirm_regular = _confirm_regular
-    legacy.legacy = legacy
+
+    async def vk_confirm(event):
+        try:
+            booking_id = int(event.payload["cmd"].rsplit("_", 1)[1])
+        except (KeyError, TypeError, ValueError, IndexError):
+            await legacy.answer_event(event, "Некорректная кнопка подтверждения.", snackbar=True)
+            return
+        booking = await _db.get_booking(booking_id)
+        if not booking:
+            await legacy.edit_event_message(event, "Заявка не найдена.")
+            return
+        tutor_id = await legacy.get_tutor_by_vk_id(event.user_id)
+        if tutor_id != booking.get("tutor_id"):
+            await legacy.answer_event(event, "Доступ запрещён.", snackbar=True)
+            return
+        if booking.get("status") != "pending":
+            await legacy.edit_event_message(event, "Заявка уже обработана.")
+            return
+
+        if booking.get("booking_type") == "trial":
+            changed = await _confirm_trial(legacy, booking, event.user_id)
+            await legacy.edit_event_message(
+                event,
+                "✅ Бесплатное пробное занятие подтверждено. Оплата не требуется."
+                if changed else "Заявка уже обработана.",
+            )
+            return
+
+        result = await _confirm_regular(
+            legacy,
+            booking,
+            event.user_id,
+            telegram_bot=None,
+            source=event,
+        )
+        if result["kind"] == "subscription":
+            await legacy.edit_event_message(
+                event,
+                "✅ Занятие подтверждено. Оплата списана из абонемента.\n"
+                f"Остаток: {result['remaining']} занятий.",
+            )
+        elif result["kind"] == "email_required":
+            await legacy.edit_event_message(event, "✅ Заявка подтверждена. Ожидаем e-mail ученика для создания платежа.")
+        elif result["kind"] == "payment_created":
+            await legacy.edit_event_message(event, "✅ Заявка подтверждена. Ссылка на оплату отправлена ученику.")
+        else:
+            await legacy.edit_event_message(
+                event,
+                "⚠️ Заявка подтверждена, но платёж создать не удалось. "
+                "Ученик может повторить оплату из раздела «Оплата».",
+            )
+
     # VK's universal dispatcher resolves the module global dynamically.
-    legacy.tutor_confirm_booking = _vk_confirm
-    app.tutor_confirm_booking = _vk_confirm
-    # Expose names used by _vk_confirm in the legacy global namespace.
-    legacy.answer_event = legacy.answer_event
-    legacy.edit_event_message = legacy.edit_event_message
+    legacy.tutor_confirm_booking = vk_confirm
+    app.tutor_confirm_booking = vk_confirm
     legacy._cross_platform_tutor_confirmation_vk = True
