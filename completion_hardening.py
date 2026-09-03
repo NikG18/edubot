@@ -23,10 +23,7 @@ async def _trial_only_cleanup(legacy):
     completed = []
     async with _db._legacy.pool.acquire() as conn:
         rows = await conn.fetch(
-            """
-            SELECT * FROM bookings
-            WHERE status='confirmed' AND booking_type='trial'
-            """
+            "SELECT * FROM bookings WHERE status='confirmed' AND booking_type='trial'"
         )
         for row in rows:
             try:
@@ -83,10 +80,7 @@ async def _mark_completed(booking_id: int, admin_id: int) -> tuple[bool, dict | 
             if row["status"] != "paid":
                 return False, dict(row)
             updated = await conn.fetchrow(
-                """
-                UPDATE bookings SET status='completed',stats_counted=TRUE,updated_at=NOW()
-                WHERE id=$1 RETURNING *
-                """,
+                "UPDATE bookings SET status='completed',stats_counted=TRUE,updated_at=NOW() WHERE id=$1 RETURNING *",
                 int(booking_id),
             )
             try:
@@ -116,6 +110,70 @@ async def _finalize_completed_booking(booking_id: int) -> dict:
     return receipt
 
 
+async def _render_admin_booking_with_completion(legacy, call, booking_id: int):
+    """Render the original admin information/actions plus the completion control."""
+    booking = await _db.get_booking(int(booking_id))
+    if not booking:
+        await call.message.edit_text("Занятие не найдено.")
+        return
+    tutors = await _db.get_all_tutors()
+    tutor_name = tutors.get(booking["tutor_id"], {}).get("name", "Неизвестный")
+    amount = (booking.get("amount") or 0) / 100
+    cancelled_line = ""
+    if booking.get("cancelled_by"):
+        cancelled_line = (
+            f"\n❌ Кем отменено: {legacy.html.quote(str(booking['cancelled_by']))}"
+            f"\n🕒 Отмена: {legacy.format_dt(booking.get('cancelled_at'))}"
+        )
+    subscription_line = ""
+    if booking.get("subscription_id"):
+        subscription_line = (
+            f"\n🎟 Абонемент: #{booking['subscription_id']}"
+            f" · занятие {booking.get('subscription_unit_index') or '—'}"
+        )
+    text = (
+        f"📚 <b>Занятие #{booking_id}</b>\n\n"
+        f"Статус: <b>{legacy.html.quote(str(booking['status']))}</b>\n"
+        f"👤 {legacy.html.quote(str(booking['username']))}\n"
+        f"👨‍🏫 {legacy.html.quote(str(tutor_name))}\n"
+        f"📚 {legacy.html.quote(str(booking['subject']))}\n"
+        f"📅 {legacy.html.quote(str(booking['date']))}\n"
+        f"🕒 {legacy.html.quote(str(booking['time_slot']))}\n"
+        f"🌐 {legacy.html.quote(str(booking.get('user_platform') or 'telegram'))}\n"
+        f"💳 {amount:.2f} ₽\n"
+        f"↩️ Возврат: {legacy.html.quote(str(booking.get('refund_status') or 'none'))}\n"
+        f"🕘 Обновлено: {legacy.format_dt(booking.get('updated_at'))}"
+        f"{subscription_line}{cancelled_line}"
+    )
+    buttons = []
+    if booking["status"] == "paid":
+        buttons.append([legacy.InlineKeyboardButton(
+            text="✅ Подтвердить, что занятие проведено",
+            callback_data=f"admin_booking_complete_{booking_id}",
+        )])
+    elif booking["status"] == "completed":
+        buttons.append([legacy.InlineKeyboardButton(
+            text="🧾 Проверить/повторить закрывающий чек",
+            callback_data=f"admin_booking_complete_{booking_id}",
+        )])
+    # Preserve the original admin cancellation action instead of replacing it.
+    if booking["status"] in {"pending", "confirmed", "paid", "completed"}:
+        buttons.append([legacy.InlineKeyboardButton(
+            text="❌ Отменить занятие",
+            callback_data=f"admin_booking_cancel_{booking_id}",
+        )])
+    if booking.get("refund_status") in {"required", "pending"}:
+        buttons.append([legacy.InlineKeyboardButton(
+            text="↩️ Вернуть деньги клиенту",
+            callback_data=f"admin_booking_refund_confirm_{booking_id}",
+        )])
+    buttons.append([legacy.InlineKeyboardButton(
+        text="📜 История", callback_data=f"admin_booking_history_{booking_id}"
+    )])
+    buttons.append([legacy.InlineKeyboardButton(text="🔙 К разделам", callback_data="admin_bookings")])
+    await call.message.edit_text(text, reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
 def install_telegram_completion_hardening(app) -> None:
     legacy = app.legacy
     if getattr(legacy, "_manual_completion_installed", False):
@@ -128,52 +186,13 @@ def install_telegram_completion_hardening(app) -> None:
     if hasattr(app, "_original_cleanup_old_bookings"):
         app._original_cleanup_old_bookings = trial_cleanup_for_app
 
-    original_show = app._show_admin_booking
+    # Helpers used by our renderer live in Bot_test, expose them to legacy namespace
+    # because other compatibility code also resolves these names there.
+    if hasattr(app, "format_dt"):
+        legacy.format_dt = app.format_dt
 
     async def show_with_complete(call, booking_id: int):
-        booking = await _db.get_booking(int(booking_id))
-        if not booking:
-            return await original_show(call, booking_id)
-        await original_show(call, booking_id)
-        # Re-render only when a completion action is useful. We cannot mutate the
-        # already-sent markup from original_show, so edit it once with the same text
-        # plus a purpose-built keyboard generated from current data.
-        if booking.get("status") not in {"paid", "completed"}:
-            return
-        tutors = await _db.get_all_tutors()
-        tutor_name = tutors.get(booking["tutor_id"], {}).get("name", "Неизвестный")
-        amount = (booking.get("amount") or 0) / 100
-        text = (
-            f"📚 <b>Занятие #{booking_id}</b>\n\n"
-            f"Статус: <b>{legacy.html.quote(str(booking['status']))}</b>\n"
-            f"👤 {legacy.html.quote(str(booking['username']))}\n"
-            f"👨‍🏫 {legacy.html.quote(str(tutor_name))}\n"
-            f"📚 {legacy.html.quote(str(booking['subject']))}\n"
-            f"📅 {legacy.html.quote(str(booking['date']))}\n"
-            f"🕒 {legacy.html.quote(str(booking['time_slot']))}\n"
-            f"💳 {amount:.2f} ₽"
-        )
-        buttons = []
-        if booking["status"] == "paid":
-            buttons.append([legacy.InlineKeyboardButton(
-                text="✅ Подтвердить, что занятие проведено",
-                callback_data=f"admin_booking_complete_{booking_id}",
-            )])
-        elif booking["status"] == "completed":
-            buttons.append([legacy.InlineKeyboardButton(
-                text="🧾 Проверить/повторить закрывающий чек",
-                callback_data=f"admin_booking_complete_{booking_id}",
-            )])
-        if booking.get("refund_status") in {"required", "pending"}:
-            buttons.append([legacy.InlineKeyboardButton(
-                text="↩️ Вернуть деньги клиенту",
-                callback_data=f"admin_booking_refund_confirm_{booking_id}",
-            )])
-        buttons.append([legacy.InlineKeyboardButton(
-            text="📜 История", callback_data=f"admin_booking_history_{booking_id}"
-        )])
-        buttons.append([legacy.InlineKeyboardButton(text="🔙 К разделам", callback_data="admin_bookings")])
-        await call.message.edit_text(text, reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=buttons))
+        return await _render_admin_booking_with_completion(legacy, call, booking_id)
 
     app._show_admin_booking = show_with_complete
 
@@ -195,7 +214,7 @@ def install_telegram_completion_hardening(app) -> None:
             await legacy.safe_answer(call, "Этот статус нельзя подтвердить как проведённый.", show_alert=True)
             return
 
-        changed, _ = await _mark_completed(booking_id, call.from_user.id)
+        await _mark_completed(booking_id, call.from_user.id)
         result = await _finalize_completed_booking(booking_id)
         if result.get("ok"):
             note = "✅ Проведение подтверждено. Закрывающий чек принят банком."
