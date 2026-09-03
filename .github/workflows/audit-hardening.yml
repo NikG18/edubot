@@ -35,4 +35,5 @@ jobs:
           python -m unittest -v \
             tests.test_pricing \
             tests.test_student_identity \
-            tests.test_financial_rules
+            tests.test_financial_rules \
+            tests.test_subscription_allocation
