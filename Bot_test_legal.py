@@ -2,11 +2,13 @@ import Bot_test as app
 import payment_reuse_telegram  # noqa: F401  # один T-Bank платёж на бронь, повторная выдача СБП-ссылки
 import legal_telegram  # noqa: F401  # юридический слой оборачивает итоговый платёжный сценарий
 from financial_hardening import install_financial_hardening
+from subscription_booking import install_telegram_subscription_booking
 from runtime_hardening import install_telegram_hardening
 
-# Бизнес-правила ставим после legacy/payment/legal imports, затем поверх них —
-# межпроцессные runtime-guards. Пользовательские handlers остаются прежними.
+# Сначала ставим бизнес-правила, затем абонементный слой поверх уже зарегистрированных
+# handlers, и последним — межпроцессные runtime-guards.
 install_financial_hardening(app)
+install_telegram_subscription_booking(app)
 install_telegram_hardening(app)
 
 
