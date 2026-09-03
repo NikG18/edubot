@@ -12,44 +12,55 @@ def _clone(fn):
     )
 
 
+# These functions intentionally reference names that will resolve in the legacy module
+# after their code objects are assigned to already-registered aiogram handlers. They
+# have no closures, so code replacement is safe.
+async def _tg_material_message_guard(message):
+    if message.from_user.id != ADMING_ID:
+        await message.answer(
+            "Этот раздел доступен только администратору.",
+            reply_markup=await get_main_menu(message.from_user.id),
+        )
+        return
+    return await _materials_original_message(message)
+
+
+async def _tg_material_callback_guard(call):
+    if call.from_user.id != ADMING_ID:
+        await safe_answer(call, "⛔ Раздел доступен только администратору.", show_alert=True)
+        return
+    data = str(call.data or "")
+    key = data.split("_", 1)[0] if data not in _materials_callback_originals else data
+    original = _materials_callback_originals.get(data) or _materials_callback_originals.get(key)
+    if original is None:
+        await safe_answer(call, "Кнопка устарела. Откройте раздел заново.", show_alert=True)
+        return
+    return await original(call)
+
+
+async def _vk_material_message_deny(message):
+    await message.answer(
+        "Учебные материалы доступны администратору только в Telegram.",
+        keyboard=await get_main_menu(message.from_id),
+    )
+
+
 def install_telegram_materials_guard(app) -> None:
     legacy = app.legacy
     if getattr(legacy, "_materials_access_guard_installed", False):
         return
 
-    message_name = "material"
-    callback_names = ("back_to_mat", "book", "vid", "bookh", "bookf", "videh", "videf")
-    if hasattr(legacy, message_name):
-        legacy._materials_original_message = _clone(getattr(legacy, message_name))
+    if hasattr(legacy, "material"):
+        legacy._materials_original_message = _clone(legacy.material)
+        legacy.material.__code__ = _tg_material_message_guard.__code__
 
-        async def guarded_material(message):
-            if message.from_user.id != legacy.ADMING_ID:
-                await message.answer(
-                    "Этот раздел доступен только администратору.",
-                    reply_markup=await legacy.get_main_menu(message.from_user.id),
-                )
-                return
-            return await legacy._materials_original_message(message)
-
-        getattr(legacy, message_name).__code__ = guarded_material.__code__
-
-    for name in callback_names:
+    originals = {}
+    for name in ("back_to_mat", "book", "vid", "bookh", "bookf", "videh", "videf"):
         fn = getattr(legacy, name, None)
-        if fn is None:
-            continue
-        original_name = f"_materials_original_{name}"
-        setattr(legacy, original_name, _clone(fn))
-
-        async def callback_guard(call, _original_name=original_name):
-            if call.from_user.id != legacy.ADMING_ID:
-                await legacy.safe_answer(call, "⛔ Раздел доступен только администратору.", show_alert=True)
-                return
-            return await getattr(legacy, _original_name)(call)
-
-        # Aiogram already registered the original callable, so preserve its identity.
-        fn.__code__ = callback_guard.__code__
-        fn.__defaults__ = callback_guard.__defaults__
-
+        if fn is not None:
+            originals[name] = _clone(fn)
+            fn.__code__ = _tg_material_callback_guard.__code__
+    legacy._materials_callback_originals = originals
     legacy._materials_access_guard_installed = True
 
 
@@ -63,8 +74,6 @@ def install_vk_materials_guard(app) -> None:
     async def menu_without_materials(user_id: int):
         if user_id != legacy.ADMIN_VK_ID:
             return await current_menu(user_id)
-        # Keep normal student/admin navigation but remove materials. The nested
-        # admin panel itself remains statistics-only via runtime_hardening.
         kb = legacy.Keyboard(inline=False, one_time=False)
         rows = [
             ("ℹ️ Информация о репетиторах", legacy.KeyboardButtonColor.PRIMARY),
@@ -86,12 +95,7 @@ def install_vk_materials_guard(app) -> None:
     legacy.get_main_menu = menu_without_materials
 
     if hasattr(legacy, "material"):
-        async def deny_message(message):
-            await message.answer(
-                "Учебные материалы доступны администратору только в Telegram.",
-                keyboard=await legacy.get_main_menu(message.from_id),
-            )
-        legacy.material.__code__ = deny_message.__code__
+        legacy.material.__code__ = _vk_material_message_deny.__code__
 
     async def deny_callback(event):
         await legacy.answer_event(
