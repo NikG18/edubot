@@ -22,7 +22,7 @@ from vkbottle.bot import rules
 from database import (
     init_db, get_all_tutors, add_tutor, update_tutor, delete_tutor,
     add_subject, update_subject, delete_subject,
-    get_schedule, add_schedule_slot, delete_schedule_slot,
+    get_schedule, add_schedule_slot, add_schedule_slots, delete_schedule_slot,
     get_all_bookings, add_booking, update_booking, delete_booking,
     get_tutor_by_telegram_id, get_student_subscriptions, get_tutor_financials, get_all_tutors_stats,
     get_students_stats, get_all_tutors_stats_by_month, get_students_stats_by_month,
@@ -31,7 +31,10 @@ from database import (
     add_lesson_to_balance, calculate_auto_commission,
     set_pending_email_request, get_pending_email_request, delete_pending_email_request,
     close_db, cleanup_old_bookings, WEEKDAYS, WEEKDAY_NAMES, get_tutor_by_vk_id,
-    get_booked_slots, mark_booking_paid_once, mark_booking_payment_failed, reschedule_booking, move_booking_in_place
+    get_booked_slots, mark_booking_paid_once, mark_booking_payment_failed, reschedule_booking, move_booking_in_place,
+    get_student_email, set_student_email, is_trial_available,
+    get_linked_accounts, create_account_link_code, consume_account_link_code,
+    get_bookings_for_account,
 )
 from payments import create_payment, check_payment
 from messaging import (
@@ -110,6 +113,7 @@ class BookingStates(BaseStateGroup):
 
 
 class TrialBookingStates(BaseStateGroup):
+    waiting_email = "trial_waiting_email"
     choosing_subject = "choosing_subject"
     waiting_date = "waiting_date"
     waiting_time = "waiting_time"
@@ -183,6 +187,10 @@ class PaymentStates(BaseStateGroup):
     waiting_email = "waiting_email"
 
 
+class LinkAccountStates(BaseStateGroup):
+    waiting_code = "account_link_waiting_code"
+
+
 # -------------------- Клавиатуры главного меню --------------------
 async def get_main_menu(user_id: int) -> str:
     """Возвращает JSON главной клавиатуры в зависимости от роли."""
@@ -207,6 +215,8 @@ async def get_main_menu(user_id: int) -> str:
         kb.row()
         kb.add(Text("❓ Помощь"), color=KeyboardButtonColor.PRIMARY)
         kb.row()
+        kb.add(Text("🔗 Связать Telegram и VK"), color=KeyboardButtonColor.PRIMARY)
+        kb.row()
         kb.add(Text("👨‍🏫 Админ-панель"), color=KeyboardButtonColor.POSITIVE)
         return kb.get_json()
 
@@ -222,6 +232,8 @@ async def get_main_menu(user_id: int) -> str:
         kb.add(Text("🆘 Поддержка"), color=KeyboardButtonColor.PRIMARY)
         kb.row()
         kb.add(Text("❓ Помощь"), color=KeyboardButtonColor.PRIMARY)
+        kb.row()
+        kb.add(Text("🔗 Связать Telegram и VK"), color=KeyboardButtonColor.PRIMARY)
         return kb.get_json()
 
     # Ученик (обычный пользователь)
@@ -240,6 +252,8 @@ async def get_main_menu(user_id: int) -> str:
     kb.add(Text("🆘 Поддержка"), color=KeyboardButtonColor.PRIMARY)
     kb.row()
     kb.add(Text("❓ Помощь"), color=KeyboardButtonColor.PRIMARY)
+    kb.row()
+    kb.add(Text("🔗 Связать Telegram и VK"), color=KeyboardButtonColor.PRIMARY)
     return kb.get_json()
 
 
@@ -478,6 +492,92 @@ async def back_to_main_menu_button(message: Message):
     await message.answer("Главное меню", keyboard=await get_main_menu(message.from_id))
 
 
+def account_link_result_text(result: dict) -> str:
+    status = result.get("status")
+    if status in {"linked", "already_linked"}:
+        text = (
+            "✅ Аккаунты Telegram и VK связаны. Записи, абонементы и лимит пробных "
+            "занятий теперь относятся к одному профилю. Уведомления продолжат "
+            "приходить туда, где была создана запись."
+        )
+        if result.get("email_reset"):
+            text += (
+                "\n\n⚠️ В аккаунтах были разные email, поэтому сохранённый адрес сброшен. "
+                "Бот запросит актуальный email перед следующей оплатой или пробным."
+            )
+        return text
+    if status == "expired":
+        return "⌛ Код истёк. Создайте новый код в первом боте и повторите попытку."
+    if status == "same_platform":
+        return "⚠️ Код нужно ввести в другом мессенджере, а не там, где он был создан."
+    if status == "account_conflict":
+        return "⚠️ Один из аккаунтов уже связан с другим аккаунтом. Обратитесь в поддержку."
+    if status == "trial_conflict":
+        return (
+            "⚠️ Связать аккаунты автоматически нельзя: в обоих профилях уже есть "
+            "пробное занятие у одного преподавателя. Обратитесь в поддержку."
+        )
+    return "⚠️ Код не найден или уже использован. Проверьте код либо создайте новый."
+
+
+@bot.on.private_message(text="🔗 Связать Telegram и VK")
+async def account_link_menu(message: Message):
+    await state_dispenser.delete(message.from_id)
+    accounts = await get_linked_accounts("vk", message.from_id)
+    if "telegram" in accounts and "vk" in accounts:
+        await message.answer(account_link_result_text({"status": "already_linked"}))
+        return
+    kb = Keyboard(inline=True)
+    kb.add(Callback("🔢 Получить код", payload={"cmd": "account_link_create"}))
+    kb.row()
+    kb.add(Callback("⌨️ Ввести код", payload={"cmd": "account_link_enter"}))
+    kb.row()
+    kb.add(Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    await message.answer(
+        "Получите одноразовый код в одном боте и введите его во втором. "
+        "Код действует 10 минут. Не отправляйте его посторонним.",
+        keyboard=kb.get_json(),
+    )
+
+
+async def account_link_create(event: MessageEvent):
+    result = await create_account_link_code("vk", event.user_id)
+    await state_dispenser.delete(event.user_id)
+    if result.get("status") == "already_linked":
+        await edit_event_message(event, account_link_result_text(result))
+        return
+    code = result["code"]
+    await edit_event_message(
+        event,
+        f"Ваш одноразовый код: {code}\n\n"
+        "Откройте Telegram-бота, нажмите «🔗 Связать Telegram и VK» → "
+        "«⌨️ Ввести код» и отправьте этот код. Он действует 10 минут.",
+    )
+
+
+async def account_link_enter(event: MessageEvent):
+    await edit_event_message(event, "Введите восьмисимвольный код из Telegram-бота:")
+    await state_dispenser.set(event.user_id, LinkAccountStates.waiting_code)
+
+
+@bot.on.private_message(state=LinkAccountStates.waiting_code)
+async def account_link_code_received(message: Message):
+    result = await consume_account_link_code("vk", message.from_id, message.text or "")
+    if result.get("status") == "invalid":
+        await message.answer("Код не найден или уже использован. Проверьте его и попробуйте ещё раз.")
+        return
+    await state_dispenser.delete(message.from_id)
+    await message.answer(account_link_result_text(result), keyboard=await get_main_menu(message.from_id))
+    if result.get("status") == "linked":
+        try:
+            await send_to_user(
+                result["source_platform_user_id"], result["source_platform"],
+                "✅ Ваши аккаунты Telegram и VK успешно связаны.",
+            )
+        except Exception:
+            logging.exception("Не удалось уведомить исходный аккаунт о привязке")
+
+
 # ==================== ИНФОРМАЦИЯ О РЕПЕТИТОРАХ ====================
 @bot.on.private_message(text="ℹ️ Информация о репетиторах")
 async def info_repetitors(message: Message):
@@ -508,16 +608,37 @@ async def show_tutor_info(event: MessageEvent):
 
 # ==================== ПРОБНОЕ ЗАНЯТИЕ ====================
 
-async def start_trials_booking(event: MessageEvent):
-    tid = event.payload.get("tutor_id")
+async def continue_trial_booking(event: MessageEvent, tid: int):
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
     if not tutor:
         await edit_event_message(event, "Репетитор не найден.")
         return
 
+    email = await get_student_email("vk", event.user_id)
+    if not email:
+        await state_dispenser.set(event.user_id, TrialBookingStates.waiting_email)
+        await state_dispenser.update(event.user_id, tutor_id=tid, tutor_name=tutor["name"])
+        await edit_event_message(
+            event,
+            "Перед первым пробным занятием укажите email. Он используется только "
+            "для ограничения повторных пробных и связи по записи; аккаунты по email "
+            "автоматически не объединяются.",
+        )
+        return
+
+    if not await is_trial_available("vk", event.user_id, tid, email):
+        await edit_event_message(
+            event,
+            "⚠️ Пробное занятие у этого преподавателя уже использовано или ожидает проведения.",
+        )
+        await state_dispenser.delete(event.user_id)
+        return
+
     await state_dispenser.set(event.user_id, TrialBookingStates.choosing_subject)
-    await state_dispenser.update(event.user_id, tutor_id=tid, tutor_name=tutor["name"])
+    await state_dispenser.update(
+        event.user_id, tutor_id=tid, tutor_name=tutor["name"], trial_email=email,
+    )
 
     subjects = list(tutor["subjects"].keys())
     if len(subjects) == 1:
@@ -533,6 +654,42 @@ async def start_trials_booking(event: MessageEvent):
         keyboard.row()
     keyboard.add(Callback("🔙 Отмена", payload={"cmd": "back_to_tutors"}))
     await edit_event_message(event, "Выберите предмет для пробного занятия:", keyboard=keyboard.get_json())
+
+
+async def start_trials_booking(event: MessageEvent):
+    await continue_trial_booking(event, int(event.payload.get("tutor_id")))
+
+
+@bot.on.private_message(state=TrialBookingStates.waiting_email)
+async def process_trial_email(message: Message):
+    email = (message.text or "").strip()
+    if not valid_email(email):
+        await message.answer("Введите корректный email, например name@example.com")
+        return
+    data = await state_dispenser.get_data(message.from_id)
+    tid = data.get("tutor_id")
+    if not tid:
+        await state_dispenser.delete(message.from_id)
+        await message.answer("Данные записи потеряны. Откройте карточку преподавателя заново.")
+        return
+    email = await set_student_email("vk", message.from_id, email)
+    if not await is_trial_available("vk", message.from_id, tid, email):
+        await state_dispenser.delete(message.from_id)
+        await message.answer(
+            "⚠️ Пробное занятие у этого преподавателя уже использовано или ожидает проведения."
+        )
+        return
+    await state_dispenser.update(message.from_id, trial_email=email)
+    kb = Keyboard(inline=True)
+    kb.add(Callback("▶️ Продолжить", payload={"cmd": "trial_resume", "tutor_id": tid}))
+    kb.row()
+    kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_menu"}))
+    await message.answer("✅ Email сохранён. Продолжите запись:", keyboard=kb.get_json())
+
+
+async def resume_trial_after_email(event: MessageEvent):
+    tid = int(event.payload.get("tutor_id"))
+    await continue_trial_booking(event, tid)
 
 
 async def trial_subject_chosen(event: MessageEvent):
@@ -645,9 +802,25 @@ async def confirm_trial_booking(event: MessageEvent):
     username = await get_user_display_name(event.user_id)
     uid = event.user_id
 
-    new_id = await add_booking(tid, uid, username, subject, date, slot, user_platform='vk')
+    trial_email = data.get("trial_email") or await get_student_email("vk", uid)
+    if not await is_trial_available("vk", uid, tid, trial_email):
+        await edit_event_message(
+            event,
+            "⚠️ Пробное занятие у этого преподавателя уже использовано или ожидает проведения.",
+        )
+        await state_dispenser.delete(event.user_id)
+        return
+
+    new_id = await add_booking(
+        tid, uid, username, subject, date, slot,
+        user_platform="vk", booking_type="trial", trial_email=trial_email,
+    )
     if new_id is None:
-        await edit_event_message(event, "⚠️ Этот слот уже заняли. Выберите другое время.")
+        if not await is_trial_available("vk", uid, tid, trial_email):
+            text = "⚠️ Пробное занятие у этого преподавателя уже использовано или ожидает проведения."
+        else:
+            text = "⚠️ Этот слот уже заняли. Выберите другое время."
+        await edit_event_message(event, text)
         await state_dispenser.delete(event.user_id)
         return
 
@@ -1028,9 +1201,9 @@ async def cancel_student_booking(event: MessageEvent):
 
 async def show_student_stats(event: MessageEvent):
     user_id = event.user_id
-    bookings = await get_all_bookings()
-    completed = sum(1 for b in bookings.values() if b["user_id"] == user_id and b["status"] == "completed")
-    subs = await get_student_subscriptions(user_id)
+    bookings = await get_bookings_for_account("vk", user_id, statuses={"completed"})
+    completed = len(bookings)
+    subs = await get_student_subscriptions(user_id, user_platform="vk")
     sub_text = ""
     tutors = await get_all_tutors()
     for s in subs:
@@ -2758,7 +2931,7 @@ async def add_range_start(event: MessageEvent):
     kb.row()
     kb.add(Callback("90 минут", payload={"cmd": "dur_90"}))
     kb.row()
-    kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_schedule"}))
+    kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_schedule_day"}))
     await edit_event_message(event, "Выберите длительность занятия:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.range_duration)
 
@@ -2786,7 +2959,7 @@ async def range_break_back(event: MessageEvent):
     kb.row()
     kb.add(Callback("90 минут", payload={"cmd": "dur_90"}))
     kb.row()
-    kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_schedule"}))
+    kb.add(Callback("🔙 Отмена", payload={"cmd": "back_to_schedule_day"}))
     await edit_event_message(event, "Выберите длительность занятия:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.range_duration)
 
@@ -2821,8 +2994,15 @@ async def process_add_range(message: Message):
             return
 
     data = await state_dispenser.get_data(message.from_id)
-    tid = data["tid"]
-    day = data["current_day"]
+    tid = data.get("tid")
+    day = data.get("current_day")
+    if not tid or day not in WEEKDAYS:
+        await message.answer(
+            "Не удалось определить выбранного преподавателя или день. "
+            "Откройте настройку расписания заново."
+        )
+        await state_dispenser.delete(message.from_id)
+        return
     duration_min = data.get("range_duration", 90)
     break_min = data.get("range_break", 0)
 
@@ -2831,13 +3011,15 @@ async def process_add_range(message: Message):
         await message.answer("Не удалось создать ни одного слота. Проверьте время.")
         return
 
-    sched = await get_schedule(tid)
-    existing = sched.get(day, [])
-    added = 0
-    for s in slots:
-        if s not in existing:
-            await add_schedule_slot(tid, day, s)
-            added += 1
+    try:
+        added = await add_schedule_slots(tid, day, slots)
+    except Exception:
+        logging.exception("Не удалось добавить диапазон расписания tutor=%s day=%s", tid, day)
+        await message.answer(
+            "Не удалось сохранить промежуток из-за ошибки базы данных. "
+            "Ни один новый слот не был добавлен; попробуйте ещё раз."
+        )
+        return
 
     await message.answer(f"Добавлено {added} новых слотов.")
     sched = await get_schedule(tid)
@@ -2868,9 +3050,19 @@ async def del_slot_start(event: MessageEvent):
     for s in slots:
         kb.add(Callback(s, payload={"cmd": f"delslot_{s}"}))
         kb.row()
-    kb.add(Callback("🔙 Назад", payload={"cmd": "back_to_schedule"}))
+    kb.add(Callback("🔙 Назад", payload={"cmd": "back_to_schedule_day"}))
     await edit_event_message(event, "Выберите слот для удаления:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TutorScheduleStates.delete_slot)
+
+
+async def back_to_schedule_day(event: MessageEvent):
+    data = await state_dispenser.get_data(event.user_id)
+    day = data.get("current_day")
+    if day not in WEEKDAYS:
+        await back_to_schedule(event)
+        return
+    event.payload["cmd"] = f"sched_day_{day}"
+    await edit_day(event)
 
 
 async def confirm_del_slot(event: MessageEvent):
@@ -2972,6 +3164,8 @@ async def help(message: Message):
         "• Оплата – по QR-коду, карте или СБП.\n"
         "• Связь с преподавателем – напишите сообщение конкретному преподавателю.\n"
         "• Поддержка – задайте вопрос администратору.\n\n"
+        "• Связать Telegram и VK – объедините свои аккаунты одноразовым кодом, "
+        "чтобы видеть общие записи, абонементы и статистику.\n\n"
         "👨‍🏫 Для преподавателей\n"
         "• Мои ученики – список записей. Подтверждайте, отклоняйте, отменяйте или переносите занятия.\n"
         "• Настроить расписание – укажите рабочие дни и временные слоты.\n"
@@ -3000,6 +3194,7 @@ async def process_payment_email(message: Message):
         return
 
     await set_user_email(message.from_id, email)
+    await set_student_email("vk", message.from_id, email)
     bookings = await get_all_bookings()
     booking = bookings.get(booking_id)
     if not booking:
@@ -3043,6 +3238,10 @@ async def universal_callback_handler(event: MessageEvent):
     if cmd == "back_to_menu":
         await state_dispenser.delete(user_id)
         await edit_event_message(event, "Главное меню", keyboard=await get_main_menu(user_id))
+    elif cmd == "account_link_create":
+        await account_link_create(event)
+    elif cmd == "account_link_enter":
+        await account_link_enter(event)
     elif cmd == "back_to_tutors":
         await back_to_tutors(event)
     elif cmd.startswith("tutor_info_"):
@@ -3052,6 +3251,8 @@ async def universal_callback_handler(event: MessageEvent):
     # --- Пробное занятие ---
     elif cmd == "trials":
         await start_trials_booking(event)
+    elif cmd == "trial_resume":
+        await resume_trial_after_email(event)
     elif cmd == "trial_subject":
         await trial_subject_chosen(event)
     elif cmd == "trial_date":
@@ -3219,6 +3420,8 @@ async def universal_callback_handler(event: MessageEvent):
         await edit_day(event)
     elif cmd == "back_to_schedule":
         await back_to_schedule(event)
+    elif cmd == "back_to_schedule_day":
+        await back_to_schedule_day(event)
     elif cmd.startswith("block_day_"):
         await handle_block_day(event)
     elif cmd.startswith("unblock_day_"):

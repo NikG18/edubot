@@ -18,7 +18,7 @@ from aiogram.types import (
 from database import (
     init_db, get_all_tutors, add_tutor, update_tutor, delete_tutor,
     add_subject, update_subject, delete_subject,
-    get_schedule, add_schedule_slot, delete_schedule_slot,
+    get_schedule, add_schedule_slot, add_schedule_slots, delete_schedule_slot,
     get_all_bookings, add_booking, update_booking, delete_booking,
     get_tutor_by_telegram_id, get_student_subscriptions, get_tutor_financials, get_all_tutors_stats,
     get_students_stats, get_all_tutors_stats_by_month, get_students_stats_by_month,
@@ -27,7 +27,10 @@ from database import (
     get_pending_email_request, delete_pending_email_request, close_db, cleanup_old_bookings,
     add_pending_subscription, activate_subscription, get_pending_subscription_by_payment_id ,delete_pending_subscription ,
     is_autopay_enabled, set_autopay_enabled, get_booking, get_booked_slots,
-    mark_booking_paid_once, mark_booking_payment_failed, reschedule_booking, move_booking_in_place
+    mark_booking_paid_once, mark_booking_payment_failed, reschedule_booking, move_booking_in_place,
+    get_student_email, set_student_email, is_trial_available,
+    get_linked_accounts, create_account_link_code, consume_account_link_code,
+    get_bookings_for_account,
 )
 from aiogram.exceptions import TelegramBadRequest
 from payments import create_payment, check_payment
@@ -224,10 +227,15 @@ class TutorRescheduleStates(StatesGroup):
 
 
 class TrialBookingStates(StatesGroup):
+    waiting_email = State()
     choosing_subject = State()
     waiting_date = State()
     waiting_time = State()
     waiting_confirmation = State()
+
+
+class LinkAccountStates(StatesGroup):
+    waiting_code = State()
 
 class PaymentStates(StatesGroup):
     waiting_email = State()
@@ -253,6 +261,7 @@ async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📖 Учебные материалы(Скоро!)")],
             [KeyboardButton(text="✉️ Связь с преподавателем")],
             [KeyboardButton(text="❓ Помощь")],
+            [KeyboardButton(text="🔗 Связать Telegram и VK")],
             # [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
         ]
         buttons.append([KeyboardButton(text="👨‍🏫 Админ-панель")])
@@ -266,7 +275,8 @@ async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
             [KeyboardButton(text="👨‍🏫 Панель преподавателя")],
             [KeyboardButton(text="✉️ Связь с учеником")],
             [KeyboardButton(text="🆘 Поддержка")],
-            [KeyboardButton(text="❓ Помощь")]
+            [KeyboardButton(text="❓ Помощь")],
+            [KeyboardButton(text="🔗 Связать Telegram и VK")],
         ]
         return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -280,6 +290,7 @@ async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="✉️ Связь с преподавателем")],
         [KeyboardButton(text="🆘 Поддержка")],
         [KeyboardButton(text="❓ Помощь")],
+        [KeyboardButton(text="🔗 Связать Telegram и VK")],
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -461,6 +472,117 @@ async def back_to_menu(call: CallbackQuery, state: FSMContext):
         logging.exception("Не удалось показать главное меню")
 
 
+def _account_link_result_text(result: dict) -> str:
+    status = result.get("status")
+    if status in {"linked", "already_linked"}:
+        text = (
+            "✅ Аккаунты Telegram и VK связаны. Теперь записи, абонементы и лимит "
+            "пробных занятий относятся к одному профилю. Уведомления продолжат "
+            "приходить в тот мессенджер, где была создана запись."
+        )
+        if result.get("email_reset"):
+            text += (
+                "\n\n⚠️ В аккаунтах были разные email, поэтому сохранённый адрес сброшен. "
+                "Бот запросит актуальный email перед следующей оплатой или пробным."
+            )
+        return text
+    if status == "expired":
+        return "⌛ Код истёк. Создайте новый код в первом боте и повторите попытку."
+    if status == "same_platform":
+        return "⚠️ Код нужно ввести в другом мессенджере, а не в том, где он был создан."
+    if status == "account_conflict":
+        return "⚠️ Один из аккаунтов уже связан с другим аккаунтом. Обратитесь в поддержку."
+    if status == "trial_conflict":
+        return (
+            "⚠️ Связать аккаунты автоматически нельзя: в обоих профилях уже есть "
+            "пробное занятие у одного преподавателя. Обратитесь в поддержку."
+        )
+    return "⚠️ Код не найден или уже использован. Проверьте код либо создайте новый."
+
+
+async def _show_account_link_menu(message: Message, state: FSMContext):
+    await state.clear()
+    accounts = await get_linked_accounts("telegram", message.from_user.id)
+    if "telegram" in accounts and "vk" in accounts:
+        await message.answer(_account_link_result_text({"status": "already_linked"}))
+        return
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔢 Получить код", callback_data="account_link_create")],
+        [InlineKeyboardButton(text="⌨️ Ввести код", callback_data="account_link_enter")],
+        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")],
+    ])
+    await message.answer(
+        "Чтобы связать аккаунты, получите одноразовый код в одном боте и введите "
+        "его во втором. Код действует 10 минут. Не отправляйте его посторонним.",
+        reply_markup=keyboard,
+    )
+
+
+@dp.message(F.text == "🔗 Связать Telegram и VK")
+async def account_link_menu(message: Message, state: FSMContext):
+    await _show_account_link_menu(message, state)
+
+
+@dp.message(Command("link"))
+async def account_link_command(message: Message, state: FSMContext):
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) == 1:
+        await _show_account_link_menu(message, state)
+        return
+    result = await consume_account_link_code("telegram", message.from_user.id, parts[1])
+    await state.clear()
+    await message.answer(_account_link_result_text(result), reply_markup=await get_main_menu(message.from_user.id))
+    if result.get("status") == "linked":
+        try:
+            await send_to_user(
+                result["source_platform_user_id"], result["source_platform"],
+                "✅ Ваши аккаунты Telegram и VK успешно связаны.",
+            )
+        except Exception:
+            logging.exception("Не удалось уведомить исходный аккаунт о привязке")
+
+
+@dp.callback_query(F.data == "account_link_create")
+async def account_link_create(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    result = await create_account_link_code("telegram", call.from_user.id)
+    await state.clear()
+    if result.get("status") == "already_linked":
+        await call.message.edit_text(_account_link_result_text(result))
+        return
+    code = result["code"]
+    await call.message.edit_text(
+        f"Ваш одноразовый код: <code>{code}</code>\n\n"
+        "Откройте VK-бота, нажмите «🔗 Связать Telegram и VK» → «⌨️ Ввести код» "
+        "и отправьте этот код. Он действует 10 минут и используется один раз."
+    )
+
+
+@dp.callback_query(F.data == "account_link_enter")
+async def account_link_enter(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    await call.message.edit_text("Введите восьмисимвольный код из VK-бота:")
+    await state.set_state(LinkAccountStates.waiting_code)
+
+
+@dp.message(LinkAccountStates.waiting_code)
+async def account_link_code_received(message: Message, state: FSMContext):
+    result = await consume_account_link_code("telegram", message.from_user.id, message.text or "")
+    if result.get("status") == "invalid":
+        await message.answer("Код не найден или уже использован. Проверьте его и попробуйте ещё раз.")
+        return
+    await state.clear()
+    await message.answer(_account_link_result_text(result), reply_markup=await get_main_menu(message.from_user.id))
+    if result.get("status") == "linked":
+        try:
+            await send_to_user(
+                result["source_platform_user_id"], result["source_platform"],
+                "✅ Ваши аккаунты Telegram и VK успешно связаны.",
+            )
+        except Exception:
+            logging.exception("Не удалось уведомить исходный аккаунт о привязке")
+
+
 # ==================== ИНФОРМАЦИЯ О РЕПЕТИТОРАХ ====================
 @dp.message(F.text.in_(["ℹ️ Информация о репетиторах"]))
 async def repet(message: types.Message):
@@ -512,55 +634,133 @@ async def show_tutor_info(call: CallbackQuery, state: FSMContext):
 
 
 # ==================== ПРОБНОЕ ЗАНЯТИЕ ====================
-@dp.callback_query(F.data.startswith("trials_"))
-async def start_trials_booking(call: CallbackQuery, state: FSMContext):
-    await safe_answer(call)
-    tid = int(call.data.split("_")[1])
+async def _continue_trial_booking(call: CallbackQuery, state: FSMContext, tid: int):
+    """Продолжает запись после получения email и повторно проверяет лимит."""
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
     if not tutor:
-        if call.message.content_type != 'text':
+        if call.message.content_type != "text":
             await call.message.delete()
         await call.message.answer("Репетитор не найден.")
+        await state.clear()
         return
 
-    await state.update_data(tutor_id=tid, tutor_name=tutor["name"])
+    email = await get_student_email("telegram", call.from_user.id)
+    if not email:
+        await state.update_data(tutor_id=tid, tutor_name=tutor["name"])
+        await state.set_state(TrialBookingStates.waiting_email)
+        text = (
+            "Введите email для учёта бесплатных пробных занятий. "
+            "Он не связывает ваши аккаунты и не открывает доступ к данным; "
+            "используется только для ограничения повторных пробных и связи с поддержкой."
+        )
+        if call.message.content_type != "text":
+            await call.message.delete()
+            await call.message.answer(text)
+        else:
+            await call.message.edit_text(text)
+        return
+
+    if not await is_trial_available("telegram", call.from_user.id, tid, email):
+        await call.message.edit_text(
+            "Бесплатное пробное занятие у этого репетитора уже использовано "
+            "или сейчас ожидает проведения."
+        )
+        await state.clear()
+        return
+
+    await state.update_data(
+        tutor_id=tid,
+        tutor_name=tutor["name"],
+        trial_email=email,
+    )
     subjects = list(tutor["subjects"].keys())
 
     if len(subjects) == 1:
         subject = subjects[0]
         await state.update_data(subject=subject)
-        # Если сообщение – фото, удаляем и показываем кнопку "Продолжить"
-        if call.message.content_type != 'text':
+        if call.message.content_type != "text":
             await call.message.delete()
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="▶️ Продолжить", callback_data=f"trial_proceed_{tid}")]
             ])
-            await call.message.answer("Ищем доступные слоты на ближайшие 7 дней...", reply_markup=keyboard)
+            await call.message.answer(
+                "Ищем доступные слоты на ближайшие 7 дней...",
+                reply_markup=keyboard,
+            )
             return
         await call.message.edit_text("Ищем доступные слоты на ближайшие 7 дней...")
         await show_trial_dates(call, state, tid)
+        return
 
-    elif len(subjects) > 1:
+    if len(subjects) > 1:
+        await state.set_state(TrialBookingStates.choosing_subject)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=subj, callback_data=f"trial_subject_{subj}")] for subj in subjects
+            [InlineKeyboardButton(text=subj, callback_data=f"trial_subject_{subj}")]
+            for subj in subjects
         ] + [[InlineKeyboardButton(text="🔙 Отмена", callback_data="back_to_tutors")]])
-
-        if call.message.content_type != 'text':
+        if call.message.content_type != "text":
             await call.message.delete()
             await call.message.answer("Выберите предмет для пробного занятия:", reply_markup=keyboard)
-            return
-        await call.message.edit_text("Выберите предмет для пробного занятия:", reply_markup=keyboard)
-        await state.set_state(TrialBookingStates.choosing_subject)
-    else:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
-        ])
-        if call.message.content_type != 'text':
-            await call.message.delete()
-            await call.message.answer("У этого репетитора пока нет предметов.", reply_markup=keyboard)
         else:
-            await call.message.edit_text("У этого репетитора пока нет предметов.", reply_markup=keyboard)
+            await call.message.edit_text("Выберите предмет для пробного занятия:", reply_markup=keyboard)
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="back_to_tutors")]
+    ])
+    if call.message.content_type != "text":
+        await call.message.delete()
+        await call.message.answer("У этого репетитора пока нет предметов.", reply_markup=keyboard)
+    else:
+        await call.message.edit_text("У этого репетитора пока нет предметов.", reply_markup=keyboard)
+    await state.clear()
+
+
+@dp.callback_query(F.data.startswith("trials_"))
+async def start_trials_booking(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    tid = int(call.data.split("_")[1])
+    await _continue_trial_booking(call, state, tid)
+
+
+@dp.message(TrialBookingStates.waiting_email)
+async def process_trial_email(message: Message, state: FSMContext):
+    email = (message.text or "").strip()
+    if not valid_email(email):
+        await message.answer("Введите корректный email, например name@example.com")
+        return
+    data = await state.get_data()
+    tid = data.get("tutor_id")
+    if not tid:
+        await state.clear()
+        await message.answer("Данные записи потеряны. Начните выбор пробного заново.")
+        return
+    email = await set_student_email("telegram", message.from_user.id, email)
+    if not await is_trial_available("telegram", message.from_user.id, tid, email):
+        await state.clear()
+        await message.answer(
+            "Бесплатное пробное занятие у этого репетитора уже использовано "
+            "или сейчас ожидает проведения."
+        )
+        return
+    await state.update_data(trial_email=email)
+    await message.answer(
+        "Email сохранён. Продолжите выбор пробного занятия.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="▶️ Продолжить", callback_data=f"trial_resume_{tid}")]
+        ]),
+    )
+
+
+@dp.callback_query(
+    F.data.startswith("trial_resume_"),
+    StateFilter(TrialBookingStates.waiting_email),
+)
+async def resume_trial_after_email(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
+    tid = int(call.data.rsplit("_", 1)[1])
+    await _continue_trial_booking(call, state, tid)
 
 
 @dp.callback_query(F.data.startswith("trial_proceed_"))
@@ -713,9 +913,24 @@ async def confirm_trial_booking(call: CallbackQuery, state: FSMContext, bot: Bot
     username = user.username or user.full_name
     uid = user.id
 
-    new_id = await add_booking(tid, uid, username, subject, date, slot, user_platform='telegram')
+    trial_email = data.get("trial_email") or await get_student_email("telegram", uid)
+    if not await is_trial_available("telegram", uid, tid, trial_email):
+        await call.message.edit_text(
+            "⚠️ Пробное занятие у этого преподавателя уже использовано или ожидает проведения."
+        )
+        await state.clear()
+        return
+
+    new_id = await add_booking(
+        tid, uid, username, subject, date, slot,
+        user_platform="telegram", booking_type="trial", trial_email=trial_email,
+    )
     if new_id is None:
-        await call.message.edit_text("⚠️ Этот слот только что заняли. Выберите другое время.")
+        if not await is_trial_available("telegram", uid, tid, trial_email):
+            text = "⚠️ Пробное занятие у этого преподавателя уже использовано или ожидает проведения."
+        else:
+            text = "⚠️ Этот слот только что заняли. Выберите другое время."
+        await call.message.edit_text(text)
         await state.clear()
         await call.message.answer("Главное меню:", reply_markup=await get_main_menu(uid))
         return
@@ -1103,9 +1318,9 @@ async def cancel_student_booking(call: CallbackQuery, bot: Bot):
 async def show_student_stats(call: CallbackQuery):
     await safe_answer(call)
     user_id = call.from_user.id
-    bookings = await get_all_bookings()
-    completed = sum(1 for b in bookings.values() if b["user_id"] == user_id and b["status"] == "completed")
-    subs = await get_student_subscriptions(user_id)
+    bookings = await get_bookings_for_account("telegram", user_id, statuses={"completed"})
+    completed = len(bookings)
+    subs = await get_student_subscriptions(user_id, user_platform="telegram")
     sub_text = ""
     tutors = await get_all_tutors()
     for s in subs:
@@ -1415,9 +1630,8 @@ async def back_to_payment_menu(call: CallbackQuery):
 @dp.callback_query(F.data == "pay_booking")
 async def pay_booking_list(call: CallbackQuery):
     user_id = call.from_user.id
-    bookings = await get_all_bookings()
-    unpaid = [(bid, b) for bid, b in bookings.items()
-              if b["user_id"] == user_id and b["status"] == "confirmed"]
+    bookings = await get_bookings_for_account("telegram", user_id, statuses={"confirmed"})
+    unpaid = list(bookings.items())
     if not unpaid:
         await call.message.edit_text("У вас нет неоплаченных занятий.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_payment_menu")]
@@ -1448,7 +1662,7 @@ async def pay_single_booking(call: CallbackQuery, bot: Bot):
     if not await _require_booking_owner(call, booking):
         return
     user_id = call.from_user.id
-    email = await get_user_email(user_id)
+    email = await get_student_email("telegram", user_id)
     if not email:
         # Запросить email
         await set_pending_email_request(user_id, bid)
@@ -3393,8 +3607,15 @@ async def process_add_range(message: Message, state: FSMContext):
 
     # Получаем сохранённые параметры
     data = await state.get_data()
-    tid = data["tid"]
-    day = data["current_day"]
+    tid = data.get("tid")
+    day = data.get("current_day")
+    if not tid or day not in WEEKDAYS:
+        await message.answer(
+            "Не удалось определить выбранного преподавателя или день. "
+            "Откройте настройку расписания заново."
+        )
+        await state.clear()
+        return
     duration_min = data.get("range_duration", 90)
     break_min = data.get("range_break", 0)
 
@@ -3403,14 +3624,18 @@ async def process_add_range(message: Message, state: FSMContext):
         await message.answer("Не удалось создать ни одного слота. Проверьте время.")
         return
 
+    try:
+        added = await add_schedule_slots(tid, day, slots)
+    except Exception:
+        logging.exception("Не удалось добавить диапазон расписания tutor=%s day=%s", tid, day)
+        await message.answer(
+            "Не удалось сохранить промежуток из-за ошибки базы данных. "
+            "Ни один новый слот не был добавлен; попробуйте ещё раз."
+        )
+        return
+
     sched = await get_schedule(tid)
     existing = sched.get(day, [])
-    added = 0
-    for s in slots:
-        if s not in existing:
-            await add_schedule_slot(tid, day, s)
-            existing.append(s)
-            added += 1
 
     await message.answer(f"Добавлено {added} новых слотов (пропущены существующие).")
     # Показываем обновлённый список слотов
@@ -3735,6 +3960,8 @@ async def help(message: types.Message):
         "• <b>Связь с преподавателем</b> – напишите сообщение конкретному преподавателю. "
         "Ответ придёт в этот же чат от имени бота.\n"
         "• <b>Поддержка</b> – задайте вопрос администратору, если возникли трудности.\n\n"
+        "• <b>Связать Telegram и VK</b> – объедините свои аккаунты одноразовым кодом, "
+        "чтобы видеть общие записи, абонементы и статистику.\n\n"
         "👨‍🏫 <b>Для преподавателей</b>\n"
         "• Доступ к панели появляется, если ваш Telegram ID добавлен в профиль репетитора.\n"
         "• <b>Мои ученики</b> – список всех активных записей к вам. Вы можете <b>подтвердить</b>, <b>отклонить</b>, "
@@ -3779,6 +4006,7 @@ async def process_payment_email_state(message: Message, state: FSMContext, bot: 
         await message.answer("Введите корректный email (например, name@example.com):")
         return
     await set_user_email(user_id, email)
+    await set_student_email("telegram", user_id, email)
 
     if data.get("subscription_pending"):
         # Это покупка абонемента

@@ -157,6 +157,28 @@ async def init_db():
         for sql in migrations:
             await conn.execute(sql)
 
+        # Старые установки могли создать schedule_slots до появления UNIQUE в
+        # CREATE TABLE. Убираем дубли и гарантируем индекс отдельно, иначе
+        # INSERT ... ON CONFLICT(tutor_id,day,time_slot) падает при добавлении
+        # диапазона с InvalidColumnReferenceError. Оба бота запускают миграции,
+        # поэтому DDL защищён общей транзакционной блокировкой.
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('schedule-slots-schema-v1', 0))"
+            )
+            await conn.execute("""
+            DELETE FROM schedule_slots newer
+            USING schedule_slots older
+            WHERE newer.tutor_id=older.tutor_id
+              AND newer.day=older.day
+              AND newer.time_slot=older.time_slot
+              AND newer.id>older.id
+            """)
+            await conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_schedule_slot
+            ON schedule_slots(tutor_id, day, time_slot)
+            """)
+
         # Убираем уже существующие дубли активных слотов: оставляем самую раннюю запись.
         await conn.execute("""
         WITH ranked AS (
@@ -354,9 +376,31 @@ async def add_schedule_slot(tutor_id: int, day: str, time_slot: str):
     async with pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO schedule_slots(tutor_id,day,time_slot) VALUES($1,$2,$3)
-               ON CONFLICT(tutor_id,day,time_slot) DO NOTHING""",
+               ON CONFLICT DO NOTHING""",
             tutor_id, day, time_slot
         )
+
+
+async def add_schedule_slots(tutor_id: int, day: str, time_slots: List[str]) -> int:
+    """Атомарно добавляет диапазон слотов и возвращает число новых строк."""
+    await _ensure_pool()
+    if day not in WEEKDAYS:
+        raise ValueError("Некорректный день недели")
+    slots = list(dict.fromkeys(str(slot) for slot in time_slots if slot))
+    if not slots:
+        return 0
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            status = await conn.execute(
+                """
+                INSERT INTO schedule_slots(tutor_id,day,time_slot)
+                SELECT $1,$2,value
+                FROM UNNEST($3::text[]) AS new_slots(value)
+                ON CONFLICT DO NOTHING
+                """,
+                tutor_id, day, slots,
+            )
+    return int(status.rsplit(" ", 1)[-1])
 
 
 async def delete_schedule_slot(tutor_id: int, day: str, time_slot: str):

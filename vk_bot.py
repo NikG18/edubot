@@ -197,6 +197,14 @@ def _is_trial(booking) -> bool:
     )
 
 
+async def _linked_vk_booking_owner(event, booking) -> bool:
+    """Разрешает действия из любого явно связанного аккаунта ученика."""
+    if not booking or not await _db.account_owns_booking("vk", event.user_id, booking):
+        await legacy.answer_event(event, "Доступ запрещён.", snackbar=True)
+        return False
+    return True
+
+
 def _booking_start(booking):
     return legacy.datetime.strptime(
         booking["date"] + " " + booking["time_slot"].split("-")[0].replace(".", ":"),
@@ -615,6 +623,7 @@ legacy.cleanup_old_bookings = _db.cleanup_old_bookings
 legacy.add_booking = _contextual_add_booking
 legacy.get_booking = _db.get_booking
 legacy.get_all_bookings = _db.get_all_bookings
+legacy._require_vk_booking_owner = _linked_vk_booking_owner
 
 
 async def main():

@@ -224,13 +224,6 @@ async def init_db():
                 SET trial_consumed=TRUE
                 WHERE booking_type='trial' AND status='completed';
 
-                UPDATE bookings b
-                SET trial_email=LOWER(BTRIM(u.email))
-                FROM users u
-                WHERE b.booking_type='trial'
-                  AND b.trial_email IS NULL
-                  AND b.user_id=u.user_id
-                  AND NULLIF(BTRIM(u.email),'') IS NOT NULL;
                 """
             )
             await conn.execute(
@@ -409,6 +402,11 @@ async def account_owns_booking(platform: str, platform_user_id: int, booking) ->
 
 async def is_trial_available(platform: str, platform_user_id: int, tutor_id: int,
                              email: str | None = None) -> bool:
+    platform = str(platform or "").lower()
+    if platform not in {"telegram", "vk"}:
+        raise ValueError("platform must be 'telegram' or 'vk'")
+    platform_user_id = int(platform_user_id)
+    normalized_email = normalize_email(email)
     await _ensure_pool()
     async with _legacy.pool.acquire() as conn:
         async with conn.transaction():
@@ -419,31 +417,27 @@ async def is_trial_available(platform: str, platform_user_id: int, tutor_id: int
                 """
                 SELECT EXISTS(
                     SELECT 1 FROM bookings
-                    WHERE student_id=$1 AND tutor_id=$2 AND booking_type='trial'
+                    WHERE tutor_id=$1 AND booking_type='trial'
                       AND (
                           status IN ('pending','confirmed','paid','completed')
                           OR trial_consumed=TRUE
                       )
+                      AND (
+                          student_id=$2
+                          OR (
+                              COALESCE(NULLIF(user_platform,''),'telegram')=$3
+                              AND user_id=$4
+                          )
+                          OR (
+                              $5::text <> ''
+                              AND LOWER(BTRIM(trial_email))=$5
+                          )
+                      )
                 )
                 """,
-                student_id, tutor_id,
+                int(tutor_id), student_id, platform, platform_user_id,
+                normalized_email,
             )
-            normalized_email = normalize_email(email)
-            if not used and normalized_email:
-                used = await conn.fetchval(
-                    """
-                    SELECT EXISTS(
-                        SELECT 1 FROM bookings
-                        WHERE tutor_id=$1 AND booking_type='trial'
-                          AND LOWER(BTRIM(trial_email))=$2
-                          AND (
-                              status IN ('pending','confirmed','paid','completed')
-                              OR trial_consumed=TRUE
-                          )
-                    )
-                    """,
-                    tutor_id, normalized_email,
-                )
     return not bool(used)
 
 
@@ -580,7 +574,16 @@ async def consume_account_link_code(target_platform: str, target_platform_user_i
             target_email = await conn.fetchval(
                 "SELECT email FROM student_profiles WHERE id=$1", target_student_id
             )
-            merged_email = normalize_email(source_email) or normalize_email(target_email) or None
+            normalized_source_email = normalize_email(source_email)
+            normalized_target_email = normalize_email(target_email)
+            email_reset = bool(
+                normalized_source_email
+                and normalized_target_email
+                and normalized_source_email != normalized_target_email
+            )
+            merged_email = None if email_reset else (
+                normalized_source_email or normalized_target_email or None
+            )
             await conn.execute(
                 "UPDATE student_profiles SET email=$1 WHERE id=$2",
                 merged_email, source_student_id,
@@ -622,6 +625,7 @@ async def consume_account_link_code(target_platform: str, target_platform_user_i
                 "accounts": accounts,
                 "source_platform": token["source_platform"],
                 "source_platform_user_id": source_map[token["source_platform"]],
+                "email_reset": email_reset,
             }
 
 
@@ -757,6 +761,9 @@ async def add_booking(tutor_id, user_id, username, subject, date, time_slot,
                 )
                 if booking_type == "trial":
                     normalized_trial_email = normalize_email(trial_email)
+                    normalized_platform = str(user_platform or "").lower()
+                    if normalized_platform not in {"telegram", "vk"}:
+                        raise ValueError("user_platform must be 'telegram' or 'vk'")
                     await conn.execute(
                         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                         f"trial:{student_id}:{int(tutor_id)}",
@@ -770,30 +777,27 @@ async def add_booking(tutor_id, user_id, username, subject, date, time_slot,
                         """
                         SELECT EXISTS(
                             SELECT 1 FROM bookings
-                            WHERE student_id=$1 AND tutor_id=$2 AND booking_type='trial'
+                            WHERE tutor_id=$1 AND booking_type='trial'
                               AND (
                                   status IN ('pending','confirmed','paid','completed')
                                   OR trial_consumed=TRUE
                               )
+                              AND (
+                                  student_id=$2
+                                  OR (
+                                      COALESCE(NULLIF(user_platform,''),'telegram')=$3
+                                      AND user_id=$4
+                                  )
+                                  OR (
+                                      $5::text <> ''
+                                      AND LOWER(BTRIM(trial_email))=$5
+                                  )
+                              )
                         )
                         """,
-                        student_id, tutor_id,
+                        int(tutor_id), student_id, normalized_platform, int(user_id),
+                        normalized_trial_email,
                     )
-                    if not already_has_trial and normalized_trial_email:
-                        already_has_trial = await conn.fetchval(
-                            """
-                            SELECT EXISTS(
-                                SELECT 1 FROM bookings
-                                WHERE tutor_id=$1 AND booking_type='trial'
-                                  AND LOWER(BTRIM(trial_email))=$2
-                                  AND (
-                                      status IN ('pending','confirmed','paid','completed')
-                                      OR trial_consumed=TRUE
-                                  )
-                            )
-                            """,
-                            tutor_id, normalized_trial_email,
-                        )
                     if already_has_trial:
                         return None
                 else:
