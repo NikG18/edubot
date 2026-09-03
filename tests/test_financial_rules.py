@@ -1,6 +1,12 @@
 import unittest
+from datetime import date, timedelta
 
-from financial_rules import booking_commission_rub, booking_revenue_rub, commission_rate
+from financial_rules import (
+    booking_commission_rub,
+    booking_revenue_rub,
+    commission_rate,
+    early_fifteen_unlock_date,
+)
 
 
 class FinancialRulesTests(unittest.TestCase):
@@ -9,7 +15,6 @@ class FinancialRulesTests(unittest.TestCase):
             commission_rate(
                 lessons_this_month=20,
                 full_months_since_first_lesson=10,
-                first_60_days_lessons=150,
             ).percent,
             25,
         )
@@ -19,41 +24,85 @@ class FinancialRulesTests(unittest.TestCase):
             commission_rate(
                 lessons_this_month=21,
                 full_months_since_first_lesson=2,
-                first_60_days_lessons=0,
             ).percent,
             20,
         )
 
-    def test_fifteen_percent_after_four_months_without_first_sixty_qualification(self):
-        decision = commission_rate(
-            lessons_this_month=41,
-            full_months_since_first_lesson=4,
-            first_60_days_lessons=0,
+    def test_standard_fifteen_percent_after_four_months(self):
+        self.assertEqual(
+            commission_rate(
+                lessons_this_month=41,
+                full_months_since_first_lesson=4,
+            ).percent,
+            15,
         )
-        self.assertEqual(decision.percent, 15)
 
-    def test_fifteen_percent_from_first_sixty_qualification_before_four_months(self):
-        decision = commission_rate(
-            lessons_this_month=41,
-            full_months_since_first_lesson=2,
-            first_60_days_lessons=101,
+    def test_early_unlock_allows_fifteen_before_four_months(self):
+        self.assertEqual(
+            commission_rate(
+                lessons_this_month=41,
+                full_months_since_first_lesson=2,
+                early_fifteen_unlocked=True,
+            ).percent,
+            15,
         )
-        self.assertEqual(decision.percent, 15)
 
-    def test_fifteen_percent_requires_one_of_the_two_qualification_paths(self):
-        decision = commission_rate(
-            lessons_this_month=50,
-            full_months_since_first_lesson=3,
-            first_60_days_lessons=100,
+    def test_early_unlock_does_not_replace_monthly_41_lesson_condition(self):
+        self.assertEqual(
+            commission_rate(
+                lessons_this_month=40,
+                full_months_since_first_lesson=2,
+                early_fifteen_unlocked=True,
+            ).percent,
+            20,
         )
-        self.assertEqual(decision.percent, 20)
+
+    def test_early_unlock_is_permanent_input_not_repeated_achievement(self):
+        self.assertEqual(
+            commission_rate(
+                lessons_this_month=45,
+                full_months_since_first_lesson=3,
+                early_fifteen_unlocked=True,
+            ).percent,
+            15,
+        )
+
+    def test_rolling_sixty_day_window_unlocks_at_100th_lesson(self):
+        first = date(2026, 1, 1)
+        # 100 lessons spread over 50 days, two lessons per day.
+        lesson_dates = []
+        for day in range(50):
+            lesson_dates.extend([first + timedelta(days=day)] * 2)
+        self.assertEqual(
+            early_fifteen_unlock_date(lesson_dates, first),
+            first + timedelta(days=49),
+        )
+
+    def test_rolling_sixty_day_window_can_start_after_first_day(self):
+        first = date(2026, 1, 1)
+        lesson_dates = [first]
+        start = first + timedelta(days=30)
+        for day in range(50):
+            lesson_dates.extend([start + timedelta(days=day)] * 2)
+        self.assertEqual(
+            early_fifteen_unlock_date(lesson_dates, first),
+            start + timedelta(days=49),
+        )
+
+    def test_unlock_must_happen_inside_first_four_months(self):
+        first = date(2026, 1, 1)
+        start = date(2026, 5, 1)
+        lesson_dates = []
+        for day in range(50):
+            lesson_dates.extend([start + timedelta(days=day)] * 2)
+        self.assertIsNone(early_fifteen_unlock_date(lesson_dates, first))
 
     def test_rate_is_retained_for_one_following_month(self):
         self.assertEqual(
             commission_rate(
                 lessons_this_month=5,
                 full_months_since_first_lesson=6,
-                first_60_days_lessons=150,
+                early_fifteen_unlocked=True,
                 previous_month_percent=15,
             ).percent,
             15,
@@ -62,7 +111,6 @@ class FinancialRulesTests(unittest.TestCase):
             commission_rate(
                 lessons_this_month=5,
                 full_months_since_first_lesson=6,
-                first_60_days_lessons=150,
                 previous_month_percent=25,
             ).percent,
             25,
