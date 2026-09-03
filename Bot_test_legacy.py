@@ -3219,10 +3219,12 @@ async def _show_day_management(call: CallbackQuery, state: FSMContext):
 
     buttons.append([InlineKeyboardButton(text="🔙 К дням недели", callback_data="back_to_schedule")])
     await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await state.set_state(TutorScheduleStates.manage_day_slots)
 
 
 @dp.callback_query(F.data.startswith("sched_day_"), StateFilter(TutorScheduleStates.choose_day))
 async def edit_day(call: CallbackQuery, state: FSMContext):
+    await safe_answer(call)
     day = call.data.split("_")[2]
     await state.update_data(current_day=day)
     await _show_day_management(call, state)
