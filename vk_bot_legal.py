@@ -3,10 +3,12 @@ import payment_reuse_vk  # noqa: F401  # один T-Bank платёж на бр�
 import legal_vk  # noqa: F401  # юридический слой оборачивает итоговый платёжный сценарий
 import legal_vk_dedupe  # noqa: F401  # последний слой убирает повторную отправку документов
 from financial_hardening import install_financial_hardening
+from subscription_booking import install_vk_subscription_booking
 from runtime_hardening import install_vk_hardening
 
-# Бизнес-правила и runtime-guards подключаются поверх существующих compatibility-слоёв.
+# Бизнес-правила и абонементный слой подключаются поверх существующих compatibility-слоёв.
 install_financial_hardening(app)
+install_vk_subscription_booking(app)
 install_vk_hardening(app)
 
 
