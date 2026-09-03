@@ -11,6 +11,7 @@ from tutor_confirmation_hardening import install_telegram_tutor_confirmation
 from telegram_email_hardening import install_telegram_email_hardening
 from subscription_cancel_hardening import install_subscription_cancel_release
 from completion_hardening import install_telegram_completion_hardening
+from payment_poll_hardening import install_telegram_payment_poll_hardening
 from access_hardening import install_telegram_materials_guard
 from input_hardening import install_telegram_input_hardening
 from callback_hardening import install_telegram_callback_hardening
@@ -29,6 +30,7 @@ install_telegram_tutor_confirmation(app)
 install_telegram_email_hardening(app)
 install_subscription_cancel_release(app)
 install_telegram_completion_hardening(app)
+install_telegram_payment_poll_hardening(app)
 install_telegram_materials_guard(app)
 install_telegram_input_hardening(app)
 install_telegram_callback_hardening(app)
