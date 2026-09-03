@@ -16,6 +16,7 @@ from vk_email_hardening import install_vk_email_hardening
 from payment_poll_hardening import install_vk_payment_poll_hardening
 from access_hardening import install_vk_materials_guard
 from vk_access_hardening import install_vk_reply_authorization
+from support_hardening import install_vk_support_hardening
 from delivery_hardening import install_delivery_hardening
 from contact_delivery_hardening import install_vk_contact_delivery_hardening
 from vk_restart_hardening import install_vk_restart_hardening
@@ -35,6 +36,7 @@ install_vk_email_hardening(app)
 install_vk_payment_poll_hardening(app)
 install_vk_materials_guard(app)
 install_vk_reply_authorization(app)
+install_vk_support_hardening(app)
 install_delivery_hardening(app)
 install_vk_contact_delivery_hardening(app)
 install_vk_restart_hardening(app)
