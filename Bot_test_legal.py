@@ -6,15 +6,15 @@ from student_stats_hardening import install_student_stats_hardening
 from subscription_booking import install_telegram_subscription_booking
 from subscription_cancel_hardening import install_subscription_cancel_release
 from completion_hardening import install_telegram_completion_hardening
+from access_hardening import install_telegram_materials_guard
 from runtime_hardening import install_telegram_hardening
 
-# Порядок важен: общие расчёты/identity → абонементы → отмены → подтверждение проведения
-# → межпроцессные runtime-guards.
 install_financial_hardening(app)
 install_student_stats_hardening(app)
 install_telegram_subscription_booking(app)
 install_subscription_cancel_release(app)
 install_telegram_completion_hardening(app)
+install_telegram_materials_guard(app)
 install_telegram_hardening(app)
 
 
