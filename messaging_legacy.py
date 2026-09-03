@@ -38,6 +38,56 @@ def _clean_none(obj):
     return obj
 
 
+def _normalize_telegram_reply_markup(reply_markup):
+    """Приводит aiogram/Pydantic/JSON-клавиатуру к обычному dict Telegram API."""
+    if not reply_markup:
+        return None
+
+    if isinstance(reply_markup, str):
+        try:
+            reply_markup = json.loads(reply_markup)
+        except json.JSONDecodeError:
+            logging.warning("Некорректный Telegram reply_markup JSON")
+            return None
+
+    if hasattr(reply_markup, "model_dump"):
+        try:
+            reply_markup = reply_markup.model_dump(exclude_none=True)
+        except TypeError:
+            reply_markup = reply_markup.model_dump()
+    elif hasattr(reply_markup, "dict") and not isinstance(reply_markup, dict):
+        try:
+            reply_markup = reply_markup.dict(exclude_none=True)
+        except TypeError:
+            reply_markup = reply_markup.dict()
+
+    if not isinstance(reply_markup, dict):
+        logging.warning(
+            "Неподдерживаемый тип Telegram reply_markup: %s",
+            type(reply_markup).__name__,
+        )
+        return None
+    return _clean_none(reply_markup)
+
+
+def _normalize_vk_keyboard(keyboard):
+    """VK API ожидает JSON-строку клавиатуры; принимает vkbottle Keyboard/dict/str."""
+    if not keyboard:
+        return None
+    if isinstance(keyboard, str):
+        return keyboard
+    if hasattr(keyboard, "get_json"):
+        try:
+            return keyboard.get_json()
+        except Exception:
+            logging.exception("Не удалось сериализовать VK Keyboard через get_json()")
+            return None
+    if isinstance(keyboard, dict):
+        return json.dumps(_clean_none(keyboard), ensure_ascii=False)
+    logging.warning("Неподдерживаемый тип VK keyboard: %s", type(keyboard).__name__)
+    return None
+
+
 async def _post_json(url, payload, retries=3):
     session = await _get_session()
     for attempt in range(retries):
@@ -60,10 +110,6 @@ async def _post_json(url, payload, retries=3):
                     await asyncio.sleep(2 ** attempt)
                     continue
 
-                # Telegram и другие JSON API часто возвращают полезное описание
-                # ошибки даже при HTTP 4xx. Возвращаем его вызывающему коду, чтобы
-                # тот мог отличить harmless-сценарии (например, message is not
-                # modified) от реальных ошибок.
                 if parsed is not None:
                     return parsed
 
@@ -86,15 +132,9 @@ async def send_telegram_message_get_id(chat_id: int, text: str, reply_markup=Non
         return False, None
 
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-    if reply_markup:
-        if isinstance(reply_markup, str):
-            try:
-                reply_markup = json.loads(reply_markup)
-            except json.JSONDecodeError:
-                logging.warning("Некорректный Telegram reply_markup JSON")
-                reply_markup = None
-        if reply_markup:
-            payload["reply_markup"] = _clean_none(reply_markup)
+    normalized_markup = _normalize_telegram_reply_markup(reply_markup)
+    if normalized_markup:
+        payload["reply_markup"] = normalized_markup
 
     result = await _post_json(
         f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", payload
@@ -117,8 +157,9 @@ async def send_vk_message(user_id: int, text: str, keyboard=None) -> bool:
         "access_token": VK_BOT_TOKEN,
         "v": VK_API_VERSION,
     }
-    if keyboard:
-        params["keyboard"] = keyboard
+    normalized_keyboard = _normalize_vk_keyboard(keyboard)
+    if normalized_keyboard:
+        params["keyboard"] = normalized_keyboard
 
     try:
         async with session.post("https://api.vk.com/method/messages.send", data=params) as resp:
