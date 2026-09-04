@@ -93,15 +93,6 @@ async def calculate_auto_commission(tutor_id: int, year: int, month: int):
         target_month_end = _month_end_date(year, month)
         early_unlocked = bool(unlock_date and unlock_date < target_month_end)
 
-        natural = commission_rate(
-            lessons_this_month=lessons,
-            full_months_since_first_lesson=_full_months_since(first, year, month),
-            early_fifteen_unlocked=early_unlocked,
-            previous_month_percent=None,
-        )
-        if natural.percent < 25:
-            return natural.percent, lessons
-
         py, pm = _previous_month(year, month)
         previous_lessons = await _month_lesson_count(conn, tutor_id, py, pm)
         previous_month_end = _month_end_date(py, pm)
@@ -112,13 +103,18 @@ async def calculate_auto_commission(tutor_id: int, year: int, month: int):
             early_fifteen_unlocked=previous_early_unlocked,
             previous_month_percent=None,
         )
-        retained = commission_rate(
+
+        # Always pass the previous month's NATURAL rate. This matters when the
+        # current natural rate is 20% but last month naturally achieved 15%: the
+        # 15% rate must still be retained for this one following month. Because we
+        # never feed a previously-retained rate back in, retention cannot chain.
+        decision = commission_rate(
             lessons_this_month=lessons,
             full_months_since_first_lesson=_full_months_since(first, year, month),
             early_fifteen_unlocked=early_unlocked,
             previous_month_percent=previous_natural.percent,
         )
-        return retained.percent, lessons
+        return decision.percent, lessons
 
 
 async def _month_rows(conn, tutor_id: int, year: int, month: int):
