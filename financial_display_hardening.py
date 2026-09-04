@@ -14,20 +14,24 @@ async def _tutor_stats_menu(call):
     tutor = tutors.get(tid)
     comm_percent = float(fin.get("commission_percent") or 0)
     comm_label = f"{comm_percent:g}"
+    auto_suffix = " (авто)" if tutor and tutor.get("commission_mode") == "auto" else ""
     text = (
         f"📊 Статистика за всё время\n"
         f"• Проведено занятий: {fin['total_lessons']}\n"
         f"• Общий доход: {fin['total_income']:.2f} руб.\n"
-        f"• Комиссия ({comm_label}%{', авто' if tutor and tutor.get('commission_mode')=='auto' else ''}): "
-        f"{fin['commission_amount']:.2f} руб.\n"
-        f"• Доход после комиссии: {fin['net_income']:.2f} руб.\n\n"
+        f"• Комиссия за всё время: {fin['commission_amount']:.2f} руб.\n"
+        f"• Доход после комиссии: {fin['net_income']:.2f} руб.\n"
+        f"• Текущая ставка комиссии: {comm_label}%{auto_suffix}\n\n"
         "Выберите месяц для детализации:"
     )
     now = now_msk_naive()
-    months = sorted(
-        set((d.year, d.month) for d in [now - timedelta(days=30 * i) for i in range(12)]),
-        reverse=True,
-    )
+    months = []
+    current_index = now.year * 12 + (now.month - 1)
+    for offset in range(12):
+        month_index = current_index - offset
+        year = month_index // 12
+        month = month_index % 12 + 1
+        months.append((year, month))
     buttons = [
         [InlineKeyboardButton(
             text=f"{y}-{m:02d}", callback_data=f"tutor_stats_month_{tid}_{y}_{m}"
@@ -58,7 +62,8 @@ async def _tutor_stats_month(call):
         f"📊 Статистика за {year}-{month:02d}\n"
         f"• Проведено занятий: {fin['total_lessons']}\n"
         f"• Доход: {fin['total_income']:.2f} руб.\n"
-        f"• Комиссия ({comm_label}%): {fin['commission_amount']:.2f} руб.\n"
+        f"• Ставка комиссии месяца: {comm_label}%\n"
+        f"• Комиссия: {fin['commission_amount']:.2f} руб.\n"
         f"• Доход после комиссии: {fin['net_income']:.2f} руб."
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -74,8 +79,6 @@ def install_telegram_financial_display_hardening(app) -> None:
     if getattr(legacy, "_financial_display_hardened", False):
         return
 
-    # These handlers were already registered by decorators during legacy import.
-    # Preserve function identity and replace only their closure-free code objects.
     for current, replacement in (
         (legacy.tutor_stats_menu, _tutor_stats_menu),
         (legacy.tutor_stats_month, _tutor_stats_month),
