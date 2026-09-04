@@ -112,17 +112,22 @@ def install_active_tutor_guard(app, platform: str) -> None:
         _db.add_booking = _guarded_add_booking
         _db._active_tutor_booking_guard_installed = True
 
-    # The bot modules imported database.add_booking before installers ran, so update
-    # their module-global alias too. Both Telegram and VK use the extended database.py
-    # signature on the hardened entrypoints.
+    # Bot_test/vk_bot and their legacy modules imported database.add_booking before
+    # installers ran. Update every reachable alias, not just database.py itself.
     legacy.add_booking = _guarded_add_booking
+    if hasattr(app, "add_booking"):
+        app.add_booking = _guarded_add_booking
 
     if str(platform).lower() == "telegram" and hasattr(legacy, "create_subscription_payment"):
         if not getattr(legacy, "_active_tutor_subscription_payment_guard_installed", False):
             _runtime_legacy = legacy
             _original_subscription_payment = legacy.create_subscription_payment
             legacy.create_subscription_payment = _guarded_subscription_payment
+            if hasattr(app, "create_subscription_payment"):
+                app.create_subscription_payment = _guarded_subscription_payment
             legacy._active_tutor_subscription_payment_guard_installed = True
 
     legacy.is_tutor_active = is_tutor_active
+    if hasattr(app, "is_tutor_active"):
+        app.is_tutor_active = is_tutor_active
     legacy._active_tutor_guard_installed = True
