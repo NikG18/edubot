@@ -14,6 +14,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
       - name: Compile every Python source file
         run: |
           python - <<'PY'
@@ -39,3 +41,21 @@ jobs:
             tests.test_subscription_allocation \
             tests.test_callback_hardening \
             tests.test_runtime_patch_contracts
+      - name: Install runtime dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Smoke import hardened entrypoints
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/test
+          ADMING_ID: '1'
+          ADMIN_VK_ID: '1'
+          BOT_TOKEN: '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi'
+          VK_BOT_TOKEN: 'vk1.a.test_token_for_import_only'
+          TINKOFF_TERMINAL_KEY: 'test-terminal'
+          TINKOFF_SECRET_KEY: 'test-secret'
+          TINKOFF_WEBHOOK_URL: ''
+          FISCAL_OPERATOR_INN: '390612116215'
+          FISCAL_OPERATOR_NAME: 'ИП Тест'
+          FISCAL_OPERATOR_PHONE: '+79990000000'
+        run: |
+          python -c "import Bot_test_legal; print('Telegram hardened entrypoint import OK')"
+          python -c "import vk_bot_legal; print('VK hardened entrypoint import OK')"
