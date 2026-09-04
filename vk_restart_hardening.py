@@ -54,6 +54,16 @@ _REQUIREMENTS = {
 }
 
 
+async def _fresh_start(message):
+    """Make VK 'Начать' a true restart of the current user flow."""
+    user_id = message.from_id
+    await state_dispenser.delete(user_id)
+    await message.answer(
+        "👋 Добро пожаловать! Выберите действие в меню.",
+        keyboard=await get_main_menu(user_id),
+    )
+
+
 async def _recover(legacy, event) -> None:
     await legacy.state_dispenser.delete(event.user_id)
     text = "Эта кнопка относится к сессии до перезапуска бота. Откройте нужный раздел заново."
@@ -80,6 +90,12 @@ def install_vk_restart_hardening(app) -> None:
     legacy = app.legacy
     if getattr(legacy, "_vk_restart_state_guards_installed", False):
         return
+
+    # Preserve the function object already registered by vkbottle, but replace
+    # its code with a closure-free implementation that clears all in-memory FSM
+    # state before showing the main menu.
+    if getattr(legacy, "start_handler", None) is not None:
+        legacy.start_handler.__code__ = _fresh_start.__code__
 
     for name, required in _REQUIREMENTS.items():
         original = getattr(legacy, name, None)
