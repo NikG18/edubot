@@ -6,6 +6,7 @@ import help_text_hardening as help_text
 from receipt_retry_policy import closing_receipt_claim_action
 import telegram_messaging_identity_hardening as identity
 import telegram_payment_hardening as payment
+import tutor_confirmation_hardening as tutor_confirmation
 import tutor_students_hardening as tutor_students
 from tutor_students_rules import group_tutor_students, platform_label
 import vk_admin_stats_hardening as vk_stats
@@ -74,6 +75,19 @@ class RuntimePatchContractTests(unittest.TestCase):
         for status, action in expected.items():
             with self.subTest(status=status):
                 self.assertEqual(closing_receipt_claim_action(status), action)
+
+    def test_subscription_payment_details_are_student_only(self):
+        student_text = tutor_confirmation._subscription_block_text(
+            "subscription_payment_pending", 42
+        )
+        tutor_text = tutor_confirmation._tutor_subscription_block_text(
+            "subscription_payment_pending"
+        )
+        self.assertIn("банк ещё не подтвердил", student_text)
+        self.assertIn("откройте раздел «Оплата»", student_text)
+        self.assertEqual(tutor_text, "✅ Занятие подтверждено. Ученик уведомлён.")
+        self.assertNotIn("банк", tutor_text.lower())
+        self.assertNotIn("оплат", tutor_text.lower())
 
     def test_tutor_panel_groups_linked_accounts_but_not_equal_unlinked_ids(self):
         bookings = {

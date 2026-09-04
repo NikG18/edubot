@@ -62,8 +62,19 @@ def _subscription_block_text(reason: str | None, booking_id: int) -> str:
             "не создан. После подтверждения абонемента откройте раздел «Оплата» ещё раз."
         )
     return (
-        "⚠️ Занятие подтверждено, но найденный абонемент требует проверки. "
+        "⚠️ Подтверждение занятия временно остановлено: найденный абонемент "
+        "требует проверки. "
         f"Отдельный платёж за занятие #{booking_id} не создавался. Обратитесь в поддержку."
+    )
+
+
+def _tutor_subscription_block_text(reason: str | None) -> str:
+    """Keep the student's package/payment details out of the tutor response."""
+    if reason in PENDING_PACKAGE_ERRORS:
+        return "✅ Занятие подтверждено. Ученик уведомлён."
+    return (
+        "⚠️ Подтверждение занятия временно остановлено. "
+        "Ученик уведомлён; при необходимости обратитесь к администратору."
     )
 
 
@@ -176,7 +187,9 @@ async def _telegram_confirm(call, bot, state):
             f"Остаток: {result['remaining']} занятий."
         )
     elif result["kind"] == "subscription_blocked":
-        await call.message.edit_text(_confirmation_subscription_block_text(result.get("reason"), booking_id))
+        await call.message.edit_text(
+            _confirmation_tutor_subscription_block_text(result.get("reason"))
+        )
     elif result["kind"] == "email_required":
         await call.message.edit_text("✅ Заявка подтверждена. Ожидаем e-mail ученика для создания платежа.")
     elif result["kind"] == "payment_created":
@@ -202,6 +215,7 @@ def install_telegram_tutor_confirmation(app) -> None:
     legacy._confirmation_confirm_trial = _confirm_trial
     legacy._confirmation_confirm_regular = _confirm_regular
     legacy._confirmation_subscription_block_text = _subscription_block_text
+    legacy._confirmation_tutor_subscription_block_text = _tutor_subscription_block_text
     legacy.legacy = legacy
     if target.__code__.co_freevars or _telegram_confirm.__code__.co_freevars:
         raise RuntimeError("Telegram confirmation replacement cannot use closures")
@@ -256,7 +270,7 @@ def install_vk_tutor_confirmation(app) -> None:
             )
         elif result["kind"] == "subscription_blocked":
             await legacy.edit_event_message(
-                event, _subscription_block_text(result.get("reason"), booking_id)
+                event, _tutor_subscription_block_text(result.get("reason"))
             )
         elif result["kind"] == "email_required":
             await legacy.edit_event_message(event, "✅ Заявка подтверждена. Ожидаем e-mail ученика для создания платежа.")
