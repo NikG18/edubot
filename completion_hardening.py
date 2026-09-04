@@ -3,7 +3,9 @@
 Regular paid lessons no longer become `completed` merely because the time slot ended.
 Only Telegram admin confirmation performs the final transition, updates statistics,
 consumes a subscription unit when applicable and submits the appropriate closing
-receipt. Trial lessons may still auto-complete after their slot for trial tracking.
+receipt. A paid lesson may be finalized either as actually held or as counted under
+the late student cancellation/no-show rule; both outcomes remain explicit in the
+audit log. Trial lessons may still auto-complete after their slot for trial tracking.
 """
 
 from __future__ import annotations
@@ -68,7 +70,26 @@ def _booking_has_ended(legacy, booking: dict) -> bool:
     return end_dt <= legacy.now_msk_naive()
 
 
-async def _mark_completed(booking_id: int, admin_id: int) -> tuple[bool, dict | None]:
+def completion_outcome_details(outcome: str) -> tuple[str, str]:
+    """Return stable audit event type and human-readable reason for finalization."""
+    normalized = str(outcome or "held").strip().lower()
+    if normalized == "late_student_cancel":
+        return (
+            "late_student_cancel_counted",
+            "Поздняя отмена или неявка ученика: занятие засчитано по правилу менее 24 часов",
+        )
+    if normalized == "held":
+        return "completed", "Факт проведения подтверждён администратором"
+    raise ValueError("unsupported completion outcome")
+
+
+async def _mark_completed(
+    booking_id: int,
+    admin_id: int,
+    *,
+    outcome: str = "held",
+) -> tuple[bool, dict | None]:
+    event_type, reason = completion_outcome_details(outcome)
     await _db._ensure_pool()
     async with _db._legacy.pool.acquire() as conn:
         async with conn.transaction():
@@ -85,8 +106,8 @@ async def _mark_completed(booking_id: int, admin_id: int) -> tuple[bool, dict | 
             )
             try:
                 await _db._add_booking_event(
-                    conn, int(booking_id), "completed", "paid", "completed",
-                    "admin", int(admin_id), {"reason": "Факт проведения подтверждён администратором"},
+                    conn, int(booking_id), event_type, "paid", "completed",
+                    "admin", int(admin_id), {"reason": reason, "outcome": outcome},
                 )
             except Exception:
                 logging.exception("Could not record manual completion event %s", booking_id)
@@ -111,7 +132,7 @@ async def _finalize_completed_booking(booking_id: int) -> dict:
 
 
 async def _render_admin_booking_with_completion(legacy, call, booking_id: int):
-    """Render the original admin information/actions plus the completion control."""
+    """Render the original admin information/actions plus finalization controls."""
     booking = await _db.get_booking(int(booking_id))
     if not booking:
         await call.message.edit_text("Занятие не найдено.")
@@ -151,6 +172,10 @@ async def _render_admin_booking_with_completion(legacy, call, booking_id: int):
             text="✅ Подтвердить, что занятие проведено",
             callback_data=f"admin_booking_complete_{booking_id}",
         )])
+        buttons.append([legacy.InlineKeyboardButton(
+            text="⚠️ Засчитать: поздняя отмена / неявка",
+            callback_data=f"admin_booking_late_cancel_{booking_id}",
+        )])
     elif booking["status"] == "completed":
         buttons.append([legacy.InlineKeyboardButton(
             text="🧾 Проверить/повторить закрывающий чек",
@@ -173,6 +198,39 @@ async def _render_admin_booking_with_completion(legacy, call, booking_id: int):
     )])
     buttons.append([legacy.InlineKeyboardButton(text="🔙 К разделам", callback_data="admin_bookings")])
     await call.message.edit_text(text, reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+async def _finalize_admin_outcome(app, legacy, call, booking_id: int, outcome: str) -> None:
+    booking = await _db.get_booking(booking_id)
+    if not booking:
+        await call.message.edit_text("Занятие не найдено.")
+        return
+    if booking.get("status") == "paid" and not _booking_has_ended(legacy, booking):
+        await legacy.safe_answer(call, "Занятие ещё не закончилось.", show_alert=True)
+        return
+    if booking.get("status") not in {"paid", "completed"}:
+        await legacy.safe_answer(call, "Этот статус нельзя финализировать.", show_alert=True)
+        return
+
+    if booking.get("status") == "paid":
+        await _mark_completed(booking_id, call.from_user.id, outcome=outcome)
+    result = await _finalize_completed_booking(booking_id)
+
+    if outcome == "late_student_cancel":
+        prefix = "✅ Поздняя отмена/неявка засчитана как использованное занятие."
+    else:
+        prefix = "✅ Проведение подтверждено."
+    if result.get("ok"):
+        note = f"{prefix} Закрывающий чек принят банком."
+    elif result.get("already_sent"):
+        note = f"{prefix} Закрывающий чек уже был отправлен."
+    else:
+        note = (
+            f"{prefix} Закрывающий чек требует проверки: "
+            f"{result.get('reason') or result.get('status') or 'неизвестный статус'}."
+        )
+    await call.message.answer(note)
+    await app._show_admin_booking(call, booking_id)
 
 
 def install_telegram_completion_hardening(app) -> None:
@@ -204,30 +262,16 @@ def install_telegram_completion_hardening(app) -> None:
             await legacy.safe_answer(call, "⛔ Только администратор", show_alert=True)
             return
         booking_id = int(call.data.rsplit("_", 1)[1])
-        booking = await _db.get_booking(booking_id)
-        if not booking:
-            await call.message.edit_text("Занятие не найдено.")
-            return
-        if booking.get("status") == "paid" and not _booking_has_ended(legacy, booking):
-            await legacy.safe_answer(call, "Занятие ещё не закончилось.", show_alert=True)
-            return
-        if booking.get("status") not in {"paid", "completed"}:
-            await legacy.safe_answer(call, "Этот статус нельзя подтвердить как проведённый.", show_alert=True)
-            return
+        await _finalize_admin_outcome(app, legacy, call, booking_id, "held")
 
-        await _mark_completed(booking_id, call.from_user.id)
-        result = await _finalize_completed_booking(booking_id)
-        if result.get("ok"):
-            note = "✅ Проведение подтверждено. Закрывающий чек принят банком."
-        elif result.get("already_sent"):
-            note = "✅ Проведение подтверждено. Закрывающий чек уже был отправлен."
-        else:
-            note = (
-                "✅ Проведение подтверждено, но закрывающий чек требует проверки: "
-                f"{result.get('reason') or result.get('status') or 'неизвестный статус'}."
-            )
-        await call.message.answer(note)
-        await app._show_admin_booking(call, booking_id)
+    @legacy.dp.callback_query(legacy.F.data.regexp(r"^admin_booking_late_cancel_\d+$"))
+    async def admin_booking_late_cancel(call: legacy.CallbackQuery):
+        await legacy.safe_answer(call)
+        if call.from_user.id != legacy.ADMING_ID:
+            await legacy.safe_answer(call, "⛔ Только администратор", show_alert=True)
+            return
+        booking_id = int(call.data.rsplit("_", 1)[1])
+        await _finalize_admin_outcome(app, legacy, call, booking_id, "late_student_cancel")
 
     legacy._manual_completion_installed = True
 
