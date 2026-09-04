@@ -9,6 +9,7 @@ import telegram_payment_hardening as payment
 import tutor_students_hardening as tutor_students
 from tutor_students_rules import group_tutor_students, platform_label
 import vk_admin_stats_hardening as vk_stats
+import vk_restart_hardening as vk_restart
 
 
 class RuntimePatchContractTests(unittest.TestCase):
@@ -29,6 +30,7 @@ class RuntimePatchContractTests(unittest.TestCase):
             vk_stats._vk_admin_stats_tutors_overview,
             vk_stats._vk_admin_stats_tutors_month,
             vk_stats._vk_admin_stats_students,
+            vk_restart._fresh_start,
         )
         for function in replacements:
             with self.subTest(function=function.__name__):
