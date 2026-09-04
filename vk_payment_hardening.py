@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import database as _db
 
+_runtime_legacy = None
+
 
 async def _render_payment_menu(legacy, user_id: int, *, message=None, event=None):
     bookings = await _db.get_bookings_for_account(
@@ -46,10 +48,16 @@ async def _vk_payment_oplata(message):
 
 
 async def _vk_payment_back_to_pay(event):
+    legacy = _runtime_legacy
+    if legacy is None:
+        return
     await legacy._vk_render_payment_menu(event.user_id, event=event)
 
 
 async def _vk_payment_qr(event):
+    legacy = _runtime_legacy
+    if legacy is None:
+        return
     raw_bid = event.payload.get("booking_id") if event.payload else None
     try:
         booking_id = int(raw_bid)
@@ -80,6 +88,9 @@ async def _vk_payment_qr(event):
 
 
 async def _vk_payment_deprecated_method(event):
+    legacy = _runtime_legacy
+    if legacy is None:
+        return
     await legacy.answer_event(
         event,
         "Старый способ оплаты отключён. Выберите конкретное занятие для оплаты через Т-Банк.",
@@ -89,9 +100,11 @@ async def _vk_payment_deprecated_method(event):
 
 
 def install_vk_payment_hardening(app) -> None:
+    global _runtime_legacy
     legacy_module = app.legacy
     if getattr(legacy_module, "_vk_payment_hardening_installed", False):
         return
+    _runtime_legacy = legacy_module
 
     async def render_for_legacy(user_id: int, message=None, event=None):
         return await _render_payment_menu(
@@ -110,8 +123,7 @@ def install_vk_payment_hardening(app) -> None:
         raise RuntimeError("VK payment menu replacement cannot use closures")
     legacy_module.oplata.__code__ = _vk_payment_oplata.__code__
 
-    # The universal callback dispatcher resolves these module globals dynamically;
-    # assigning function objects is safe even though they keep this module's globals.
+    # The universal callback dispatcher resolves these module globals dynamically.
     legacy_module.back_to_pay = _vk_payment_back_to_pay
     legacy_module.qr = _vk_payment_qr
     legacy_module.card = _vk_payment_deprecated_method
