@@ -72,28 +72,32 @@ def commission_rate(
       four months, the tutor completes at least 100 lessons in any 60-day window;
     - after that early unlock, the tutor follows the normal 15% rule: 41+ lessons
       in a month, without needing to repeat the 100-in-60 achievement;
-    - an achieved 20%/15% rate is retained for one following calendar month if the
-      current month's volume alone would otherwise move it upward.
+    - a naturally achieved 20%/15% rate is retained for one following calendar
+      month if the current month's natural rate would be higher.
+
+    ``previous_month_percent`` must be the previous month's *natural* rate, not a
+    rate that was itself retained from an even earlier month. This prevents an
+    achieved tier from being carried forward indefinitely.
     """
     lessons = max(0, int(lessons_this_month or 0))
     months = max(0, int(full_months_since_first_lesson or 0))
 
     if lessons >= 41 and (months >= 4 or bool(early_fifteen_unlocked)):
-        reason = (
+        natural = CommissionDecision(
+            15,
             "41+ lessons after early 15% unlock"
             if months < 4 and early_fifteen_unlocked
-            else "41+ lessons after 4 full months"
+            else "41+ lessons after 4 full months",
         )
-        return CommissionDecision(15, reason)
-    if lessons >= 21 and months >= 2:
-        return CommissionDecision(20, "21+ lessons after 2 full months")
+    elif lessons >= 21 and months >= 2:
+        natural = CommissionDecision(20, "21+ lessons after 2 full months")
+    else:
+        natural = CommissionDecision(25, "base rate")
 
     previous = int(previous_month_percent) if previous_month_percent is not None else None
-    if previous == 15:
-        return CommissionDecision(15, "retained for one calendar month")
-    if previous == 20:
-        return CommissionDecision(20, "retained for one calendar month")
-    return CommissionDecision(25, "base rate")
+    if previous in {15, 20} and previous < natural.percent:
+        return CommissionDecision(previous, "retained for one calendar month")
+    return natural
 
 
 def booking_revenue_rub(booking: dict, fallback_price_rub: int | float | None = None) -> float:
