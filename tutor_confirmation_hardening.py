@@ -9,8 +9,8 @@ from the booking's own ``user_platform``.
 from __future__ import annotations
 
 import database as _db
-import subscription_booking as subscription_flow
 import student_account_hardening as accounts
+from subscription_resolution import PENDING_PACKAGE_ERRORS, resolve_booking_subscription
 
 
 def _clean_trial_subject(subject: str) -> str:
@@ -54,11 +54,53 @@ async def _request_email(legacy, booking: dict) -> None:
     )
 
 
+def _subscription_block_text(reason: str | None, booking_id: int) -> str:
+    if reason in PENDING_PACKAGE_ERRORS:
+        return (
+            "🎟 Занятие подтверждено преподавателем. Для этого предмета уже оформляется "
+            "абонемент, но банк ещё не подтвердил его оплату. Отдельный платёж за занятие "
+            "не создан. После подтверждения абонемента откройте раздел «Оплата» ещё раз."
+        )
+    return (
+        "⚠️ Занятие подтверждено, но найденный абонемент требует проверки. "
+        f"Отдельный платёж за занятие #{booking_id} не создавался. Обратитесь в поддержку."
+    )
+
+
 async def _confirm_regular(legacy, booking: dict, actor_id: int, *, telegram_bot=None, source=None):
     booking_id = int(booking["id"])
 
-    reserved = await subscription_flow._confirm_from_subscription(legacy, booking_id, int(actor_id))
+    reserved = await resolve_booking_subscription(
+        legacy,
+        booking_id,
+        int(actor_id),
+        actor_type="tutor",
+        allowed_statuses={"pending"},
+    )
     if reserved is not None:
+        if reserved.get("error"):
+            reason = str(reserved.get("error") or "subscription_check_failed")
+            # The tutor did confirm the lesson. When only the package payment is
+            # still pending/unknown, preserve that confirmation while keeping the
+            # lesson uncharged; the payment menu can reconcile it later.
+            if reason in PENDING_PACKAGE_ERRORS:
+                await _db.change_booking_status(
+                    booking_id,
+                    "confirmed",
+                    event_type="confirmed",
+                    actor_type="tutor",
+                    actor_id=int(actor_id),
+                    reason="Подтверждено преподавателем; ожидается подтверждение оплаты абонемента",
+                    expected_statuses={"pending"},
+                    details={"subscription_payment_state": reason},
+                )
+            text = _subscription_block_text(reason, booking_id)
+            await legacy.send_to_user(
+                booking["user_id"], booking.get("user_platform", "telegram"), text
+            )
+            await _db._sync_booking_record_safely(booking_id)
+            return {"kind": "subscription_blocked", "reason": reason}
+
         await legacy.send_to_user(
             booking["user_id"],
             booking.get("user_platform", "telegram"),
@@ -133,6 +175,8 @@ async def _telegram_confirm(call, bot, state):
             "✅ Занятие подтверждено. Оплата списана из абонемента.\n"
             f"Остаток: {result['remaining']} занятий."
         )
+    elif result["kind"] == "subscription_blocked":
+        await call.message.edit_text(_confirmation_subscription_block_text(result.get("reason"), booking_id))
     elif result["kind"] == "email_required":
         await call.message.edit_text("✅ Заявка подтверждена. Ожидаем e-mail ученика для создания платежа.")
     elif result["kind"] == "payment_created":
@@ -157,6 +201,7 @@ def install_telegram_tutor_confirmation(app) -> None:
     legacy._confirmation_db = _db
     legacy._confirmation_confirm_trial = _confirm_trial
     legacy._confirmation_confirm_regular = _confirm_regular
+    legacy._confirmation_subscription_block_text = _subscription_block_text
     legacy.legacy = legacy
     if target.__code__.co_freevars or _telegram_confirm.__code__.co_freevars:
         raise RuntimeError("Telegram confirmation replacement cannot use closures")
@@ -208,6 +253,10 @@ def install_vk_tutor_confirmation(app) -> None:
                 event,
                 "✅ Занятие подтверждено. Оплата списана из абонемента.\n"
                 f"Остаток: {result['remaining']} занятий.",
+            )
+        elif result["kind"] == "subscription_blocked":
+            await legacy.edit_event_message(
+                event, _subscription_block_text(result.get("reason"), booking_id)
             )
         elif result["kind"] == "email_required":
             await legacy.edit_event_message(event, "✅ Заявка подтверждена. Ожидаем e-mail ученика для создания платежа.")
