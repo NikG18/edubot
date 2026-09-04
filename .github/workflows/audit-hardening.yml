@@ -77,6 +77,7 @@ jobs:
           python - <<'PY'
           import Bot_test_legal as entry
           import booking_records
+          import manual_test_hardening as manual
           import tutor_students_hardening as tutor_students
           legacy = entry.app.legacy
           assert legacy._subscription_booking_tg_installed is True
@@ -90,11 +91,20 @@ jobs:
           assert booking_records._accurate_cross_platform_records_installed is True
           assert booking_records._manual_records_runtime_hardened is True
           assert legacy.tutor_confirm_booking.__code__.co_freevars == ()
-          assert legacy.back_to_my_records.__code__.co_freevars == ()
-          assert legacy.pay_booking_list.__code__.co_freevars == ()
-          assert entry.app.admin_bookings_list.__code__.co_freevars == ()
+          assert legacy.back_to_my_records.__code__ is manual._tg_student_back_to_records.__code__
+          assert legacy.pay_booking_list.__code__.co_name == '_tg_pay_booking_list'
+          assert entry.app.admin_bookings_menu.__code__.co_name == '_tg_admin_bookings_menu'
+          assert entry.app.admin_bookings_list.__code__.co_name == '_admin_bookings_first_page'
+          assert legacy.tutor_confirm_booking.__code__.co_name == '_telegram_confirm'
           assert legacy.show_students.__code__ is tutor_students._telegram_show_students.__code__
-          print('Telegram runtime bindings OK')
+
+          registered_callbacks = [handler.callback for handler in legacy.dp.callback_query.handlers]
+          assert any(callback is legacy.back_to_my_records for callback in registered_callbacks)
+          assert any(callback is legacy.pay_booking_list for callback in registered_callbacks)
+          assert any(callback is legacy.tutor_confirm_booking for callback in registered_callbacks)
+          assert any(callback is entry.app.admin_bookings_menu for callback in registered_callbacks)
+          assert any(callback is entry.app.admin_bookings_list for callback in registered_callbacks)
+          print('Telegram runtime bindings and dispatcher registrations OK')
           PY
           python - <<'PY'
           import vk_bot_legal as entry
