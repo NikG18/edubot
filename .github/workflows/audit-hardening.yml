@@ -59,3 +59,45 @@ jobs:
         run: |
           python -c "import Bot_test_legal; print('Telegram hardened entrypoint import OK')"
           python -c "import vk_bot_legal; print('VK hardened entrypoint import OK')"
+      - name: Verify runtime patch bindings
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/test
+          ADMING_ID: '1'
+          ADMIN_VK_ID: '1'
+          BOT_TOKEN: '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi'
+          VK_BOT_TOKEN: 'vk1.a.test_token_for_import_only'
+          TINKOFF_TERMINAL_KEY: 'test-terminal'
+          TINKOFF_SECRET_KEY: 'test-secret'
+          TINKOFF_WEBHOOK_URL: ''
+          FISCAL_OPERATOR_INN: '390612116215'
+          FISCAL_OPERATOR_NAME: 'ИП Тест'
+          FISCAL_OPERATOR_PHONE: '+79990000000'
+        run: |
+          python - <<'PY'
+          import Bot_test_legal as entry
+          legacy = entry.app.legacy
+          assert legacy._subscription_booking_tg_installed is True
+          assert legacy._cross_platform_tutor_confirmation_tg is True
+          assert legacy._telegram_contact_delivery_hardened is True
+          assert legacy._telegram_messaging_identity_hardened is True
+          assert legacy._admin_booking_pagination_installed is True
+          assert legacy.tutor_confirm_booking.__code__.co_freevars == ()
+          assert entry.app.admin_bookings_list.__code__.co_freevars == ()
+          print('Telegram runtime bindings OK')
+          PY
+          python - <<'PY'
+          import vk_bot_legal as entry
+          import vk_payment_hardening as payment
+          legacy = entry.app.legacy
+          assert legacy._subscription_booking_vk_installed is True
+          assert legacy._cross_platform_tutor_confirmation_vk is True
+          assert legacy._vk_payment_hardening_installed is True
+          assert legacy._vk_reply_authorization_installed is True
+          assert legacy._vk_contact_delivery_hardened is True
+          assert payment._runtime_legacy is legacy
+          assert legacy.qr is payment._vk_payment_qr
+          assert legacy.card is payment._vk_payment_deprecated_method
+          assert legacy.sbp is payment._vk_payment_deprecated_method
+          assert legacy.oplata.__code__.co_freevars == ()
+          print('VK runtime bindings OK')
+          PY
