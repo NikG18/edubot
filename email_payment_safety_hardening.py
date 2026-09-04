@@ -25,6 +25,14 @@ def _blocked_text(reason: str | None, booking_id: int) -> str:
             "подтверждён. Отдельная оплата полной стоимости не создаётся. После "
             "подтверждения абонемента откройте раздел «Оплата» ещё раз."
         )
+    if reason == "ordinary_payment_already_created":
+        return (
+            "⚠️ Для этого занятия ранее уже был создан отдельный платёж T-Банк, а "
+            "теперь найден подходящий абонемент. Автоматически переключать занятие "
+            "на абонемент нельзя: старая платёжная ссылка может оставаться действующей. "
+            f"Чтобы исключить двойную оплату, занятие #{booking_id} заблокировано до "
+            "проверки администратором."
+        )
     return (
         "⚠️ Для этого занятия найден абонемент, требующий проверки. Чтобы исключить "
         f"двойную оплату, отдельный платёж за занятие #{booking_id} не создан. "
@@ -41,12 +49,13 @@ async def _telegram_message_preflight(legacy, source, booking_id: int):
     if is_trial_booking(current):
         await source.answer("🎓 Пробное занятие бесплатно и не требует оплаты.")
         return {"blocked": True, "reason": "trial_booking"}
-    if current.get("tinkoff_payment_id"):
-        # A payment already exists; the idempotent payment layer must only reuse it.
-        return None
     if current.get("status") not in {"pending", "confirmed"}:
         return None
 
+    # Always ask the package resolver, even when an individual PaymentId already
+    # exists. It returns None when there is no package conflict (allowing the
+    # idempotent payment layer to reissue the same PaymentId), and fails closed if
+    # a package now also exists for this booking.
     resolved = await resolve_booking_subscription(
         legacy,
         int(booking_id),
@@ -85,8 +94,6 @@ async def _vk_message_preflight(legacy, source, booking_id: int):
     if is_trial_booking(current):
         await source.answer("🎓 Пробное занятие бесплатно и не требует оплаты.")
         return {"blocked": True, "reason": "trial_booking"}
-    if current.get("tinkoff_payment_id"):
-        return None
     if current.get("status") not in {"pending", "confirmed"}:
         return None
 
