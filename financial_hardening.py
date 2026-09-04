@@ -7,7 +7,7 @@ admin edits do not rewrite historical months.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import database as _db
 import payments
@@ -155,12 +155,9 @@ async def recalculate_monthly_stats(tutor_id: int, year: int, month: int):
             commission = 0.0
         elif tutor.get("commission_mode") == "auto":
             display_percent, _ = await calculate_auto_commission(tutor_id, year, month)
-            # The achieved auto tier applies to the entire tutor month.
             commission = total_income * float(display_percent) / 100.0
         else:
             display_percent = int(tutor.get("commission_percent", 25))
-            # Manual mode preserves the rate snapshot on each booking so an admin
-            # edit today does not rewrite already-completed historical lessons.
             commission = 0.0
             for booking in paid_rows:
                 revenue = booking_revenue_rub(booking, booking.get("fallback_price"))
@@ -207,8 +204,6 @@ async def get_tutor_financials(tutor_id: int, year: int = None, month: int = Non
             "commission_percent": float(row["commission_percent"] or 0),
         }
 
-    # Rebuild every month before all-time aggregation so auto tiers are applied to
-    # complete months rather than stale per-booking snapshots.
     async with _db._legacy.pool.acquire() as conn:
         periods = await conn.fetch(
             """
@@ -237,13 +232,19 @@ async def get_tutor_financials(tutor_id: int, year: int = None, month: int = Non
         )
     tutors = await _db.get_all_tutors()
     tutor = tutors.get(int(tutor_id), {})
-    display_percent = 0 if payments.is_operator_tutor(tutor.get("inn")) else int(tutor.get("commission_percent", 25))
+    if payments.is_operator_tutor(tutor.get("inn")):
+        display_percent = 0
+    elif tutor.get("commission_mode") == "auto":
+        now = datetime.now(_db.MSK)
+        display_percent, _ = await calculate_auto_commission(int(tutor_id), now.year, now.month)
+    else:
+        display_percent = int(tutor.get("commission_percent", 25))
     return {
         "total_lessons": int(totals["lessons"] or 0),
         "total_income": float(totals["income"] or 0),
         "commission_amount": float(totals["commission"] or 0),
         "net_income": float(totals["net"] or 0),
-        "commission_percent": display_percent,
+        "commission_percent": float(display_percent),
     }
 
 
