@@ -1,7 +1,7 @@
 """Current help text shared by Telegram and VK.
 
 Legacy help screens still mention obsolete manual payment methods and old discount
-rules.  This module replaces the already-registered help handlers without changing
+rules. This module replaces the already-registered help handlers without changing
 other navigation.
 """
 
@@ -36,35 +36,37 @@ CURRENT_HELP_TEXT = (
 )
 
 
+async def _telegram_help(message):
+    await message.answer("Открываю раздел помощи...", reply_markup=legacy.ReplyKeyboardRemove())
+    keyboard = legacy.InlineKeyboardMarkup(inline_keyboard=[
+        [legacy.InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+    ])
+    await message.answer(legacy.CURRENT_HELP_TEXT, reply_markup=keyboard)
+
+
+async def _vk_help(message):
+    keyboard = legacy.Keyboard(inline=True)
+    keyboard.add(legacy.Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
+    await message.answer(legacy.CURRENT_HELP_TEXT, keyboard=keyboard.get_json())
+
+
 def install_help_text_hardening(app, platform: str) -> None:
-    legacy = app.legacy
+    legacy_module = app.legacy
     platform = str(platform).lower()
     marker = f"_current_help_text_{platform}_installed"
-    if getattr(legacy, marker, False):
+    if getattr(legacy_module, marker, False):
         return
 
-    legacy.legacy = legacy
-    legacy.CURRENT_HELP_TEXT = CURRENT_HELP_TEXT
-
-    if platform == "telegram":
-        async def patched_help(message):
-            await message.answer("Открываю раздел помощи...", reply_markup=legacy.ReplyKeyboardRemove())
-            keyboard = legacy.InlineKeyboardMarkup(inline_keyboard=[
-                [legacy.InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-            ])
-            await message.answer(legacy.CURRENT_HELP_TEXT, reply_markup=keyboard)
-    elif platform == "vk":
-        async def patched_help(message):
-            keyboard = legacy.Keyboard(inline=True)
-            keyboard.add(legacy.Callback("🔙 Назад в меню", payload={"cmd": "back_to_menu"}))
-            await message.answer(legacy.CURRENT_HELP_TEXT, keyboard=keyboard.get_json())
-    else:
+    legacy_module.legacy = legacy_module
+    legacy_module.CURRENT_HELP_TEXT = CURRENT_HELP_TEXT
+    replacement = _telegram_help if platform == "telegram" else _vk_help if platform == "vk" else None
+    if replacement is None:
         raise ValueError("platform must be telegram or vk")
 
-    target = getattr(legacy, "help", None)
+    target = getattr(legacy_module, "help", None)
     if target is None:
         return
-    if target.__code__.co_freevars or patched_help.__code__.co_freevars:
+    if target.__code__.co_freevars or replacement.__code__.co_freevars:
         raise RuntimeError("help handler replacement cannot use closures")
-    target.__code__ = patched_help.__code__
-    setattr(legacy, marker, True)
+    target.__code__ = replacement.__code__
+    setattr(legacy_module, marker, True)
