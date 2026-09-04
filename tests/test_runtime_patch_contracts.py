@@ -8,6 +8,7 @@ import telegram_messaging_identity_hardening as identity
 import telegram_payment_hardening as payment
 import tutor_students_hardening as tutor_students
 from tutor_students_rules import group_tutor_students, platform_label
+import vk_admin_stats_hardening as vk_stats
 
 
 class RuntimePatchContractTests(unittest.TestCase):
@@ -24,6 +25,10 @@ class RuntimePatchContractTests(unittest.TestCase):
             financial_display._tutor_stats_menu,
             financial_display._tutor_stats_month,
             tutor_students._telegram_show_students,
+            vk_stats._vk_admin_stats_menu,
+            vk_stats._vk_admin_stats_tutors_overview,
+            vk_stats._vk_admin_stats_tutors_month,
+            vk_stats._vk_admin_stats_students,
         )
         for function in replacements:
             with self.subTest(function=function.__name__):
@@ -80,6 +85,15 @@ class RuntimePatchContractTests(unittest.TestCase):
         linked = next(group for group in groups if group["key"] == ("student", 100))
         self.assertEqual(linked["completed_lessons"], 1)
         self.assertEqual(platform_label(linked["platforms"]), "TG/VK")
+
+    def test_calendar_months_do_not_use_30_day_approximation(self):
+        months = vk_stats.previous_calendar_months(2026, 3, 5)
+        self.assertEqual(months, [(2026, 3), (2026, 2), (2026, 1), (2025, 12), (2025, 11)])
+
+    def test_vk_stats_page_slice_clamps_out_of_range_page(self):
+        page, max_page, rows = vk_stats._page_slice(list(range(25)), 99, 10)
+        self.assertEqual((page, max_page), (2, 2))
+        self.assertEqual(rows, [20, 21, 22, 23, 24])
 
 
 if __name__ == "__main__":
