@@ -156,8 +156,9 @@ async def _render_admin_booking_with_completion(legacy, call, booking_id: int):
             text="🧾 Проверить/повторить закрывающий чек",
             callback_data=f"admin_booking_complete_{booking_id}",
         )])
-    # Preserve the original admin cancellation action instead of replacing it.
-    if booking["status"] in {"pending", "confirmed", "paid", "completed"}:
+    # Database cancellation permits only pending/confirmed/paid. Completed lessons
+    # require a separate correction/refund procedure and must not expose a dead button.
+    if booking["status"] in {"pending", "confirmed", "paid"}:
         buttons.append([legacy.InlineKeyboardButton(
             text="❌ Отменить занятие",
             callback_data=f"admin_booking_cancel_{booking_id}",
