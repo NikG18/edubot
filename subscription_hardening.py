@@ -12,7 +12,7 @@ import logging
 
 import database as _db
 import payments
-from fiscal_agent import get_tutor_phone
+from fiscal_agent import ensure_fiscal_schema, get_tutor_phone
 from receipt_retry_policy import closing_receipt_claim_action
 from subscription_rules import (
     allocated_unit_amount,
@@ -149,6 +149,10 @@ async def ensure_subscription_schema() -> None:
 async def activate_subscription(payment_id: str) -> bool:
     """Activate once while preserving the purchase/fiscal snapshot."""
     await ensure_subscription_schema()
+    # Legacy pending rows may not contain supplier_phone. Prepare the tutor phone
+    # column before locking a pending row so the fallback lookup cannot execute DDL
+    # from a second connection while this transaction is waiting for it.
+    await ensure_fiscal_schema()
     await _db._ensure_pool()
     async with _db._legacy.pool.acquire() as conn:
         async with conn.transaction():

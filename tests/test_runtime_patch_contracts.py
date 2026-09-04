@@ -6,6 +6,9 @@ import help_text_hardening as help_text
 from receipt_retry_policy import closing_receipt_claim_action
 import telegram_messaging_identity_hardening as identity
 import telegram_payment_hardening as payment
+import student_navigation_hardening as navigation
+import subscription_purchase_hardening as subscription_purchase
+import subscription_cancel_hardening as subscription_cancel
 import tutor_confirmation_hardening as tutor_confirmation
 import tutor_students_hardening as tutor_students
 from tutor_students_rules import group_tutor_students, platform_label
@@ -32,6 +35,10 @@ class RuntimePatchContractTests(unittest.TestCase):
             vk_stats._vk_admin_stats_tutors_month,
             vk_stats._vk_admin_stats_students,
             vk_restart._fresh_start,
+            navigation._telegram_fresh_start,
+            navigation._telegram_fresh_back,
+            navigation._vk_fresh_back,
+            subscription_purchase._telegram_confirm_buy_subscription,
         )
         for function in replacements:
             with self.subTest(function=function.__name__):
@@ -88,6 +95,22 @@ class RuntimePatchContractTests(unittest.TestCase):
         self.assertEqual(tutor_text, "✅ Занятие подтверждено. Ученик уведомлён.")
         self.assertNotIn("банк", tutor_text.lower())
         self.assertNotIn("оплат", tutor_text.lower())
+
+    def test_student_navigation_resets_in_memory_state(self):
+        telegram_source = navigation._telegram_fresh_start.__code__.co_names
+        telegram_back_source = navigation._telegram_fresh_back.__code__.co_names
+        vk_source = navigation._vk_fresh_back.__code__.co_names
+        self.assertIn("clear", telegram_source)
+        self.assertIn("clear", telegram_back_source)
+        self.assertIn("delete", vk_source)
+
+    def test_every_cancellation_path_releases_subscription_unit(self):
+        source = __import__("inspect").getsource(
+            subscription_cancel.install_subscription_cancel_release
+        )
+        self.assertIn("_db.change_booking_status = db_change_with_release", source)
+        self.assertIn('str(new_status) == "cancelled"', source)
+        self.assertIn("release_booking_unit", source)
 
     def test_tutor_panel_groups_linked_accounts_but_not_equal_unlinked_ids(self):
         bookings = {

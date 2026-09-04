@@ -15,8 +15,31 @@ def _valid_notification(payload: dict) -> bool:
     return hmac.compare_digest(str(received), str(expected))
 
 
+async def _read_notification_payload(request: web.Request) -> dict:
+    """Accept both JSON and form-encoded T-Bank notifications."""
+    try:
+        payload = await request.json()
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+
+    try:
+        payload = await request.post()
+    except Exception:
+        return {}
+    return dict(payload) if payload else {}
+
+
 async def _handle_subscription_notification(payment_id: str, status: str):
     """Serialize webhook activation with Telegram/VK fallback polling."""
+    # Schema preparation may open its own connection and execute DDL. It must run
+    # before the transaction below: otherwise the outer SELECT and inner ALTER can
+    # wait on one another when this process sees a VK-created package for the first
+    # time.
+    import subscription_hardening as subscriptions
+
+    await subscriptions.ensure_subscription_schema()
     await _db._ensure_pool()
     notification = None
     async with _db._legacy.pool.acquire() as conn:
@@ -34,9 +57,7 @@ async def _handle_subscription_notification(payment_id: str, status: str):
 
             pending = dict(pending_sub)
             if status in {"CONFIRMED", "AUTHORIZED"}:
-                # subscription_hardening patches database.activate_subscription at
-                # runtime; module lookup here intentionally uses the current alias.
-                activated = await _db.activate_subscription(payment_id)
+                activated = await subscriptions.activate_subscription(payment_id)
                 if activated:
                     notification = (
                         pending["user_id"],
@@ -62,10 +83,9 @@ async def _handle_subscription_notification(payment_id: str, status: str):
 
 async def _handle_notification(request: web.Request):
     bot = request.app["bot"]
-    try:
-        payload = await request.json()
-    except Exception:
-        return web.Response(status=400, text="bad json")
+    payload = await _read_notification_payload(request)
+    if not payload:
+        return web.Response(status=400, text="bad payload")
 
     if not _valid_notification(payload):
         logging.warning("Отклонён webhook T-Bank с неверным Token")

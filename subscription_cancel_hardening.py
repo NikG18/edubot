@@ -17,14 +17,23 @@ def install_subscription_cancel_release(app) -> None:
 
     original_db_cancel = _db.cancel_booking_record
     original_db_update = _db.update_booking
+    original_db_change = _db.change_booking_status
     original_legacy_cancel = getattr(legacy, "cancel_booking_record", None)
     original_legacy_update = getattr(legacy, "update_booking", None)
+    original_legacy_change = getattr(legacy, "change_booking_status", None)
 
-    async def db_cancel_with_release(booking_id, *args, **kwargs):
-        changed, booking = await original_db_cancel(booking_id, *args, **kwargs)
-        if changed:
+    async def db_change_with_release(booking_id, new_status, *args, **kwargs):
+        changed, booking = await original_db_change(
+            booking_id, new_status, *args, **kwargs
+        )
+        if changed and str(new_status) == "cancelled":
             await subs.release_booking_unit(int(booking_id))
         return changed, booking
+
+    async def db_cancel_with_release(booking_id, *args, **kwargs):
+        # database.cancel_booking_record resolves change_booking_status from its
+        # module globals, so the central wrapper above performs the release.
+        return await original_db_cancel(booking_id, *args, **kwargs)
 
     async def db_update_with_release(booking_id, **kwargs):
         result = await original_db_update(booking_id, **kwargs)
@@ -35,10 +44,7 @@ def install_subscription_cancel_release(app) -> None:
     async def legacy_cancel_with_release(booking_id, *args, **kwargs):
         if original_legacy_cancel is None or original_legacy_cancel is original_db_cancel:
             return await db_cancel_with_release(booking_id, *args, **kwargs)
-        changed, booking = await original_legacy_cancel(booking_id, *args, **kwargs)
-        if changed:
-            await subs.release_booking_unit(int(booking_id))
-        return changed, booking
+        return await original_legacy_cancel(booking_id, *args, **kwargs)
 
     async def legacy_update_with_release(booking_id, **kwargs):
         if original_legacy_update is None or original_legacy_update is original_db_update:
@@ -48,8 +54,11 @@ def install_subscription_cancel_release(app) -> None:
             await subs.release_booking_unit(int(booking_id))
         return result
 
+    _db.change_booking_status = db_change_with_release
     _db.cancel_booking_record = db_cancel_with_release
     _db.update_booking = db_update_with_release
+    if original_legacy_change is not None:
+        legacy.change_booking_status = db_change_with_release
     if original_legacy_cancel is not None:
         legacy.cancel_booking_record = legacy_cancel_with_release
     if original_legacy_update is not None:

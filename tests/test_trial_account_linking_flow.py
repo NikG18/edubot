@@ -4,10 +4,11 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+LEGACY = ROOT / "archive"
 
 
 def parsed(name: str):
-    return ast.parse((ROOT / name).read_text(encoding="utf-8"))
+    return ast.parse((LEGACY / name).read_text(encoding="utf-8"))
 
 
 def async_function(module: ast.Module, name: str) -> ast.AsyncFunctionDef:
@@ -86,13 +87,13 @@ class AccountLinkingFlowTests(unittest.TestCase):
         for filename in ("Bot_test_legacy.py", "vk_bot_legacy.py"):
             self.assertIn(
                 'if result.get("email_reset")',
-                (ROOT / filename).read_text(encoding="utf-8"),
+                (LEGACY / filename).read_text(encoding="utf-8"),
             )
 
 
 class ScheduleMigrationTests(unittest.TestCase):
     def test_old_schedule_tables_receive_unique_index(self):
-        source = (ROOT / "database_legacy.py").read_text(encoding="utf-8")
+        source = (LEGACY / "database_legacy.py").read_text(encoding="utf-8")
         self.assertIn("CREATE UNIQUE INDEX IF NOT EXISTS uq_schedule_slot", source)
         self.assertIn("async def add_schedule_slots", source)
         self.assertIn("ON CONFLICT DO NOTHING", source)

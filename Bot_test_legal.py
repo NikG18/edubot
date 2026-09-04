@@ -32,6 +32,7 @@ from manual_test_hardening import (
 )
 from email_payment_safety_hardening import install_telegram_email_payment_safety
 from runtime_hardening import install_telegram_hardening
+from student_navigation_hardening import install_telegram_student_navigation_hardening
 
 install_financial_hardening(app)
 install_telegram_financial_display_hardening(app)
@@ -62,6 +63,7 @@ install_records_runtime_hardening(app)
 install_telegram_manual_test_hardening(app)
 install_telegram_email_payment_safety(app)
 install_telegram_hardening(app)
+install_telegram_student_navigation_hardening(app)
 
 
 async def main():

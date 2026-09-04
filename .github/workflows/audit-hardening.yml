@@ -32,6 +32,8 @@ jobs:
               raise SystemExit(1)
           print('All Python files compile successfully')
           PY
+      - name: Install runtime dependencies
+        run: python -m pip install -r requirements.txt
       - name: Run pure regression tests
         run: |
           python -m unittest -v \
@@ -42,8 +44,10 @@ jobs:
             tests.test_booking_visibility_rules \
             tests.test_callback_hardening \
             tests.test_runtime_patch_contracts
-      - name: Install runtime dependencies
-        run: python -m pip install -r requirements.txt
+      - name: Run complete regression suite
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/test
+        run: python -m unittest discover -s tests -v
       - name: Smoke import hardened entrypoints
         env:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/test
@@ -88,6 +92,7 @@ jobs:
           assert legacy._core_flow_tg_hardened is True
           assert legacy._manual_test_tg_hardened is True
           assert legacy._telegram_email_payment_safety_installed is True
+          assert legacy._student_navigation_tg_hardened is True
           assert legacy.RECORDS_CHANNEL_ID is None
           assert booking_records._accurate_cross_platform_records_installed is True
           assert booking_records._manual_records_runtime_hardened is True
@@ -97,6 +102,7 @@ jobs:
           assert entry.app.admin_bookings_menu.__code__.co_name == '_tg_admin_bookings_menu'
           assert entry.app.admin_bookings_list.__code__.co_name == '_admin_bookings_first_page'
           assert legacy.tutor_confirm_booking.__code__.co_name == '_telegram_confirm'
+          assert legacy.confirm_buy_subscription.__code__.co_name == '_telegram_confirm_buy_subscription'
           assert legacy.show_students.__code__ is tutor_students._telegram_show_students.__code__
 
           registered_callbacks = [handler.callback for handler in legacy.dp.callback_query.handlers]
@@ -119,6 +125,8 @@ jobs:
           assert legacy._vk_contact_delivery_hardened is True
           assert legacy._core_flow_vk_hardened is True
           assert legacy._vk_email_payment_safety_installed is True
+          assert legacy._student_navigation_vk_hardened is True
+          assert legacy.periodic_cleanup.__module__ == 'payment_poll_hardening'
           assert booking_records._accurate_cross_platform_records_installed is True
           assert booking_records._manual_records_runtime_hardened is True
           assert payment._runtime_legacy is legacy

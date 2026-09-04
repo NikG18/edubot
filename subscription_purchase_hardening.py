@@ -13,7 +13,11 @@ import logging
 import database as _db
 import payments as _payments
 import subscription_hardening as subs
+from fiscal_agent import get_tutor_phone
 from pricing import get_subscription_discount, subscription_total_kop, subscription_total_rub
+
+
+SUBSCRIPTION_EMAIL_MARKER = -2
 
 
 async def create_or_reuse_subscription_payment(
@@ -49,6 +53,19 @@ async def create_or_reuse_subscription_payment(
     email = str(customer_email or "").strip()
     if not email:
         return {"ok": False, "reason": "email_missing"}
+
+    direct_service = _payments.is_operator_tutor(inn)
+    try:
+        supplier_phone = (
+            _payments.OPERATOR_PHONE
+            if direct_service
+            else await get_tutor_phone(int(tutor_id))
+        )
+    except Exception:
+        logging.exception("Could not load fiscal supplier phone tutor_id=%s", tutor_id)
+        return {"ok": False, "reason": "tutor_phone_unavailable"}
+    if not supplier_phone:
+        return {"ok": False, "reason": "tutor_phone_missing"}
 
     total_rub = subscription_total_rub(price, count)
     amount_kop = subscription_total_kop(price, count)
@@ -141,6 +158,7 @@ async def create_or_reuse_subscription_payment(
                 tutor_name=tutor["name"],
                 customer_email=email,
                 inn=inn,
+                supplier_phone=supplier_phone,
                 order_id_prefix="sub",
             )
             if not payment_id:
@@ -150,11 +168,13 @@ async def create_or_reuse_subscription_payment(
                 """
                 INSERT INTO pending_subscriptions
                     (user_id,tutor_id,subject,total_lessons,discount_percent,total_price,
-                     payment_id,user_platform,student_id)
-                VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                     payment_id,user_platform,student_id,customer_email,supplier_name,
+                     supplier_inn,supplier_phone)
+                VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
                 """,
                 int(platform_user_id), int(tutor_id), str(subject), count, discount,
-                total_rub, str(payment_id), platform, int(student_id),
+                total_rub, str(payment_id), platform, int(student_id), email,
+                str(tutor["name"]), inn, supplier_phone,
             )
             return {
                 "ok": True,
@@ -179,6 +199,51 @@ async def _telegram_respond(legacy, source, text: str, reply_markup=None):
             await source.message.answer(text, reply_markup=reply_markup)
 
 
+async def _telegram_confirm_buy_subscription(call, state, bot):
+    """Restart-tolerant replacement for the registered purchase confirmation."""
+    await safe_answer(call)
+    data = await state.get_data()
+    try:
+        tutor_id = int(data["buy_tutor_id"])
+        subject = str(data["buy_subject"])
+        count = int(data["package"])
+    except (KeyError, TypeError, ValueError):
+        await state.clear()
+        await call.message.edit_text(
+            "Данные покупки устарели. Откройте раздел «Оплата» и выберите абонемент заново."
+        )
+        return
+
+    user_id = int(call.from_user.id)
+    email = await _subscription_purchase_db.get_student_email("telegram", user_id)
+    if not email:
+        await set_pending_email_request(user_id, _subscription_email_marker)
+        await state.clear()
+        await call.message.edit_text(
+            "📧 Для кассового чека отправьте e-mail следующим текстовым сообщением.\n"
+            "После сохранения снова откройте «💳 Оплата» → «📚 Купить абонемент»."
+        )
+        return
+
+    result = await create_subscription_payment(
+        call,
+        bot,
+        user_id,
+        tutor_id,
+        subject,
+        count,
+        data.get("total"),
+        data.get("discount"),
+        email,
+        user_platform="telegram",
+    )
+    await state.clear()
+    if result.get("ok") and not result.get("activated") and result.get("payment_url"):
+        await call.message.edit_text(
+            "✅ Платёж создан. Ссылка СБП отправлена отдельным сообщением."
+        )
+
+
 def install_telegram_subscription_purchase_hardening(app) -> None:
     legacy = app.legacy
     if getattr(legacy, "_subscription_purchase_tg_hardened", False):
@@ -197,11 +262,19 @@ def install_telegram_subscription_purchase_hardening(app) -> None:
             customer_email=str(email),
         )
         if not result.get("ok"):
+            reason_messages = {
+                "tutor_phone_missing": "У преподавателя не заполнен телефон для кассового чека.",
+                "tutor_phone_unavailable": "Не удалось проверить телефон преподавателя для кассового чека.",
+                "tutor_inn_missing": "У преподавателя не заполнен ИНН.",
+                "payment_init_failed": "Т-Банк не создал платёж.",
+                "duplicate_pending_payments": "Найдены дубли ожидающих платежей; требуется проверка администратора.",
+            }
             await _telegram_respond(
                 legacy,
                 source,
                 "⚠️ Не удалось создать оплату абонемента. "
-                f"Причина: {result.get('reason') or 'неизвестная ошибка'}. Обратитесь в поддержку.",
+                f"{reason_messages.get(result.get('reason'), 'Проверьте данные покупки.')} "
+                "Обратитесь в поддержку.",
             )
             return result
         if result.get("activated"):
@@ -231,4 +304,11 @@ def install_telegram_subscription_purchase_hardening(app) -> None:
     legacy.create_subscription_payment = create_subscription_payment
     if hasattr(app, "create_subscription_payment"):
         app.create_subscription_payment = create_subscription_payment
+    legacy._subscription_purchase_db = _db
+    legacy._subscription_email_marker = SUBSCRIPTION_EMAIL_MARKER
+    target = getattr(legacy, "confirm_buy_subscription", None)
+    if target is not None:
+        if target.__code__.co_freevars or _telegram_confirm_buy_subscription.__code__.co_freevars:
+            raise RuntimeError("subscription purchase confirmation replacement cannot use closures")
+        target.__code__ = _telegram_confirm_buy_subscription.__code__
     legacy._subscription_purchase_tg_hardened = True

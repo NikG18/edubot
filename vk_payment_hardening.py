@@ -251,10 +251,18 @@ async def _subscription_confirm(legacy, event):
         customer_email=email,
     )
     if not result.get("ok"):
+        reason_messages = {
+            "tutor_phone_missing": "У преподавателя не заполнен телефон для кассового чека.",
+            "tutor_phone_unavailable": "Не удалось проверить телефон преподавателя для кассового чека.",
+            "tutor_inn_missing": "У преподавателя не заполнен ИНН.",
+            "payment_init_failed": "Т-Банк не создал платёж.",
+            "duplicate_pending_payments": "Найдены дубли ожидающих платежей; требуется проверка администратора.",
+        }
         await legacy.edit_event_message(
             event,
             "⚠️ Не удалось создать оплату абонемента. "
-            f"Причина: {result.get('reason') or 'неизвестная ошибка'}. Обратитесь в поддержку.",
+            f"{reason_messages.get(result.get('reason'), 'Проверьте данные покупки.')} "
+            "Обратитесь в поддержку.",
         )
         return
     if result.get("activated"):

@@ -106,6 +106,7 @@ async def _tg_pay_single(call, bot):
     except (AttributeError, TypeError, ValueError):
         await safe_answer(call, "Некорректная запись.", show_alert=True)
         return
+    await safe_answer(call)
     booking = await _core_db.get_booking(booking_id)
     if not _core_can_offer_payment(booking):
         if _core_is_trial(booking):
@@ -132,7 +133,39 @@ async def _tg_pay_single(call, bot):
                 f"Осталось занятий: {resolved.get('remaining_lessons', 0)}."
             )
         return
-    return await _core_original_pay_single(call, bot)
+
+    email = await _core_db.get_student_email("telegram", int(call.from_user.id))
+    if not email:
+        await set_pending_email_request(int(call.from_user.id), int(booking_id))
+        student_fsm = dp.fsm.get_context(
+            bot,
+            chat_id=int(call.from_user.id),
+            user_id=int(call.from_user.id),
+        )
+        await student_fsm.set_state(PaymentStates.waiting_email)
+        await student_fsm.update_data(pending_booking_id=int(booking_id))
+        await bot.send_message(
+            int(call.from_user.id),
+            "📧 Для кассового чека введите ваш e-mail следующим сообщением.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_email_request")]
+            ]),
+        )
+        await call.message.edit_text("Ожидаю e-mail для создания оплаты.")
+        return
+
+    delivery = await create_and_send_payment(
+        call, bot, booking, email, int(booking_id)
+    )
+    if not isinstance(delivery, dict):
+        # Compatibility fallback for an old payment adapter.
+        return delivery
+    if delivery.get("payment_id") and delivery.get("link_sent"):
+        await call.message.edit_text("✅ Ссылка на оплату отправлена.")
+    elif not delivery.get("payment_id"):
+        await call.message.edit_text(
+            "⚠️ Платёж создать не удалось. Попробуйте позже или обратитесь в поддержку."
+        )
 
 
 async def _tg_admin_unpaid(call):

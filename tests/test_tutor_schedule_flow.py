@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 
 
-SOURCE = (Path(__file__).resolve().parents[1] / "Bot_test_legacy.py").read_text(
+SOURCE = (Path(__file__).resolve().parents[1] / "archive" / "Bot_test_legacy.py").read_text(
     encoding="utf-8"
 )
 MODULE = ast.parse(SOURCE)

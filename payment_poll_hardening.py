@@ -14,6 +14,9 @@ import database as _db
 import subscription_hardening as subs
 
 
+PAYMENT_POLL_INTERVAL_SECONDS = 300
+
+
 async def _poll_pending_subscriptions(legacy) -> None:
     """Recover package purchases when the T-Bank webhook was missed."""
     await subs.ensure_subscription_schema()
@@ -202,7 +205,21 @@ def install_vk_payment_poll_hardening(app) -> None:
     async def check_pending_payments():
         return await _poll_pending(legacy, telegram_bot=None)
 
+    async def periodic_cleanup():
+        # The legacy VK loop waited an hour and stopped forever after any uncaught
+        # exception. Keep its cleanup responsibility, but make payment recovery as
+        # responsive and restart-tolerant as Telegram's fallback poller.
+        while True:
+            try:
+                await legacy.cleanup_old_bookings()
+                await legacy.check_pending_payments()
+            except Exception:
+                legacy.logging.exception("Ошибка фоновой очистки/проверки платежей VK")
+            await legacy.asyncio.sleep(PAYMENT_POLL_INTERVAL_SECONDS)
+
     legacy.check_pending_payments = check_pending_payments
     if hasattr(app, "check_pending_payments"):
         app.check_pending_payments = check_pending_payments
+    legacy.PAYMENT_POLL_INTERVAL_SECONDS = PAYMENT_POLL_INTERVAL_SECONDS
+    legacy.periodic_cleanup = periodic_cleanup
     legacy._payment_poll_vk_hardened = True

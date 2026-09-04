@@ -9,6 +9,9 @@ import database as _db
 import student_account_hardening as accounts
 
 
+SUBSCRIPTION_EMAIL_MARKER = -2
+
+
 def install_telegram_email_hardening(app) -> None:
     legacy = app.legacy
     if getattr(legacy, "_telegram_pending_email_fallback_installed", False):
@@ -31,6 +34,15 @@ def install_telegram_email_hardening(app) -> None:
             return
         if not legacy.valid_email(email):
             await message.answer("Введите корректный e-mail, например name@example.com")
+            return
+        if int(booking_id) == SUBSCRIPTION_EMAIL_MARKER:
+            await _db.set_student_email("telegram", user_id, email)
+            await accounts.delete_pending_email_request("telegram", user_id)
+            await state.clear()
+            await message.answer(
+                "✅ E-mail сохранён для чеков. Снова откройте «💳 Оплата» → "
+                "«📚 Купить абонемент»."
+            )
             return
         if int(booking_id) <= 0:
             await accounts.delete_pending_email_request("telegram", user_id)
