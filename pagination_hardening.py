@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 
 import database as _db
+from booking_visibility_rules import admin_booking_matches
 
 PAGE_SIZE = 20
-_VALID_STATUSES = {"pending", "confirmed", "paid", "completed", "cancelled"}
+_VALID_SECTIONS = {"pending", "confirmed", "paid", "completed", "cancelled", "trials"}
 
 
 def _booking_sort_key(item):
@@ -26,13 +27,24 @@ def _page_bounds(total: int, page: int, page_size: int = PAGE_SIZE) -> tuple[int
     return page, start, min(start + page_size, total)
 
 
+def _section_title(section: str) -> str:
+    return {
+        "pending": "Ожидают подтверждения",
+        "confirmed": "Ожидают оплаты",
+        "paid": "Оплаченные",
+        "completed": "Проведённые",
+        "cancelled": "Отменённые",
+        "trials": "Пробные занятия",
+    }.get(section, section)
+
+
 async def _admin_bookings_first_page(call):
     """Closure-free replacement for the already-registered admin list handler."""
     await legacy.safe_answer(call)
     if call.from_user.id != legacy.ADMING_ID:
         return
-    status = call.data.removeprefix("admin_bookings_status_")
-    await _render_admin_bookings_page(call, status, 0)
+    section = call.data.removeprefix("admin_bookings_status_")
+    await _render_admin_bookings_page(call, section, 0)
 
 
 def install_telegram_pagination_hardening(app) -> None:
@@ -40,12 +52,15 @@ def install_telegram_pagination_hardening(app) -> None:
     if getattr(legacy_module, "_admin_booking_pagination_installed", False):
         return
 
-    async def render_page(call, status: str, page: int):
-        if status not in _VALID_STATUSES:
-            await legacy_module.safe_answer(call, "Некорректный статус.", show_alert=True)
+    async def render_page(call, section: str, page: int):
+        if section not in _VALID_SECTIONS:
+            await legacy_module.safe_answer(call, "Некорректный раздел.", show_alert=True)
             return
         bookings = await _db.get_all_bookings()
-        rows = [(bid, row) for bid, row in bookings.items() if row.get("status") == status]
+        rows = [
+            (bid, row) for bid, row in bookings.items()
+            if admin_booking_matches(row, section)
+        ]
         rows.sort(key=_booking_sort_key)
         page, start, end = _page_bounds(len(rows), page)
         pages = max(1, (len(rows) + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -54,9 +69,10 @@ def install_telegram_pagination_hardening(app) -> None:
         buttons = []
         for bid, booking in rows[start:end]:
             tutor_name = tutors.get(booking.get("tutor_id"), {}).get("name", "Неизвестный")
+            trial_status = f" · {booking.get('status')}" if section == "trials" else ""
             label = (
                 f"#{bid} {booking.get('date')} {booking.get('time_slot')} · "
-                f"{booking.get('username')} · {tutor_name}"
+                f"{booking.get('username')} · {tutor_name}{trial_status}"
             )
             buttons.append([
                 legacy_module.InlineKeyboardButton(
@@ -69,12 +85,12 @@ def install_telegram_pagination_hardening(app) -> None:
         if page > 0:
             nav.append(legacy_module.InlineKeyboardButton(
                 text="⬅️",
-                callback_data=f"admin_bookings_page_{status}_{page - 1}",
+                callback_data=f"admin_bookings_page_{section}_{page - 1}",
             ))
         if page + 1 < pages:
             nav.append(legacy_module.InlineKeyboardButton(
                 text="➡️",
-                callback_data=f"admin_bookings_page_{status}_{page + 1}",
+                callback_data=f"admin_bookings_page_{section}_{page + 1}",
             ))
         if nav:
             buttons.append(nav)
@@ -82,7 +98,7 @@ def install_telegram_pagination_hardening(app) -> None:
             legacy_module.InlineKeyboardButton(text="🔙 К разделам", callback_data="admin_bookings")
         ])
         await call.message.edit_text(
-            f"Занятия со статусом <b>{status}</b>: {len(rows)}\n"
+            f"{_section_title(section)}: {len(rows)}\n"
             f"Страница {page + 1}/{pages}",
             reply_markup=legacy_module.InlineKeyboardMarkup(inline_keyboard=buttons),
         )
@@ -103,11 +119,11 @@ def install_telegram_pagination_hardening(app) -> None:
             return
         try:
             payload = call.data.removeprefix("admin_bookings_page_")
-            status, page_raw = payload.rsplit("_", 1)
+            section, page_raw = payload.rsplit("_", 1)
             page = int(page_raw)
         except (AttributeError, TypeError, ValueError):
             await legacy_module.safe_answer(call, "Некорректная страница.", show_alert=True)
             return
-        await render_page(call, status, page)
+        await render_page(call, section, page)
 
     legacy_module._admin_booking_pagination_installed = True
