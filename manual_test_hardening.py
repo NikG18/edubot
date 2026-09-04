@@ -1,8 +1,10 @@
 """Fixes for manually reproduced navigation and records-channel defects.
 
 This module is intentionally installed late, after the core booking and tutor-panel
-hardening layers, so its identity-preserving handler patch is the final Telegram
-"back to my records" behavior.
+hardening layers. The generic ``back_to_my_records`` callback belongs to student
+screens only; tutor screens use the explicit ``tutor_students_<id>`` callback.
+Keeping those routes separate is important for accounts that are both a student and
+a tutor/admin.
 """
 
 from __future__ import annotations
@@ -12,25 +14,10 @@ import subscription_hardening as subs
 from records_channel_hardening import install_records_channel_hardening
 
 
-class _TutorCallbackProxy:
-    def __init__(self, call, data: str):
-        self._call = call
-        self.data = data
-        self.from_user = call.from_user
-        self.message = call.message
-
-    def __getattr__(self, name):
-        return getattr(self._call, name)
-
-
-async def _tg_role_aware_back_to_records(call, state):
+async def _tg_student_back_to_records(call, state):
+    """Return to the student's records using the callback actor's real account id."""
     await safe_answer(call)
     await state.clear()
-    tutor_id = await get_tutor_by_telegram_id(call.from_user.id)
-    if tutor_id is not None:
-        proxy = _manual_tutor_callback_proxy(call, f"tutor_students_{tutor_id}")
-        await show_students(proxy, None)
-        return
     proxy = _core_callback_message_proxy(call.message, call.from_user)
     await _tg_render_records(proxy)
 
@@ -62,10 +49,13 @@ def install_telegram_manual_test_hardening(app) -> None:
     # booking_records.RECORDS_CHANNEL_ID is a separate module-level value.
     legacy.RECORDS_CHANNEL_ID = None
 
-    legacy._manual_tutor_callback_proxy = _TutorCallbackProxy
-    if legacy.back_to_my_records.__code__.co_freevars or _tg_role_aware_back_to_records.__code__.co_freevars:
-        raise RuntimeError("Role-aware Telegram records navigation cannot use closures")
-    legacy.back_to_my_records.__code__ = _tg_role_aware_back_to_records.__code__
+    # Every current generic back_to_my_records button is emitted by a student
+    # screen. Tutor reschedule/student-panel flows have their own tutor_students_<id>
+    # callback. Do not infer the destination from account role: one account may be
+    # both tutor/admin and student during normal use and especially during testing.
+    if legacy.back_to_my_records.__code__.co_freevars or _tg_student_back_to_records.__code__.co_freevars:
+        raise RuntimeError("Student Telegram records navigation cannot use closures")
+    legacy.back_to_my_records.__code__ = _tg_student_back_to_records.__code__
     legacy._manual_test_tg_hardened = True
 
 
