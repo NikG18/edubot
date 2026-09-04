@@ -76,14 +76,19 @@ jobs:
         run: |
           python - <<'PY'
           import Bot_test_legal as entry
+          import tutor_students_hardening as tutor_students
           legacy = entry.app.legacy
           assert legacy._subscription_booking_tg_installed is True
           assert legacy._cross_platform_tutor_confirmation_tg is True
           assert legacy._telegram_contact_delivery_hardened is True
           assert legacy._telegram_messaging_identity_hardened is True
           assert legacy._admin_booking_pagination_installed is True
+          assert legacy._core_flow_tg_hardened is True
           assert legacy.tutor_confirm_booking.__code__.co_freevars == ()
+          assert legacy.back_to_my_records.__code__.co_freevars == ()
+          assert legacy.pay_booking_list.__code__.co_freevars == ()
           assert entry.app.admin_bookings_list.__code__.co_freevars == ()
+          assert legacy.show_students.__code__ is tutor_students._telegram_show_students.__code__
           print('Telegram runtime bindings OK')
           PY
           python - <<'PY'
@@ -95,8 +100,10 @@ jobs:
           assert legacy._vk_payment_hardening_installed is True
           assert legacy._vk_reply_authorization_installed is True
           assert legacy._vk_contact_delivery_hardened is True
+          assert legacy._core_flow_vk_hardened is True
           assert payment._runtime_legacy is legacy
-          assert legacy.qr is payment._vk_payment_qr
+          assert legacy.qr is not payment._vk_payment_qr
+          assert callable(legacy.qr)
           assert legacy.card is payment._vk_payment_deprecated_method
           assert legacy.sbp is payment._vk_payment_deprecated_method
           assert legacy.oplata.__code__.co_freevars == ()
