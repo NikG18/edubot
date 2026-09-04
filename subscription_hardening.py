@@ -158,6 +158,51 @@ async def activate_subscription(payment_id: str) -> bool:
             return True
 
 
+async def reserve_locked_subscription_unit(conn, booking_id: int, subscription) -> dict | None:
+    """Reserve one active unit while the caller holds the subscription row lock.
+
+    Released usages stay in the audit ledger but do not occupy their old unit index.
+    The partial UNIQUE index is a database-level backstop; the row lock serializes
+    normal Telegram/VK reservations for the same subscription across processes.
+    """
+    occupied_rows = await conn.fetch(
+        """
+        SELECT unit_index
+        FROM subscription_usages
+        WHERE subscription_id=$1 AND status IN ('reserved','consumed')
+        ORDER BY unit_index
+        """,
+        subscription["id"],
+    )
+    unit_index = next_available_unit_index(
+        int(subscription["total_lessons"]),
+        [row["unit_index"] for row in occupied_rows],
+    )
+    if unit_index is None:
+        logging.error(
+            "Subscription %s reports remaining_lessons=%s but has no free active unit slot",
+            subscription["id"],
+            subscription["remaining_lessons"],
+        )
+        return None
+
+    total_kop = _rub_to_kop(subscription["total_price"])
+    amount_kop = allocated_unit_amount(total_kop, subscription["total_lessons"], unit_index)
+    usage = await conn.fetchrow(
+        """
+        INSERT INTO subscription_usages(subscription_id,booking_id,unit_index,amount_kop,status)
+        VALUES($1,$2,$3,$4,'reserved') RETURNING *
+        """,
+        subscription["id"], int(booking_id), unit_index, amount_kop,
+    )
+    remaining = int(subscription["remaining_lessons"]) - 1
+    await conn.execute(
+        "UPDATE subscriptions SET remaining_lessons=$1,active=$2 WHERE id=$3",
+        remaining, 1 if remaining > 0 else 0, subscription["id"],
+    )
+    return {**dict(usage), "remaining_lessons": remaining}
+
+
 async def reserve_for_booking(booking_id: int) -> dict | None:
     """Reserve exactly one package unit for a pending regular booking."""
     await ensure_subscription_schema()
@@ -191,46 +236,11 @@ async def reserve_for_booking(booking_id: int) -> dict | None:
             if not subscription:
                 return None
 
-            occupied_rows = await conn.fetch(
-                """
-                SELECT unit_index
-                FROM subscription_usages
-                WHERE subscription_id=$1 AND status IN ('reserved','consumed')
-                ORDER BY unit_index
-                """,
-                subscription["id"],
+            reservation = await reserve_locked_subscription_unit(
+                conn, int(booking_id), subscription
             )
-            unit_index = next_available_unit_index(
-                int(subscription["total_lessons"]),
-                [row["unit_index"] for row in occupied_rows],
-            )
-            if unit_index is None:
-                logging.error(
-                    "Subscription %s reports remaining_lessons=%s but has no free active unit slot",
-                    subscription["id"],
-                    subscription["remaining_lessons"],
-                )
+            if not reservation:
                 return None
-
-            total_kop = _rub_to_kop(subscription["total_price"])
-            amount_kop = allocated_unit_amount(total_kop, subscription["total_lessons"], unit_index)
-
-            usage = await conn.fetchrow(
-                """
-                INSERT INTO subscription_usages(subscription_id,booking_id,unit_index,amount_kop,status)
-                VALUES($1,$2,$3,$4,'reserved') RETURNING *
-                """,
-                subscription["id"], int(booking_id), unit_index, amount_kop,
-            )
-            await conn.execute(
-                """
-                UPDATE subscriptions
-                SET remaining_lessons=remaining_lessons-1,
-                    active=CASE WHEN remaining_lessons-1<=0 THEN 0 ELSE active END
-                WHERE id=$1
-                """,
-                subscription["id"],
-            )
             await conn.execute(
                 """
                 UPDATE bookings
@@ -238,9 +248,10 @@ async def reserve_for_booking(booking_id: int) -> dict | None:
                     subscription_unit_amount=$3,amount=$3,updated_at=NOW()
                 WHERE id=$4
                 """,
-                subscription["id"], unit_index, amount_kop, int(booking_id),
+                subscription["id"], reservation["unit_index"],
+                reservation["amount_kop"], int(booking_id),
             )
-            return dict(usage)
+            return reservation
 
 
 async def release_booking_unit(booking_id: int) -> bool:
