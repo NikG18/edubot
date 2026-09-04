@@ -1,6 +1,10 @@
 import unittest
 
-from subscription_rules import allocated_unit_amount, next_available_unit_index
+from subscription_rules import (
+    allocated_unit_amount,
+    next_available_unit_index,
+    remaining_lessons_from_occupied,
+)
 
 
 class SubscriptionAllocationTests(unittest.TestCase):
@@ -63,6 +67,19 @@ class SubscriptionAllocationTests(unittest.TestCase):
             consumed_amounts.append(allocated_unit_amount(total_kop, 12, unit_index))
 
         self.assertEqual(sum(consumed_amounts), total_kop)
+
+    def test_remaining_balance_is_derived_from_active_slots(self):
+        self.assertEqual(remaining_lessons_from_occupied(12, []), 12)
+        self.assertEqual(remaining_lessons_from_occupied(12, [1, 2, 5]), 9)
+        self.assertEqual(remaining_lessons_from_occupied(12, range(1, 13)), 0)
+
+    def test_corrupt_active_unit_index_fails_closed(self):
+        for bad_index in (0, -1, 13, 99):
+            with self.subTest(bad_index=bad_index):
+                with self.assertRaises(ValueError):
+                    next_available_unit_index(12, [1, bad_index])
+                with self.assertRaises(ValueError):
+                    remaining_lessons_from_occupied(12, [1, bad_index])
 
 
 if __name__ == "__main__":
