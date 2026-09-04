@@ -6,6 +6,7 @@ from financial_hardening import install_financial_hardening
 from student_stats_hardening import install_student_stats_hardening
 from student_account_hardening import install_student_account_hardening
 from pricing_text_hardening import install_pricing_text_hardening
+from help_text_hardening import install_help_text_hardening
 from tutor_archive_hardening import install_tutor_archive_hardening
 from subscription_booking import install_vk_subscription_booking
 from tutor_confirmation_hardening import install_vk_tutor_confirmation
@@ -26,6 +27,7 @@ install_financial_hardening(app)
 install_student_stats_hardening(app)
 install_student_account_hardening(app, "vk")
 install_pricing_text_hardening(app)
+install_help_text_hardening(app, "vk")
 install_tutor_archive_hardening(app)
 install_vk_subscription_booking(app)
 install_vk_tutor_confirmation(app)
