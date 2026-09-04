@@ -29,8 +29,10 @@ async def _commission_percent(legacy, booking: dict) -> int:
 async def _confirm_from_subscription(legacy, booking_id: int, actor_id: int) -> dict | None:
     """Atomically reserve one package unit and mark the booking paid.
 
-    Returns None when no matching paid subscription exists, so the caller can run
-    the unchanged legacy payment flow.
+    Returns None only when no matching paid subscription exists, so the caller may
+    run the ordinary payment flow. If a matching subscription exists but its ledger
+    is inconsistent, return an explicit error and fail closed rather than charging
+    the student separately.
     """
     await subs.ensure_subscription_schema()
     booking = await _db.get_booking(int(booking_id))
@@ -62,8 +64,9 @@ async def _confirm_from_subscription(legacy, booking_id: int, actor_id: int) -> 
                     "already_reserved": True,
                 }
             if existing and existing["status"] == "released":
-                # A cancelled historical booking must never consume the package again.
-                return None
+                # This booking was already cancelled/released once. Do not silently
+                # make it payable again or bind a new package unit to the same row.
+                return {"error": "released_booking_usage"}
 
             subscription = await conn.fetchrow(
                 """
@@ -82,7 +85,15 @@ async def _confirm_from_subscription(legacy, booking_id: int, actor_id: int) -> 
                 conn, int(booking_id), subscription
             )
             if not reservation:
-                return None
+                logging.error(
+                    "Refusing ordinary payment fallback for booking=%s: matching subscription %s has inconsistent ledger",
+                    booking_id,
+                    subscription["id"],
+                )
+                return {
+                    "error": "subscription_ledger_inconsistent",
+                    "subscription_id": int(subscription["id"]),
+                }
             remaining = int(reservation["remaining_lessons"])
             await conn.execute(
                 """
@@ -138,6 +149,20 @@ async def _telegram_subscription_confirm(call, bot, state):
     result = await _subscription_confirm_from_subscription(legacy, bid, call.from_user.id)
     if result is None:
         return await _subscription_original_confirm(call, bot, state)
+    if result.get("error"):
+        await state.clear()
+        await call.message.edit_text(
+            "⚠️ Не удалось списать занятие из абонемента из-за ошибки учёта. "
+            "Отдельная оплата не создавалась. Передайте администратору номер "
+            f"записи #{bid}."
+        )
+        await send_to_user(
+            booking["user_id"], booking.get("user_platform", "telegram"),
+            "⚠️ Подтверждение занятия временно остановлено из-за проверки абонемента. "
+            "Новая оплата не создавалась. Администратору нужен номер "
+            f"записи #{bid}."
+        )
+        return
 
     await send_to_user(
         booking["user_id"], booking.get("user_platform", "telegram"),
@@ -192,6 +217,20 @@ def install_vk_subscription_booking(app) -> None:
         result = await _confirm_from_subscription(legacy, bid, event.user_id)
         if result is None:
             return await original_confirm(event)
+        if result.get("error"):
+            await legacy.edit_event_message(
+                event,
+                "⚠️ Не удалось списать занятие из абонемента из-за ошибки учёта. "
+                "Отдельная оплата не создавалась. Передайте администратору номер "
+                f"записи #{bid}.",
+            )
+            await legacy.send_to_user(
+                booking["user_id"], booking.get("user_platform", "vk"),
+                "⚠️ Подтверждение занятия временно остановлено из-за проверки абонемента. "
+                "Новая оплата не создавалась. Администратору нужен номер "
+                f"записи #{bid}."
+            )
+            return
         await legacy.send_to_user(
             booking["user_id"], booking.get("user_platform", "vk"),
             "✅ Занятие подтверждено преподавателем и оплачено из абонемента.\n"
