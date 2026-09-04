@@ -69,7 +69,6 @@ class FinancialRulesTests(unittest.TestCase):
 
     def test_rolling_sixty_day_window_unlocks_at_100th_lesson(self):
         first = date(2026, 1, 1)
-        # 100 lessons spread over 50 days, two lessons per day.
         lesson_dates = []
         for day in range(50):
             lesson_dates.extend([first + timedelta(days=day)] * 2)
@@ -115,6 +114,32 @@ class FinancialRulesTests(unittest.TestCase):
             ).percent,
             25,
         )
+
+    def test_fifteen_percent_is_retained_even_when_current_natural_rate_is_twenty(self):
+        decision = commission_rate(
+            lessons_this_month=25,
+            full_months_since_first_lesson=6,
+            early_fifteen_unlocked=True,
+            previous_month_percent=15,
+        )
+        self.assertEqual(decision.percent, 15)
+        self.assertIn("retained", decision.reason)
+
+    def test_twenty_percent_is_not_retained_over_a_current_fifteen_percent_month(self):
+        decision = commission_rate(
+            lessons_this_month=45,
+            full_months_since_first_lesson=6,
+            previous_month_percent=20,
+        )
+        self.assertEqual(decision.percent, 15)
+
+    def test_retention_cannot_chain_when_previous_natural_rate_is_twenty_five(self):
+        decision = commission_rate(
+            lessons_this_month=5,
+            full_months_since_first_lesson=8,
+            previous_month_percent=25,
+        )
+        self.assertEqual(decision.percent, 25)
 
     def test_free_trial_never_becomes_revenue(self):
         booking = {
