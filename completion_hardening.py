@@ -152,6 +152,10 @@ async def _render_admin_booking_with_completion(legacy, call, booking_id: int):
             f"\n🎟 Абонемент: #{booking['subscription_id']}"
             f" · занятие {booking.get('subscription_unit_index') or '—'}"
         )
+    finalization_line = ""
+    lesson_ended = _booking_has_ended(legacy, booking)
+    if booking["status"] == "paid" and not lesson_ended:
+        finalization_line = "\n\n⏳ Итог занятия можно отметить после окончания занятия."
     text = (
         f"📚 <b>Занятие #{booking_id}</b>\n\n"
         f"Статус: <b>{legacy.html.quote(str(booking['status']))}</b>\n"
@@ -164,16 +168,16 @@ async def _render_admin_booking_with_completion(legacy, call, booking_id: int):
         f"💳 {amount:.2f} ₽\n"
         f"↩️ Возврат: {legacy.html.quote(str(booking.get('refund_status') or 'none'))}\n"
         f"🕘 Обновлено: {legacy.format_dt(booking.get('updated_at'))}"
-        f"{subscription_line}{cancelled_line}"
+        f"{subscription_line}{cancelled_line}{finalization_line}"
     )
     buttons = []
-    if booking["status"] == "paid":
+    if booking["status"] == "paid" and lesson_ended:
         buttons.append([legacy.InlineKeyboardButton(
-            text="✅ Подтвердить, что занятие проведено",
+            text="✅ Занятие проведено",
             callback_data=f"admin_booking_complete_{booking_id}",
         )])
         buttons.append([legacy.InlineKeyboardButton(
-            text="⚠️ Засчитать: поздняя отмена / неявка",
+            text="⚠️ Поздняя отмена / неявка",
             callback_data=f"admin_booking_late_cancel_{booking_id}",
         )])
     elif booking["status"] == "completed":
