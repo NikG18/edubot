@@ -14,6 +14,43 @@ from booking_visibility_rules import is_trial_booking
 PENDING_PACKAGE_ERRORS = {"subscription_payment_pending", "payment_status_unknown"}
 
 
+async def _matching_package_candidate_exists(booking: dict) -> bool:
+    """Return whether this booking has any package state that could cover it.
+
+    This is deliberately broader than "usable active subscription". If an ordinary
+    lesson PaymentId already exists, any matching pending purchase, positive package
+    balance, or existing package usage creates a potential double-charge conflict.
+    In that situation package consumption must fail closed until the individual
+    payment is resolved instead of silently switching the booking to a package.
+    """
+    student_id = booking.get("student_id")
+    if not student_id:
+        return False
+    await subs.ensure_subscription_schema()
+    await db._ensure_pool()
+    async with db._legacy.pool.acquire() as conn:
+        return bool(await conn.fetchval(
+            """
+            SELECT
+                EXISTS(
+                    SELECT 1 FROM pending_subscriptions p
+                    WHERE p.student_id=$1 AND p.tutor_id=$2 AND p.subject=$3
+                )
+                OR EXISTS(
+                    SELECT 1 FROM subscriptions s
+                    WHERE s.student_id=$1 AND s.tutor_id=$2 AND s.subject=$3
+                      AND s.remaining_lessons>0
+                )
+                OR EXISTS(
+                    SELECT 1 FROM subscription_usages u
+                    WHERE u.booking_id=$4 AND u.status IN ('reserved','consumed')
+                )
+            """,
+            int(student_id), int(booking["tutor_id"]), str(booking["subject"]),
+            int(booking["id"]),
+        ))
+
+
 async def _matching_pending_purchase(booking: dict) -> dict | None:
     student_id = booking.get("student_id")
     if not student_id:
@@ -82,6 +119,20 @@ async def resolve_booking_subscription(
     ):
         return None
 
+    # Never silently convert a booking to package payment after a separate T-Bank
+    # payment has already been created. The old payment link may still be payable.
+    # If no matching package state exists, returning None lets the idempotent
+    # ordinary-payment layer safely reissue the same PaymentId instead of creating
+    # another one.
+    ordinary_payment_id = str(booking.get("tinkoff_payment_id") or "").strip()
+    if ordinary_payment_id:
+        if await _matching_package_candidate_exists(booking):
+            return {
+                "error": "ordinary_payment_already_created",
+                "payment_id": ordinary_payment_id,
+            }
+        return None
+
     pending = await _matching_pending_purchase(booking)
     if pending and pending.get("error"):
         return pending
@@ -101,6 +152,14 @@ async def resolve_booking_subscription(
             ):
                 return None
             old_status = str(current["status"])
+
+            # Backstop the preflight under the booking row lock. This catches an
+            # individual payment saved between the first read and this transaction.
+            if current["tinkoff_payment_id"]:
+                return {
+                    "error": "ordinary_payment_already_created",
+                    "payment_id": str(current["tinkoff_payment_id"]),
+                }
 
             existing = await conn.fetchrow(
                 "SELECT * FROM subscription_usages WHERE booking_id=$1 FOR UPDATE",
