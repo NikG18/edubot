@@ -10,6 +10,7 @@ from vk_admin_stats_hardening import install_vk_admin_stats_hardening
 from pricing_text_hardening import install_pricing_text_hardening
 from help_text_hardening import install_help_text_hardening
 from tutor_archive_hardening import install_tutor_archive_hardening
+from active_tutor_guard import install_active_tutor_guard
 from subscription_booking import install_vk_subscription_booking
 from tutor_confirmation_hardening import install_vk_tutor_confirmation
 from subscription_cancel_hardening import install_subscription_cancel_release
@@ -34,6 +35,7 @@ install_vk_admin_stats_hardening(app)
 install_pricing_text_hardening(app)
 install_help_text_hardening(app, "vk")
 install_tutor_archive_hardening(app)
+install_active_tutor_guard(app, "vk")
 install_vk_subscription_booking(app)
 install_vk_tutor_confirmation(app)
 install_subscription_cancel_release(app)
