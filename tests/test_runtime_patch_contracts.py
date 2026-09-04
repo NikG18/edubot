@@ -1,6 +1,7 @@
 import unittest
 
 import contact_delivery_hardening as contact
+import financial_display_hardening as financial_display
 import help_text_hardening as help_text
 from receipt_retry_policy import closing_receipt_claim_action
 import telegram_messaging_identity_hardening as identity
@@ -21,14 +22,14 @@ class RuntimePatchContractTests(unittest.TestCase):
             identity._telegram_reply_button,
             identity._telegram_tutor_contact_start,
             identity._telegram_tutor_contact_chosen,
+            financial_display._tutor_stats_menu,
+            financial_display._tutor_stats_month,
         )
         for function in replacements:
             with self.subTest(function=function.__name__):
                 self.assertEqual(function.__code__.co_freevars, ())
 
     def test_new_telegram_callbacks_fit_callback_data_limit(self):
-        # Telegram user ids are currently well below signed 64-bit; use the full
-        # signed range plus a large tutor id as a conservative regression bound.
         student_id = 2**63 - 1
         tutor_id = 2**31 - 1
         callbacks = (
