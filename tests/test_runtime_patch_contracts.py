@@ -2,6 +2,7 @@ import unittest
 
 import contact_delivery_hardening as contact
 import help_text_hardening as help_text
+import subscription_booking
 import telegram_messaging_identity_hardening as identity
 import telegram_payment_hardening as payment
 
@@ -17,6 +18,7 @@ class RuntimePatchContractTests(unittest.TestCase):
             identity._telegram_reply_button,
             identity._telegram_tutor_contact_start,
             identity._telegram_tutor_contact_chosen,
+            subscription_booking._telegram_subscription_confirm,
         )
         for function in replacements:
             with self.subTest(function=function.__name__):
