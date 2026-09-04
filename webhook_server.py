@@ -1,11 +1,7 @@
 import logging
 from aiohttp import web
 from payments import generate_token
-from database import (
-    get_pending_subscription_by_payment_id,
-    activate_subscription,
-    get_booking_id_by_payment_id,
-)
+import database as _db
 from messaging import send_to_user
 from bot_common import FULL_REFUND_STATUSES, process_booking_payment_status
 
@@ -17,6 +13,51 @@ def _valid_notification(payload: dict) -> bool:
     expected = generate_token({k: v for k, v in payload.items() if k != "Token"})
     import hmac
     return hmac.compare_digest(str(received), str(expected))
+
+
+async def _handle_subscription_notification(payment_id: str, status: str):
+    """Serialize webhook activation with Telegram/VK fallback polling."""
+    await _db._ensure_pool()
+    notification = None
+    async with _db._legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                f"payment-poll:{payment_id}",
+            )
+            pending_sub = await conn.fetchrow(
+                "SELECT * FROM pending_subscriptions WHERE payment_id=$1",
+                payment_id,
+            )
+            if not pending_sub:
+                return True, None
+
+            pending = dict(pending_sub)
+            if status in {"CONFIRMED", "AUTHORIZED"}:
+                # subscription_hardening patches database.activate_subscription at
+                # runtime; module lookup here intentionally uses the current alias.
+                activated = await _db.activate_subscription(payment_id)
+                if activated:
+                    notification = (
+                        pending["user_id"],
+                        pending.get("user_platform") or "telegram",
+                        f"✅ Абонемент на {pending['total_lessons']} занятий активирован.",
+                    )
+                else:
+                    logging.error("Webhook could not activate subscription payment_id=%s", payment_id)
+            elif status in {"REJECTED", "CANCELED"}:
+                await conn.execute(
+                    "DELETE FROM pending_subscriptions WHERE payment_id=$1",
+                    payment_id,
+                )
+                notification = (
+                    pending["user_id"],
+                    pending.get("user_platform") or "telegram",
+                    "❌ Платёж за абонемент не прошёл. Абонемент не активирован.",
+                )
+            else:
+                return True, None
+    return True, notification
 
 
 async def _handle_notification(request: web.Request):
@@ -36,23 +77,17 @@ async def _handle_notification(request: web.Request):
     if not payment_id or not status:
         return web.Response(status=400, text="missing fields")
 
-    # Сначала проверяем, относится ли платёж к абонементу.
-    pending_sub = await get_pending_subscription_by_payment_id(payment_id)
+    # Сначала проверяем, относится ли платёж к абонементу. The shared advisory
+    # lock prevents duplicate activation/notifications if polling runs concurrently.
+    pending_sub = await _db.get_pending_subscription_by_payment_id(payment_id)
     if pending_sub:
-        if status in ("CONFIRMED", "AUTHORIZED"):
-            activated = await activate_subscription(payment_id)
-            if activated:
-                await send_to_user(
-                    pending_sub["user_id"],
-                    pending_sub.get("user_platform", "telegram"),
-                    f"✅ Абонемент на {pending_sub['total_lessons']} занятий активирован."
-                )
-        elif status in ("REJECTED", "CANCELED"):
-            from database import delete_pending_subscription
-            await delete_pending_subscription(payment_id)
+        _handled, notification = await _handle_subscription_notification(payment_id, status)
+        if notification is not None:
+            user_id, platform, text = notification
+            await send_to_user(user_id, platform, text)
         return web.Response(text="OK")
 
-    booking_id = await get_booking_id_by_payment_id(payment_id)
+    booking_id = await _db.get_booking_id_by_payment_id(payment_id)
     if booking_id:
         changed, booking = await process_booking_payment_status(booking_id, status)
         if changed and booking:
