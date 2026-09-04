@@ -5,6 +5,7 @@ from financial_hardening import install_financial_hardening
 from financial_display_hardening import install_telegram_financial_display_hardening
 from student_stats_hardening import install_student_stats_hardening
 from student_account_hardening import install_student_account_hardening
+from tutor_students_hardening import install_telegram_tutor_students_hardening
 from pricing_text_hardening import install_pricing_text_hardening
 from help_text_hardening import install_help_text_hardening
 from tutor_archive_hardening import install_tutor_archive_hardening
@@ -30,6 +31,7 @@ install_financial_hardening(app)
 install_telegram_financial_display_hardening(app)
 install_student_stats_hardening(app)
 install_student_account_hardening(app, "telegram")
+install_telegram_tutor_students_hardening(app)
 install_pricing_text_hardening(app)
 install_help_text_hardening(app, "telegram")
 install_tutor_archive_hardening(app)
