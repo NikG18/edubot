@@ -24,6 +24,7 @@ from delivery_hardening import install_delivery_hardening
 from contact_delivery_hardening import install_vk_contact_delivery_hardening
 from vk_restart_hardening import install_vk_restart_hardening
 from core_flow_hardening import install_vk_core_flow_hardening
+from manual_test_hardening import install_records_runtime_hardening
 from runtime_hardening import install_vk_hardening
 
 install_financial_hardening(app)
@@ -48,6 +49,7 @@ install_delivery_hardening(app)
 install_vk_contact_delivery_hardening(app)
 install_vk_restart_hardening(app)
 install_vk_core_flow_hardening(app)
+install_records_runtime_hardening(app)
 install_vk_hardening(app)
 
 
