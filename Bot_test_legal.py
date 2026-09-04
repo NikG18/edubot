@@ -9,6 +9,7 @@ from tutor_students_hardening import install_telegram_tutor_students_hardening
 from pricing_text_hardening import install_pricing_text_hardening
 from help_text_hardening import install_help_text_hardening
 from tutor_archive_hardening import install_tutor_archive_hardening
+from active_tutor_guard import install_active_tutor_guard
 from subscription_booking import install_telegram_subscription_booking
 from tutor_confirmation_hardening import install_telegram_tutor_confirmation
 from telegram_email_hardening import install_telegram_email_hardening
@@ -35,6 +36,7 @@ install_telegram_tutor_students_hardening(app)
 install_pricing_text_hardening(app)
 install_help_text_hardening(app, "telegram")
 install_tutor_archive_hardening(app)
+install_active_tutor_guard(app, "telegram")
 install_telegram_subscription_booking(app)
 install_telegram_tutor_confirmation(app)
 install_telegram_email_hardening(app)
