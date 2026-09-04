@@ -1,9 +1,11 @@
 """Safe replacement for VK's catch-all pending-payment email handler."""
 
+SUBSCRIPTION_EMAIL_MARKER = -2
+
 
 async def _safe_process_payment_email(message):
     booking_id = await get_pending_email_request(message.from_id)
-    if not booking_id:
+    if booking_id is None:
         return
 
     email = (message.text or "").strip()
@@ -14,9 +16,15 @@ async def _safe_process_payment_email(message):
         await message.answer("Введите корректный email, например name@example.com")
         return
 
+    if int(booking_id) == SUBSCRIPTION_EMAIL_MARKER:
+        await set_user_email(message.from_id, email)
+        await delete_pending_email_request(message.from_id)
+        await message.answer(
+            "✅ Email сохранён для чеков. Снова откройте «💳 Оплата» → «🎟 Купить абонемент»."
+        )
+        return
+
     if int(booking_id) <= 0:
-        # VK currently has no subscription-purchase email flow. A stale/legacy -1
-        # marker must not be treated as a booking id.
         await delete_pending_email_request(message.from_id)
         await message.answer("Запрос оплаты устарел. Откройте раздел «Оплата» заново.")
         return
@@ -40,7 +48,8 @@ def install_vk_email_hardening(app) -> None:
     target = getattr(legacy, "process_payment_email", None)
     if target is None:
         return
+    legacy.SUBSCRIPTION_EMAIL_MARKER = SUBSCRIPTION_EMAIL_MARKER
     if target.__code__.co_freevars or _safe_process_payment_email.__code__.co_freevars:
-        raise RuntimeError("VK email handler replacement must not use closures")
+        raise RuntimeError("VK email handler replacement cannot use closures")
     target.__code__ = _safe_process_payment_email.__code__
     legacy._vk_payment_email_hardened = True
