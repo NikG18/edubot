@@ -279,8 +279,60 @@ async def get_booking_usage(booking_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+async def _claim_subscription_closing_receipt(conn, booking_id: int, usage: dict):
+    """Claim a first send or a safe retry after an explicit failed response.
+
+    `unknown` is deliberately not retried automatically: after a timeout we do not
+    know whether T-Bank/CloudKassir accepted the first request, so a blind retry can
+    duplicate the fiscal operation.
+    """
+    claimed = await conn.fetchrow(
+        """
+        INSERT INTO subscription_closing_receipts
+            (subscription_id,booking_id,payment_id,amount,status,attempt_count)
+        VALUES($1,$2,$3,$4,'sending',1)
+        ON CONFLICT(booking_id) DO NOTHING RETURNING *
+        """,
+        usage["subscription_id"], int(booking_id), usage["payment_id"], usage["amount_kop"],
+    )
+    if claimed:
+        return claimed, None
+
+    existing = await conn.fetchrow(
+        "SELECT * FROM subscription_closing_receipts WHERE booking_id=$1",
+        int(booking_id),
+    )
+    if not existing:
+        return None, "closing_receipt_claim_failed"
+    if existing["status"] in _FINAL_RECEIPT_STATUSES:
+        return None, "already_submitted"
+    if existing["status"] == "sending":
+        return None, "closing_receipt_in_progress"
+    if existing["status"] == "unknown":
+        return None, "closing_receipt_status_unknown"
+    if existing["status"] != "failed":
+        return None, "closing_receipt_not_retryable"
+
+    claimed = await conn.fetchrow(
+        """
+        UPDATE subscription_closing_receipts
+        SET status='sending',attempt_count=attempt_count+1,
+            response='{}'::jsonb,updated_at=NOW(),sent_at=NULL
+        WHERE id=$1 AND status='failed'
+        RETURNING *
+        """,
+        existing["id"],
+    )
+    return (claimed, None) if claimed else (None, "closing_receipt_claimed_elsewhere")
+
+
 async def send_subscription_closing_receipt(booking_id: int, *, allow_noncompleted: bool = False) -> dict:
-    """Submit one closing receipt for one consumed package lesson."""
+    """Submit one closing receipt for one consumed package lesson.
+
+    Retries mirror the single-lesson receipt path: an explicit bank failure can be
+    retried; a final submission is idempotent; an unknown timeout requires manual
+    verification before any new fiscal request.
+    """
     await ensure_subscription_schema()
     booking = await _db.get_booking(int(booking_id))
     if not booking:
@@ -293,23 +345,22 @@ async def send_subscription_closing_receipt(booking_id: int, *, allow_noncomplet
         return {"ok": False, "reason": "subscription_unit_not_consumed"}
 
     async with _db._legacy.pool.acquire() as conn:
-        claimed = await conn.fetchrow(
-            """
-            INSERT INTO subscription_closing_receipts
-                (subscription_id,booking_id,payment_id,amount,status,attempt_count)
-            VALUES($1,$2,$3,$4,'sending',1)
-            ON CONFLICT(booking_id) DO NOTHING RETURNING *
-            """,
-            usage["subscription_id"], int(booking_id), usage["payment_id"], usage["amount_kop"],
+        claimed, reason = await _claim_subscription_closing_receipt(
+            conn, int(booking_id), usage
         )
         if not claimed:
-            existing = await conn.fetchrow(
-                "SELECT * FROM subscription_closing_receipts WHERE booking_id=$1",
-                int(booking_id),
-            )
-            if existing and existing["status"] in _FINAL_RECEIPT_STATUSES:
-                return {"ok": True, "already_sent": True, "status": existing["status"]}
-            return {"ok": False, "reason": "closing_receipt_already_claimed"}
+            if reason == "already_submitted":
+                existing = await conn.fetchrow(
+                    "SELECT status,response FROM subscription_closing_receipts WHERE booking_id=$1",
+                    int(booking_id),
+                )
+                return {
+                    "ok": True,
+                    "already_sent": True,
+                    "status": existing["status"] if existing else "submitted",
+                    "response": dict(existing["response"] or {}) if existing else {},
+                }
+            return {"ok": False, "already_sent": False, "reason": reason}
 
     description = f"Занятие по абонементу: {booking['subject']} {booking['date']} {booking['time_slot']}"
     try:
@@ -339,7 +390,12 @@ async def send_subscription_closing_receipt(booking_id: int, *, allow_noncomplet
             """,
             status, json.dumps(response, ensure_ascii=False), claimed["id"],
         )
-    return {"ok": status == "submitted", "already_sent": False, "status": status, "response": response}
+    return {
+        "ok": status == "submitted",
+        "already_sent": False,
+        "status": status,
+        "response": response,
+    }
 
 
 def install_subscription_database_aliases(app) -> None:
