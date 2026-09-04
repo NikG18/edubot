@@ -11,9 +11,7 @@ import logging
 import database as _db
 import payments
 from fiscal_agent import get_tutor_phone
-
-
-_FINAL_CLOSING_STATUSES = {"submitted", "sent"}
+from receipt_retry_policy import closing_receipt_claim_action
 
 
 async def ensure_fiscal_receipt_schema():
@@ -98,7 +96,7 @@ async def _get_prepayment_snapshot(booking_id: int):
 
 
 async def _claim_closing_receipt(conn, booking_id: int, snap):
-    """Атомарно резервирует единственную отправку закрывающего чека."""
+    """Атомарно резервирует первую отправку или безопасный retry failed-чека."""
     claimed = await conn.fetchrow(
         """
         INSERT INTO fiscal_receipts
@@ -121,22 +119,24 @@ async def _claim_closing_receipt(conn, booking_id: int, snap):
     )
     if not existing:
         return None, "closing_receipt_claim_failed"
-    if existing["status"] in _FINAL_CLOSING_STATUSES:
+
+    action = closing_receipt_claim_action(existing["status"])
+    if action == "already_submitted":
         return None, "already_submitted"
-    if existing["status"] == "sending":
+    if action == "in_progress":
         return None, "closing_receipt_in_progress"
-    if existing["status"] == "unknown":
+    if action == "unknown":
         # При таймауте неизвестно, принял ли банк запрос. Повтор без проверки
-        # операции в T-Bank может создать дубль.
+        # операции в T-Bank/CloudKassir может создать дубль.
         return None, "closing_receipt_status_unknown"
-    if existing["status"] != "failed":
+    if action != "retry":
         return None, "closing_receipt_not_retryable"
 
     claimed = await conn.fetchrow(
         """
         UPDATE fiscal_receipts
         SET status='sending', attempt_count=attempt_count+1,
-            response='{}'::jsonb, updated_at=NOW()
+            response='{}'::jsonb, updated_at=NOW(), sent_at=NULL
         WHERE id=$1 AND status='failed'
         RETURNING *
         """,
