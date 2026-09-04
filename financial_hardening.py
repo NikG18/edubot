@@ -104,10 +104,6 @@ async def calculate_auto_commission(tutor_id: int, year: int, month: int):
             previous_month_percent=None,
         )
 
-        # Always pass the previous month's NATURAL rate. This matters when the
-        # current natural rate is 20% but last month naturally achieved 15%: the
-        # 15% rate must still be retained for this one following month. Because we
-        # never feed a previously-retained rate back in, retention cannot chain.
         decision = commission_rate(
             lessons_this_month=lessons,
             full_months_since_first_lesson=_full_months_since(first, year, month),
@@ -204,15 +200,26 @@ async def get_tutor_financials(tutor_id: int, year: int = None, month: int = Non
             "commission_percent": float(row["commission_percent"] or 0),
         }
 
+    # Recalculate both periods that still have counted bookings and periods that
+    # already have a cached monthly_stats row. The latter matters after a full
+    # refund removes the last counted lesson from a month: without this union the
+    # stale cached income would survive forever in the all-time total.
     async with _db._legacy.pool.acquire() as conn:
         periods = await conn.fetch(
             """
-            SELECT DISTINCT
-                EXTRACT(YEAR FROM to_date(date,'DD.MM.YYYY'))::int AS year,
-                EXTRACT(MONTH FROM to_date(date,'DD.MM.YYYY'))::int AS month
-            FROM bookings
-            WHERE tutor_id=$1 AND stats_counted=TRUE AND booking_type<>'trial'
-            ORDER BY year, month
+            SELECT year,month
+            FROM (
+                SELECT DISTINCT
+                    EXTRACT(YEAR FROM to_date(date,'DD.MM.YYYY'))::int AS year,
+                    EXTRACT(MONTH FROM to_date(date,'DD.MM.YYYY'))::int AS month
+                FROM bookings
+                WHERE tutor_id=$1 AND stats_counted=TRUE AND booking_type<>'trial'
+                UNION
+                SELECT year,month
+                FROM monthly_stats
+                WHERE tutor_id=$1
+            ) periods
+            ORDER BY year,month
             """,
             int(tutor_id),
         )
