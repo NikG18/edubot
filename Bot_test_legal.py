@@ -30,6 +30,7 @@ from manual_test_hardening import (
     install_records_runtime_hardening,
     install_telegram_manual_test_hardening,
 )
+from email_payment_safety_hardening import install_telegram_email_payment_safety
 from runtime_hardening import install_telegram_hardening
 
 install_financial_hardening(app)
@@ -59,6 +60,7 @@ install_telegram_pagination_hardening(app)
 install_telegram_core_flow_hardening(app)
 install_records_runtime_hardening(app)
 install_telegram_manual_test_hardening(app)
+install_telegram_email_payment_safety(app)
 install_telegram_hardening(app)
 
 
