@@ -61,6 +61,9 @@ async def _confirm_from_subscription(legacy, booking_id: int, actor_id: int) -> 
                     "remaining_lessons": int(subscription["remaining_lessons"] or 0) if subscription else 0,
                     "already_reserved": True,
                 }
+            if existing and existing["status"] == "released":
+                # A cancelled historical booking must never consume the package again.
+                return None
 
             subscription = await conn.fetchrow(
                 """
@@ -75,30 +78,12 @@ async def _confirm_from_subscription(legacy, booking_id: int, actor_id: int) -> 
             if not subscription:
                 return None
 
-            used_count = int(await conn.fetchval(
-                "SELECT COUNT(*) FROM subscription_usages WHERE subscription_id=$1",
-                subscription["id"],
-            ) or 0)
-            unit_index = used_count + 1
-            amount_kop = subs.allocated_unit_amount(
-                subs._rub_to_kop(subscription["total_price"]),
-                int(subscription["total_lessons"]),
-                unit_index,
+            reservation = await subs.reserve_locked_subscription_unit(
+                conn, int(booking_id), subscription
             )
-            usage = await conn.fetchrow(
-                """
-                INSERT INTO subscription_usages
-                    (subscription_id,booking_id,unit_index,amount_kop,status)
-                VALUES($1,$2,$3,$4,'reserved')
-                RETURNING *
-                """,
-                subscription["id"], int(booking_id), unit_index, amount_kop,
-            )
-            remaining = int(subscription["remaining_lessons"]) - 1
-            await conn.execute(
-                "UPDATE subscriptions SET remaining_lessons=$1,active=$2 WHERE id=$3",
-                remaining, 1 if remaining > 0 else 0, subscription["id"],
-            )
+            if not reservation:
+                return None
+            remaining = int(reservation["remaining_lessons"])
             await conn.execute(
                 """
                 UPDATE bookings
@@ -107,7 +92,8 @@ async def _confirm_from_subscription(legacy, booking_id: int, actor_id: int) -> 
                     reminded=0,updated_at=NOW()
                 WHERE id=$5
                 """,
-                subscription["id"], unit_index, amount_kop, percent, int(booking_id),
+                subscription["id"], reservation["unit_index"],
+                reservation["amount_kop"], percent, int(booking_id),
             )
             try:
                 await _db._add_booking_event(
@@ -115,14 +101,14 @@ async def _confirm_from_subscription(legacy, booking_id: int, actor_id: int) -> 
                     "tutor", actor_id,
                     {
                         "subscription_id": int(subscription["id"]),
-                        "unit_index": unit_index,
-                        "amount_kop": amount_kop,
+                        "unit_index": int(reservation["unit_index"]),
+                        "amount_kop": int(reservation["amount_kop"]),
                         "remaining_lessons": remaining,
                     },
                 )
             except Exception:
                 logging.exception("Could not record subscription booking event %s", booking_id)
-            return {**dict(usage), "remaining_lessons": remaining, "already_reserved": False}
+            return {**reservation, "already_reserved": False}
 
 
 async def release_if_cancelled(booking_id: int) -> bool:
