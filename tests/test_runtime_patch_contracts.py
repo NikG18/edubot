@@ -2,6 +2,7 @@ import unittest
 
 import contact_delivery_hardening as contact
 import help_text_hardening as help_text
+from receipt_retry_policy import closing_receipt_claim_action
 import telegram_messaging_identity_hardening as identity
 import telegram_payment_hardening as payment
 
@@ -51,6 +52,20 @@ class RuntimePatchContractTests(unittest.TestCase):
         self.assertIn("Не переводите оплату вручную по номеру телефона", text)
         self.assertNotIn("+7(933)", text)
         self.assertNotIn("+7933", text)
+
+    def test_closing_receipt_retry_policy(self):
+        expected = {
+            "submitted": "already_submitted",
+            "sent": "already_submitted",
+            "sending": "in_progress",
+            "unknown": "unknown",
+            "failed": "retry",
+            "prepared": "not_retryable",
+            None: "not_retryable",
+        }
+        for status, action in expected.items():
+            with self.subTest(status=status):
+                self.assertEqual(closing_receipt_claim_action(status), action)
 
 
 if __name__ == "__main__":
