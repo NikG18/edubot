@@ -14,7 +14,12 @@ import database as _db
 import payments
 from fiscal_agent import get_tutor_phone
 from receipt_retry_policy import closing_receipt_claim_action
-from subscription_rules import allocated_unit_amount, next_available_unit_index, rub_to_kop
+from subscription_rules import (
+    allocated_unit_amount,
+    next_available_unit_index,
+    remaining_lessons_from_occupied,
+    rub_to_kop,
+)
 
 _SCHEMA_READY = False
 
@@ -81,6 +86,58 @@ async def ensure_subscription_schema() -> None:
                 );
                 """
             )
+
+            # For subscriptions created by the hardened fiscal flow, the ledger is
+            # the source of truth. Repair stale counters on every process start.
+            await conn.execute(
+                """
+                WITH ledger AS (
+                    SELECT s.id,
+                           s.total_lessons,
+                           COUNT(u.id)::int AS occupied
+                    FROM subscriptions s
+                    LEFT JOIN subscription_usages u
+                      ON u.subscription_id=s.id
+                     AND u.status IN ('reserved','consumed')
+                    WHERE s.payment_id IS NOT NULL
+                    GROUP BY s.id,s.total_lessons
+                )
+                UPDATE subscriptions s
+                SET remaining_lessons=GREATEST(ledger.total_lessons-ledger.occupied,0),
+                    active=CASE
+                        WHEN ledger.total_lessons-ledger.occupied>0 THEN 1
+                        ELSE 0
+                    END
+                FROM ledger
+                WHERE s.id=ledger.id
+                """
+            )
+
+            # Never continue automatic subscription consumption when active ledger
+            # rows are outside the purchased 1..N package bounds. Keep data for
+            # audit, quarantine the subscription, and let confirmation fail closed.
+            invalid_rows = await conn.fetch(
+                """
+                SELECT DISTINCT s.id,u.unit_index,s.total_lessons
+                FROM subscriptions s
+                JOIN subscription_usages u ON u.subscription_id=s.id
+                WHERE s.payment_id IS NOT NULL
+                  AND u.status IN ('reserved','consumed')
+                  AND (u.unit_index<1 OR u.unit_index>s.total_lessons)
+                ORDER BY s.id,u.unit_index
+                """
+            )
+            if invalid_rows:
+                invalid_ids = sorted({int(row["id"]) for row in invalid_rows})
+                await conn.execute(
+                    "UPDATE subscriptions SET active=0 WHERE id=ANY($1::int[])",
+                    invalid_ids,
+                )
+                for row in invalid_rows:
+                    logging.error(
+                        "Quarantined subscription %s: active unit_index=%s outside 1..%s",
+                        row["id"], row["unit_index"], row["total_lessons"],
+                    )
     _SCHEMA_READY = True
 
 
@@ -145,6 +202,19 @@ async def activate_subscription(payment_id: str) -> bool:
             return True
 
 
+async def _active_unit_indices(conn, subscription_id: int) -> list[int]:
+    rows = await conn.fetch(
+        """
+        SELECT unit_index
+        FROM subscription_usages
+        WHERE subscription_id=$1 AND status IN ('reserved','consumed')
+        ORDER BY unit_index
+        """,
+        int(subscription_id),
+    )
+    return [int(row["unit_index"]) for row in rows]
+
+
 async def reserve_locked_subscription_unit(conn, booking_id: int, subscription) -> dict | None:
     """Reserve one active unit while the caller holds the subscription row lock.
 
@@ -152,24 +222,29 @@ async def reserve_locked_subscription_unit(conn, booking_id: int, subscription) 
     The partial UNIQUE index is a database-level backstop; the row lock serializes
     normal Telegram/VK reservations for the same subscription across processes.
     """
-    occupied_rows = await conn.fetch(
-        """
-        SELECT unit_index
-        FROM subscription_usages
-        WHERE subscription_id=$1 AND status IN ('reserved','consumed')
-        ORDER BY unit_index
-        """,
-        subscription["id"],
-    )
-    unit_index = next_available_unit_index(
-        int(subscription["total_lessons"]),
-        [row["unit_index"] for row in occupied_rows],
-    )
+    occupied = await _active_unit_indices(conn, int(subscription["id"]))
+    try:
+        unit_index = next_available_unit_index(
+            int(subscription["total_lessons"]), occupied
+        )
+    except ValueError:
+        logging.exception(
+            "Subscription %s has corrupt active unit indices; reservation stopped",
+            subscription["id"],
+        )
+        await conn.execute(
+            "UPDATE subscriptions SET active=0 WHERE id=$1", subscription["id"]
+        )
+        return None
     if unit_index is None:
         logging.error(
             "Subscription %s reports remaining_lessons=%s but has no free active unit slot",
             subscription["id"],
             subscription["remaining_lessons"],
+        )
+        await conn.execute(
+            "UPDATE subscriptions SET remaining_lessons=0,active=0 WHERE id=$1",
+            subscription["id"],
         )
         return None
 
@@ -182,7 +257,9 @@ async def reserve_locked_subscription_unit(conn, booking_id: int, subscription) 
         """,
         subscription["id"], int(booking_id), unit_index, amount_kop,
     )
-    remaining = int(subscription["remaining_lessons"]) - 1
+    remaining = remaining_lessons_from_occupied(
+        int(subscription["total_lessons"]), [*occupied, unit_index]
+    )
     await conn.execute(
         "UPDATE subscriptions SET remaining_lessons=$1,active=$2 WHERE id=$3",
         remaining, 1 if remaining > 0 else 0, subscription["id"],
@@ -253,13 +330,40 @@ async def release_booking_unit(booking_id: int) -> bool:
                 return False
             if usage["status"] == "consumed":
                 return False
+
+            subscription = await conn.fetchrow(
+                "SELECT id,total_lessons FROM subscriptions WHERE id=$1 FOR UPDATE",
+                usage["subscription_id"],
+            )
+            if not subscription:
+                logging.error(
+                    "Cannot release subscription usage %s: subscription %s missing",
+                    usage["id"], usage["subscription_id"],
+                )
+                return False
+
             await conn.execute(
                 "UPDATE subscription_usages SET status='released',released_at=NOW() WHERE id=$1",
                 usage["id"],
             )
+            occupied = await _active_unit_indices(conn, int(subscription["id"]))
+            try:
+                remaining = remaining_lessons_from_occupied(
+                    int(subscription["total_lessons"]), occupied
+                )
+            except ValueError:
+                logging.exception(
+                    "Subscription %s remains corrupt after releasing booking=%s; quarantined",
+                    subscription["id"], booking_id,
+                )
+                await conn.execute(
+                    "UPDATE subscriptions SET active=0 WHERE id=$1", subscription["id"]
+                )
+                return True
+
             await conn.execute(
-                "UPDATE subscriptions SET remaining_lessons=remaining_lessons+1,active=1 WHERE id=$1",
-                usage["subscription_id"],
+                "UPDATE subscriptions SET remaining_lessons=$1,active=$2 WHERE id=$3",
+                remaining, 1 if remaining > 0 else 0, subscription["id"],
             )
             return True
 
