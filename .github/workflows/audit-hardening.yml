@@ -1,0 +1,141 @@
+name: Audit hardening checks
+
+on:
+  push:
+    branches:
+      - fix/audit-hardening-2026-09-03
+  pull_request:
+
+jobs:
+  compile-and-pure-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Compile every Python source file
+        run: |
+          python - <<'PY'
+          import pathlib, py_compile
+          failed = []
+          for path in pathlib.Path('.').rglob('*.py'):
+              try:
+                  py_compile.compile(str(path), doraise=True)
+              except Exception as exc:
+                  failed.append((str(path), repr(exc)))
+          if failed:
+              for path, exc in failed:
+                  print(f'{path}: {exc}')
+              raise SystemExit(1)
+          print('All Python files compile successfully')
+          PY
+      - name: Install runtime dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run pure regression tests
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/test
+        run: |
+          python -m unittest -v \
+            tests.test_pricing \
+            tests.test_student_identity \
+            tests.test_financial_rules \
+            tests.test_subscription_allocation \
+            tests.test_booking_visibility_rules \
+            tests.test_callback_hardening \
+            tests.test_runtime_patch_contracts
+      - name: Run complete regression suite
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/test
+        run: python -m unittest discover -s tests -v
+      - name: Smoke import hardened entrypoints
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/test
+          ADMING_ID: '1'
+          ADMIN_VK_ID: '1'
+          BOT_TOKEN: '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi'
+          VK_BOT_TOKEN: 'vk1.a.test_token_for_import_only'
+          TINKOFF_TERMINAL_KEY: 'test-terminal'
+          TINKOFF_SECRET_KEY: 'test-secret'
+          TINKOFF_WEBHOOK_URL: ''
+          FISCAL_OPERATOR_INN: '390612116215'
+          FISCAL_OPERATOR_NAME: 'ИП Тест'
+          FISCAL_OPERATOR_PHONE: '+79990000000'
+        run: |
+          python -c "import Bot_test_legal; print('Telegram hardened entrypoint import OK')"
+          python -c "import vk_bot_legal; print('VK hardened entrypoint import OK')"
+      - name: Verify runtime patch bindings
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/test
+          ADMING_ID: '1'
+          ADMIN_VK_ID: '1'
+          BOT_TOKEN: '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi'
+          VK_BOT_TOKEN: 'vk1.a.test_token_for_import_only'
+          TINKOFF_TERMINAL_KEY: 'test-terminal'
+          TINKOFF_SECRET_KEY: 'test-secret'
+          TINKOFF_WEBHOOK_URL: ''
+          FISCAL_OPERATOR_INN: '390612116215'
+          FISCAL_OPERATOR_NAME: 'ИП Тест'
+          FISCAL_OPERATOR_PHONE: '+79990000000'
+        run: |
+          python - <<'PY'
+          import Bot_test_legal as entry
+          import booking_records
+          import manual_test_hardening as manual
+          import tutor_students_hardening as tutor_students
+          legacy = entry.app.legacy
+          assert legacy._subscription_booking_tg_installed is True
+          assert legacy._cross_platform_tutor_confirmation_tg is True
+          assert legacy._telegram_contact_delivery_hardened is True
+          assert legacy._telegram_messaging_identity_hardened is True
+          assert legacy._admin_booking_pagination_installed is True
+          assert legacy._core_flow_tg_hardened is True
+          assert legacy._manual_test_tg_hardened is True
+          assert legacy._telegram_email_payment_safety_installed is True
+          assert legacy._student_navigation_tg_hardened is True
+          assert legacy.RECORDS_CHANNEL_ID is None
+          assert booking_records._accurate_cross_platform_records_installed is True
+          assert booking_records._manual_records_runtime_hardened is True
+          assert legacy.tutor_confirm_booking.__code__.co_freevars == ()
+          assert legacy.back_to_my_records.__code__ is manual._tg_student_back_to_records.__code__
+          assert legacy.pay_booking_list.__code__.co_name == '_tg_pay_booking_list'
+          assert entry.app.admin_bookings_menu.__code__.co_name == '_tg_admin_bookings_menu'
+          assert entry.app.admin_bookings_list.__code__.co_name == '_admin_bookings_first_page'
+          assert legacy.tutor_confirm_booking.__code__.co_name == '_telegram_confirm'
+          assert legacy.confirm_buy_subscription.__code__.co_name == '_telegram_confirm_buy_subscription'
+          assert legacy.show_students.__code__ is tutor_students._telegram_show_students.__code__
+
+          registered_callbacks = [handler.callback for handler in legacy.dp.callback_query.handlers]
+          assert any(callback is legacy.back_to_my_records for callback in registered_callbacks)
+          assert any(callback is legacy.pay_booking_list for callback in registered_callbacks)
+          assert any(callback is legacy.tutor_confirm_booking for callback in registered_callbacks)
+          assert any(callback is entry.app.admin_bookings_menu for callback in registered_callbacks)
+          assert any(callback is entry.app.admin_bookings_list for callback in registered_callbacks)
+          print('Telegram runtime bindings and dispatcher registrations OK')
+          PY
+          python - <<'PY'
+          import vk_bot_legal as entry
+          import booking_records
+          import vk_payment_hardening as payment
+          legacy = entry.app.legacy
+          assert legacy._subscription_booking_vk_installed is True
+          assert legacy._cross_platform_tutor_confirmation_vk is True
+          assert legacy._vk_payment_hardening_installed is True
+          assert legacy._vk_reply_authorization_installed is True
+          assert legacy._vk_contact_delivery_hardened is True
+          assert legacy._core_flow_vk_hardened is True
+          assert legacy._vk_email_payment_safety_installed is True
+          assert legacy._student_navigation_vk_hardened is True
+          assert legacy.periodic_cleanup.__module__ == 'payment_poll_hardening'
+          assert booking_records._accurate_cross_platform_records_installed is True
+          assert booking_records._manual_records_runtime_hardened is True
+          assert payment._runtime_legacy is legacy
+          assert legacy.qr is not payment._vk_payment_qr
+          assert callable(legacy.qr)
+          assert legacy.card is payment._vk_payment_deprecated_method
+          assert legacy.sbp is payment._vk_payment_deprecated_method
+          assert legacy.oplata.__code__.co_freevars == ()
+          print('VK runtime bindings OK')
+          PY

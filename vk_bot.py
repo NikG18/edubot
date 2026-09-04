@@ -4,8 +4,155 @@ from datetime import timedelta
 import database as _db
 import vk_bot_legacy as legacy
 from vk_bot_legacy import *
+from fiscal_agent import get_tutor_phone, normalize_supplier_phone, set_tutor_phone
 
 TRIAL_PREFIX = "Пробное: "
+
+
+class FiscalAdminStates(legacy.BaseStateGroup):
+    waiting_tutor_phone = "waiting_tutor_phone"
+
+
+def _vk_tutor_edit_keyboard():
+    keyboard = legacy.Keyboard(inline=True)
+    buttons = [
+        ("Изменить имя", "edit_name"),
+        ("Изменить описание", "edit_desc"),
+        ("Изменить Telegram ID", "edit_telegram_id"),
+        ("Изменить VK ID", "edit_vk_id"),
+        ("🆔 Изменить ИНН", "edit_inn"),
+        ("📞 Изменить телефон", "edit_phone"),
+        ("📚 Управление предметами", "manage_subjects"),
+        ("💰 Изменить комиссию", "edit_commission"),
+        ("🔄 Режим комиссии", "toggle_commission_mode"),
+        ("🔙 К списку", "admin_edit_list"),
+    ]
+    for index, (label, command) in enumerate(buttons):
+        keyboard.add(legacy.Callback(label, payload={"cmd": command}))
+        if index != len(buttons) - 1:
+            keyboard.row()
+    return keyboard.get_json()
+
+
+async def _vk_show_tutor_editor(event, tutor_id: int):
+    tutors = await legacy.get_all_tutors()
+    tutor = tutors.get(tutor_id)
+    if not tutor:
+        await legacy.edit_event_message(event, "Репетитор не найден.")
+        return False
+    phone = await get_tutor_phone(tutor_id)
+    await legacy.edit_event_message(
+        event,
+        f"Редактирование: {tutor['name']}\n"
+        f"Телефон для чека: {phone or 'не указан'}\n\n"
+        "Что хотите изменить?",
+        keyboard=_vk_tutor_edit_keyboard(),
+    )
+    return True
+
+
+async def _vk_edit_tutor_choice(event):
+    tutor_id = int(event.payload["cmd"].split("_")[-1])
+    await legacy.state_dispenser.set(
+        event.user_id,
+        legacy.AdminStates.waiting_edit_choice,
+    )
+    await legacy.state_dispenser.update(event.user_id, edit_tutor_id=tutor_id)
+    await _vk_show_tutor_editor(event, tutor_id)
+
+
+async def _vk_back_to_edit_tutor(event):
+    data = await legacy.state_dispenser.get_data(event.user_id)
+    tutor_id = data.get("edit_tutor_id")
+    if not tutor_id:
+        await legacy.edit_event_message(event, "Репетитор не выбран.")
+        return
+    await legacy.state_dispenser.set(
+        event.user_id,
+        legacy.AdminStates.waiting_edit_choice,
+    )
+    await legacy.state_dispenser.update(event.user_id, edit_tutor_id=tutor_id)
+    await _vk_show_tutor_editor(event, tutor_id)
+
+
+_original_vk_edit_field_choice = legacy.edit_field_choice
+
+
+async def _vk_edit_field_choice(event):
+    field = event.payload["cmd"].removeprefix("edit_")
+    if field != "phone":
+        return await _original_vk_edit_field_choice(event)
+
+    data = await legacy.state_dispenser.get_data(event.user_id)
+    tutor_id = data.get("edit_tutor_id")
+    tutors = await legacy.get_all_tutors()
+    tutor = tutors.get(tutor_id)
+    if not tutor:
+        await legacy.edit_event_message(event, "Репетитор не найден.")
+        return
+    current = await get_tutor_phone(tutor_id)
+    await legacy.state_dispenser.set(
+        event.user_id,
+        FiscalAdminStates.waiting_tutor_phone,
+    )
+    await legacy.state_dispenser.update(
+        event.user_id,
+        edit_tutor_id=tutor_id,
+        fiscal_phone_tutor_id=tutor_id,
+    )
+    await legacy.edit_event_message(
+        event,
+        f"Репетитор: {tutor['name']}\n"
+        f"Текущий телефон: {current or 'не указан'}\n\n"
+        "Отправьте контактный телефон поставщика, например +79991234567. "
+        "Пробелы, скобки и дефисы допустимы. Для отмены отправьте: отмена",
+    )
+
+
+legacy.get_tutor_phone = get_tutor_phone
+legacy._vk_tutor_edit_keyboard = _vk_tutor_edit_keyboard
+legacy._vk_show_tutor_editor = _vk_show_tutor_editor
+legacy.edit_tutor_choice = _vk_edit_tutor_choice
+legacy.back_to_edit_tutor = _vk_back_to_edit_tutor
+legacy.edit_field_choice = _vk_edit_field_choice
+
+
+@legacy.bot.on.private_message(state=FiscalAdminStates.waiting_tutor_phone)
+async def vk_admin_tutor_phone_save(message: legacy.Message):
+    if message.from_id != legacy.ADMIN_VK_ID:
+        await legacy.state_dispenser.delete(message.from_id)
+        return
+    value = (message.text or "").strip()
+    data = await legacy.state_dispenser.get_data(message.from_id)
+    tutor_id = data.get("fiscal_phone_tutor_id")
+    if value.lower() in {"отмена", "назад", "cancel"}:
+        await legacy.state_dispenser.delete(message.from_id)
+        await message.answer(
+            "Изменение телефона отменено.",
+            keyboard=await legacy.get_main_menu(message.from_id),
+        )
+        return
+    phone = normalize_supplier_phone(value)
+    if not phone:
+        await message.answer(
+            "Некорректный номер. Укажите от 7 до 18 цифр, "
+            "например: +79991234567"
+        )
+        return
+    saved = await set_tutor_phone(tutor_id, phone) if tutor_id else None
+    if not saved:
+        await message.answer("Репетитор не найден. Откройте его карточку заново.")
+        await legacy.state_dispenser.delete(message.from_id)
+        return
+    await legacy.state_dispenser.set(
+        message.from_id,
+        legacy.AdminStates.waiting_edit_choice,
+    )
+    await legacy.state_dispenser.update(message.from_id, edit_tutor_id=tutor_id)
+    await message.answer(
+        f"✅ Телефон для {saved['name']} сохранён: {saved['phone']}",
+        keyboard=_vk_tutor_edit_keyboard(),
+    )
 
 
 def _caller_context():
@@ -42,7 +189,20 @@ def _stack_has_caller(name: str) -> bool:
 
 
 def _is_trial(booking) -> bool:
-    return bool(booking and str(booking.get("subject") or "").startswith(TRIAL_PREFIX))
+    return bool(
+        booking and (
+            booking.get("booking_type") == "trial"
+            or str(booking.get("subject") or "").startswith(TRIAL_PREFIX)
+        )
+    )
+
+
+async def _linked_vk_booking_owner(event, booking) -> bool:
+    """Разрешает действия из любого явно связанного аккаунта ученика."""
+    if not booking or not await _db.account_owns_booking("vk", event.user_id, booking):
+        await legacy.answer_event(event, "Доступ запрещён.", snackbar=True)
+        return False
+    return True
 
 
 def _booking_start(booking):
@@ -131,12 +291,16 @@ _original_add_booking = _db.add_booking
 
 
 async def _contextual_add_booking(tutor_id, user_id, username, subject, date, time_slot,
-                                  channel_msg_id=None, user_platform="telegram"):
+                                  channel_msg_id=None, user_platform="telegram",
+                                  booking_type="regular", trial_email=None):
     if _stack_has_caller("confirm_trial_booking") and not str(subject).startswith(TRIAL_PREFIX):
         subject = f"{TRIAL_PREFIX}{subject}"
+        booking_type = "trial"
     return await _original_add_booking(
         tutor_id, user_id, username, subject, date, time_slot,
         channel_msg_id=channel_msg_id, user_platform=user_platform,
+        booking_type="trial" if str(subject).startswith(TRIAL_PREFIX) else booking_type,
+        trial_email=trial_email,
     )
 
 
@@ -170,7 +334,9 @@ async def _trial_aware_tutor_confirm_booking(event):
         _actor_id=event.user_id,
         _event_type="confirmed",
     )
-    clean_subject = str(booking["subject"])[len(TRIAL_PREFIX):]
+    clean_subject = str(booking["subject"])
+    if clean_subject.startswith(TRIAL_PREFIX):
+        clean_subject = clean_subject[len(TRIAL_PREFIX):]
     await legacy.send_to_user(
         booking["user_id"],
         booking.get("user_platform", "vk"),
@@ -178,7 +344,7 @@ async def _trial_aware_tutor_confirm_booking(event):
             "✅ Бесплатное пробное занятие подтверждено!\n"
             f"📚 {clean_subject}\n"
             f"📅 {booking['date']} 🕒 {booking['time_slot']}\n\n"
-            "Оплата и email не требуются."
+            "Оплата не требуется."
         ),
     )
     await legacy.edit_event_message(event, "✅ Бесплатное пробное занятие подтверждено. Оплата не требуется.")
@@ -186,39 +352,14 @@ async def _trial_aware_tutor_confirm_booking(event):
 
 legacy.tutor_confirm_booking = _trial_aware_tutor_confirm_booking
 
-_original_now_msk_naive = legacy.now_msk_naive
-
-
-def _trial_aware_now_msk_naive():
-    now = _original_now_msk_naive()
-    frame = inspect.currentframe()
-    try:
-        current = frame.f_back if frame else None
-        for _ in range(8):
-            if current is None:
-                break
-            for key in ("booking", "b"):
-                value = current.f_locals.get(key)
-                if isinstance(value, dict) and _is_trial(value):
-                    return now - timedelta(days=2)
-            current = current.f_back
-    finally:
-        del frame
-    return now
-
-
-legacy.now_msk_naive = _trial_aware_now_msk_naive
-
-
 # ---------------------------------------------------------------------------
 # Ученик: pending/confirmed можно отменять и переносить
 # ---------------------------------------------------------------------------
 async def _compat_render_my_records(user_id, *, edit_event=None, message=None):
-    bookings = await legacy.get_all_bookings()
-    user_bookings = [
-        (bid, b) for bid, b in bookings.items()
-        if b["user_id"] == user_id and b["status"] in ("pending", "confirmed", "paid")
-    ]
+    bookings = await _db.get_bookings_for_account(
+        "vk", user_id, statuses={"pending", "confirmed", "paid"}
+    )
+    user_bookings = list(bookings.items())
     if not user_bookings:
         kb = legacy.Keyboard(inline=True)
         kb.add(legacy.Callback("📊 Статистика", payload={"cmd": "student_stats"}))
@@ -236,22 +377,37 @@ async def _compat_render_my_records(user_id, *, edit_event=None, message=None):
     for bid, b in user_bookings:
         tutor = tutors.get(b["tutor_id"], {"name": "Неизвестный"})
         can_act = _student_can_change(b)
+        can_reschedule = can_act
+        if _is_trial(b):
+            can_reschedule = (
+                _booking_start(b) - legacy.now_msk_naive()
+            ) > timedelta(hours=24)
         status_text = {
             "pending": "ожидает подтверждения",
             "confirmed": "подтверждено, ожидает оплаты",
             "paid": "оплачено",
         }.get(b["status"], b["status"])
+        if _is_trial(b) and b["status"] == "confirmed":
+            status_text = "пробное подтверждено, оплата не требуется"
+        action_note = "⚠️ Действия недоступны"
+        if can_act:
+            action_note = (
+                "⚠️ Можно отменить; пробное будет считаться использованным"
+                if _is_trial(b) and not can_reschedule
+                else "✅ Можно отменить/перенести"
+            )
         text_lines.append(
             f"👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n"
             f"📅 {b['date']} 🕒 {b['time_slot']} ({status_text})\n"
-            + ("✅ Можно отменить/перенести" if can_act else "⚠️ Действия недоступны")
+            + action_note
         )
-        if can_act:
+        if can_reschedule:
             kb.add(legacy.Callback(
                 f"🔄 Перенести: {tutor['name']} {b['date']} {b['time_slot']}",
                 payload={"cmd": f"reschedule_student_{bid}"},
             ))
             kb.row()
+        if can_act:
             kb.add(legacy.Callback(
                 f"❌ Отменить: {tutor['name']} {b['date']} {b['time_slot']}",
                 payload={"cmd": f"cancel_student_{bid}"},
@@ -291,13 +447,16 @@ async def _compat_cancel_student_booking(event):
         await legacy.edit_event_message(event, "Эту запись уже нельзя отменить.")
         return
 
-    await _db.cancel_booking_record(
+    changed, current = await _db.cancel_booking_record(
         bid,
         actor_type="student",
         actor_id=event.user_id,
         reason="Отменено учеником",
         expected_statuses={"pending", "confirmed"},
     )
+    if not changed:
+        await legacy.edit_event_message(event, "Статус записи уже изменился.")
+        return
     await legacy.send_to_user(
         booking["user_id"], booking.get("user_platform", "vk"), "✅ Вы отменили занятие."
     )
@@ -308,7 +467,14 @@ async def _compat_cancel_student_booking(event):
     )
     kb = legacy.Keyboard(inline=True)
     kb.add(legacy.Callback("🔙 К моим записям", payload={"cmd": "back_to_my_records"}))
-    await legacy.edit_event_message(event, "✅ Запись отменена.", keyboard=kb.get_json())
+    cancellation_text = "✅ Запись отменена."
+    if _is_trial(current):
+        cancellation_text += (
+            " Поскольку до начала оставалось не более 24 часов, пробное считается использованным."
+            if current.get("trial_consumed")
+            else " Пробное не израсходовано — вы сможете выбрать другое время."
+        )
+    await legacy.edit_event_message(event, cancellation_text, keyboard=kb.get_json())
 
 
 async def _compat_student_reschedule_start(event):
@@ -322,6 +488,14 @@ async def _compat_student_reschedule_start(event):
     if booking["status"] == "paid":
         await legacy.edit_event_message(event, "Оплаченное занятие переносится через поддержку.")
         return
+    if _is_trial(booking):
+        if (_booking_start(booking) - legacy.now_msk_naive()) <= timedelta(hours=24):
+            await legacy.edit_event_message(
+                event,
+                "Пробное уже нельзя переносить менее чем за 24 часа. Его можно отменить, "
+                "но оно будет считаться использованным."
+            )
+            return
     if not _student_can_change(booking):
         await legacy.edit_event_message(event, "Эту запись уже нельзя перенести.")
         return
@@ -395,7 +569,7 @@ async def _compat_confirm_student_reschedule(event):
     data = await legacy.state_dispenser.get_data(event.user_id)
     bid = data["old_booking_id"]
     booking = await _db.get_booking(bid)
-    if not booking or booking["user_id"] != event.user_id:
+    if not booking or not await _db.account_owns_booking("vk", event.user_id, booking):
         await legacy.edit_event_message(event, "Запись не найдена.")
         return
     moved = await _reschedule_unpaid_in_place(
@@ -449,6 +623,7 @@ legacy.cleanup_old_bookings = _db.cleanup_old_bookings
 legacy.add_booking = _contextual_add_booking
 legacy.get_booking = _db.get_booking
 legacy.get_all_bookings = _db.get_all_bookings
+legacy._require_vk_booking_owner = _linked_vk_booking_owner
 
 
 async def main():

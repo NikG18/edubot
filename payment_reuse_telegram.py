@@ -11,6 +11,8 @@ import json
 import database as _db
 import Bot_test as app
 import payments as _payments
+from fiscal_agent import get_tutor_phone
+from fiscal_receipts import snapshot_booking_prepayment
 
 legacy = app.legacy
 _booking_locks: dict[int, asyncio.Lock] = {}
@@ -55,7 +57,7 @@ async def _respond(source, text: str):
             await source.message.answer(text)
 
 
-async def _send_payment_link(source, bot, booking, booking_id: int, payment_url: str, price_rub):
+async def _send_payment_link(source, bot, booking, booking_id: int, payment_url: str, price_rub) -> bool:
     student_msg = (
         f"💳 Оплата через СБП — {price_rub:g} руб.:\n"
         f"📚 {booking['subject']}\n"
@@ -67,24 +69,33 @@ async def _send_payment_link(source, bot, booking, booking_id: int, payment_url:
         keyboard = legacy.InlineKeyboardMarkup(inline_keyboard=[
             [legacy.InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)]
         ])
-        sent = await bot.send_message(booking["user_id"], student_msg, reply_markup=keyboard)
+        try:
+            sent = await bot.send_message(booking["user_id"], student_msg, reply_markup=keyboard)
+        except Exception:
+            legacy.logging.exception("Не удалось отправить Telegram ссылку оплаты booking=%s", booking_id)
+            return False
         await legacy.update_booking(booking_id, payment_msg_id=sent.message_id)
-    else:
-        keyboard = json.dumps({
-            "inline": True,
-            "buttons": [[{
-                "action": {
-                    "type": "open_link",
-                    "link": payment_url,
-                    "label": "💳 Оплатить через СБП",
-                }
-            }]],
-        })
-        await legacy.send_to_user(booking["user_id"], platform, student_msg, keyboard_vk=keyboard)
+        return True
+
+    keyboard = json.dumps({
+        "inline": True,
+        "buttons": [[{
+            "action": {
+                "type": "open_link",
+                "link": payment_url,
+                "label": "💳 Оплатить через СБП",
+            }
+        }]],
+    })
+    return bool(await legacy.send_to_user(
+        booking["user_id"],
+        platform,
+        student_msg,
+        keyboard_vk=keyboard,
+    ))
 
 
 async def _sbp_link_for_existing(payment_id: str):
-    """Всегда запрашивает свежую функциональную ссылку для того же PaymentId."""
     try:
         return await _payments.get_sbp_payment_link(str(payment_id))
     except Exception:
@@ -98,12 +109,10 @@ async def _idempotent_create_and_send_payment(source, bot, booking, email, booki
         current = await _db.get_booking(booking_id)
         if not current or current.get("status") not in {"pending", "confirmed"}:
             await _respond(source, "Запись не найдена или её статус уже изменился.")
-            return
+            return {"payment_id": None, "link_sent": False, "reason": "invalid_booking"}
 
         existing_payment_id = current.get("tinkoff_payment_id")
         if existing_payment_id:
-            # Не создаём новый Init. Для старых и новых платежей получаем новую
-            # СБП-ссылку по сохранённому PaymentId и снова отправляем её ученику.
             payment_url = await _sbp_link_for_existing(existing_payment_id)
             if not payment_url:
                 await _respond(
@@ -112,23 +121,28 @@ async def _idempotent_create_and_send_payment(source, bot, booking, email, booki
                     "Попробуйте ещё раз через минуту или обратитесь в поддержку. "
                     "Новый платёж автоматически не создаётся, чтобы исключить двойную оплату.",
                 )
-                return
+                return {"payment_id": str(existing_payment_id), "link_sent": False, "reason": "no_sbp_url"}
             await _save_payment_url(booking_id, payment_url)
             amount_kop = int(current.get("amount") or 0)
             price_rub = amount_kop / 100 if amount_kop else 0
-            await _send_payment_link(source, bot, current, booking_id, payment_url, price_rub)
-            return
+            delivered = await _send_payment_link(source, bot, current, booking_id, payment_url, price_rub)
+            return {"payment_id": str(existing_payment_id), "link_sent": delivered, "reused": True}
 
         tutors = await legacy.get_all_tutors()
         tutor = tutors.get(current["tutor_id"])
         if not tutor:
             await _respond(source, "Репетитор не найден.")
-            return
+            return {"payment_id": None, "link_sent": False, "reason": "tutor_missing"}
 
         inn = (tutor.get("inn") or "").strip()
         if not inn:
             await _respond(source, "Запись к репетитору недоступна. Напишите в поддержку.")
-            return
+            return {"payment_id": None, "link_sent": False, "reason": "inn_missing"}
+        direct_service = _payments.is_operator_tutor(inn)
+        supplier_phone = _payments.OPERATOR_PHONE if direct_service else await get_tutor_phone(current["tutor_id"])
+        if not supplier_phone:
+            await _respond(source, "Для репетитора не заполнен телефон для кассового чека. Напишите в поддержку.")
+            return {"payment_id": None, "link_sent": False, "reason": "supplier_phone_missing"}
 
         if current.get("amount"):
             amount_kop = int(current["amount"])
@@ -137,16 +151,17 @@ async def _idempotent_create_and_send_payment(source, bot, booking, email, booki
             price_rub = tutor["subjects"].get(current["subject"])
             if not price_rub:
                 await _respond(source, "Не указана цена предмета.")
-                return
+                return {"payment_id": None, "link_sent": False, "reason": "price_missing"}
             amount_kop = int(price_rub) * 100
 
-        now = legacy.now_msk_naive()
-        if tutor.get("commission_mode") == "auto":
-            percent, _ = await legacy.calculate_auto_commission(
-                current["tutor_id"], now.year, now.month
-            )
+        if direct_service:
+            percent = 0
         else:
-            percent = tutor.get("commission_percent", 25)
+            now = legacy.now_msk_naive()
+            if tutor.get("commission_mode") == "auto":
+                percent, _ = await legacy.calculate_auto_commission(current["tutor_id"], now.year, now.month)
+            else:
+                percent = tutor.get("commission_percent", 25)
 
         description = (
             f"Занятие: {current['subject']} с {tutor['name']} "
@@ -160,11 +175,10 @@ async def _idempotent_create_and_send_payment(source, bot, booking, email, booki
             tutor_name=tutor["name"],
             customer_email=email,
             inn=inn,
+            supplier_phone=supplier_phone,
             order_id_prefix="booking",
         )
 
-        # Если Init уже успел создать PaymentId, сохраняем его даже при временной
-        # ошибке GetQr. Иначе повторный клик создал бы второй платёж.
         if payment_id:
             await legacy.update_booking(
                 booking_id,
@@ -174,14 +188,27 @@ async def _idempotent_create_and_send_payment(source, bot, booking, email, booki
                 commission_percent=percent,
                 tinkoff_payment_id=payment_id,
             )
+            try:
+                await snapshot_booking_prepayment(
+                    booking_id=booking_id,
+                    payment_id=payment_id,
+                    amount_kop=amount_kop,
+                    customer_email=email,
+                    supplier_name=tutor["name"],
+                    supplier_inn=inn,
+                    supplier_phone=supplier_phone,
+                    description=description,
+                )
+            except Exception:
+                legacy.logging.exception("Не удалось сохранить фискальный snapshot booking=%s", booking_id)
 
         if not payment_id:
             await legacy.send_to_user(
                 current["user_id"],
                 current.get("user_platform", "telegram"),
-                "Ошибка создания платежа. Обратитесь в поддержку.",
+                "Ошибка создания платежа. Проверьте кассовые реквизиты или обратитесь в поддержку.",
             )
-            return
+            return {"payment_id": None, "link_sent": False, "reason": "payment_init_failed"}
 
         if not payment_url:
             payment_url = await _sbp_link_for_existing(payment_id)
@@ -191,17 +218,17 @@ async def _idempotent_create_and_send_payment(source, bot, booking, email, booki
                 "Платёж создан, но Т-Банк временно не вернул ссылку СБП. "
                 "Откройте оплату ещё раз через минуту — будет использован тот же платёж.",
             )
-            return
+            return {"payment_id": str(payment_id), "link_sent": False, "reason": "no_sbp_url"}
 
         await _save_payment_url(booking_id, payment_url)
         refreshed = await _db.get_booking(booking_id) or current
-        await _send_payment_link(source, bot, refreshed, booking_id, payment_url, price_rub)
-
-        # Преподавателя уведомляем только при первом создании PaymentId.
-        await legacy.send_to_tutor(
-            refreshed["tutor_id"],
-            f"✅ Занятие с {refreshed['username']} подтверждено. Ожидается оплата.",
-        )
+        delivered = await _send_payment_link(source, bot, refreshed, booking_id, payment_url, price_rub)
+        if delivered:
+            await legacy.send_to_tutor(
+                refreshed["tutor_id"],
+                f"✅ Занятие с {refreshed['username']} подтверждено. Ожидается оплата.",
+            )
+        return {"payment_id": str(payment_id), "link_sent": delivered, "reused": False}
 
 
 legacy.create_and_send_payment = _idempotent_create_and_send_payment

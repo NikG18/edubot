@@ -1,7 +1,60 @@
 import vk_bot as app
-import payment_reuse_vk  # noqa: F401  # один T-Bank платёж на бронь, повторная выдача СБП-ссылки
-import legal_vk  # noqa: F401  # юридический слой оборачивает итоговый платёжный сценарий
-import legal_vk_dedupe  # noqa: F401  # последний слой убирает повторную отправку документов
+import payment_reuse_vk  # noqa: F401
+import legal_vk  # noqa: F401
+import legal_vk_dedupe  # noqa: F401
+from financial_hardening import install_financial_hardening
+from student_stats_hardening import install_student_stats_hardening
+from student_account_hardening import install_student_account_hardening
+from tutor_students_hardening import install_vk_tutor_students_hardening
+from vk_admin_stats_hardening import install_vk_admin_stats_hardening
+from pricing_text_hardening import install_pricing_text_hardening
+from help_text_hardening import install_help_text_hardening
+from subscription_booking import install_vk_subscription_booking
+from tutor_confirmation_hardening import install_vk_tutor_confirmation
+from subscription_cancel_hardening import install_subscription_cancel_release
+from completed_cancellation_hardening import install_completed_cancellation_guard
+from completion_hardening import install_vk_completion_hardening
+from vk_payment_hardening import install_vk_payment_hardening
+from vk_email_hardening import install_vk_email_hardening
+from payment_poll_hardening import install_vk_payment_poll_hardening
+from access_hardening import install_vk_materials_guard
+from vk_access_hardening import install_vk_reply_authorization
+from support_hardening import install_vk_support_hardening
+from delivery_hardening import install_delivery_hardening
+from contact_delivery_hardening import install_vk_contact_delivery_hardening
+from vk_restart_hardening import install_vk_restart_hardening
+from core_flow_hardening import install_vk_core_flow_hardening
+from manual_test_hardening import install_records_runtime_hardening
+from email_payment_safety_hardening import install_vk_email_payment_safety
+from runtime_hardening import install_vk_hardening
+from student_navigation_hardening import install_vk_student_navigation_hardening
+
+install_financial_hardening(app)
+install_student_stats_hardening(app)
+install_student_account_hardening(app, "vk")
+install_vk_tutor_students_hardening(app)
+install_vk_admin_stats_hardening(app)
+install_pricing_text_hardening(app)
+install_help_text_hardening(app, "vk")
+install_vk_subscription_booking(app)
+install_vk_tutor_confirmation(app)
+install_subscription_cancel_release(app)
+install_completed_cancellation_guard(app)
+install_vk_completion_hardening(app)
+install_vk_payment_hardening(app)
+install_vk_email_hardening(app)
+install_vk_payment_poll_hardening(app)
+install_vk_materials_guard(app)
+install_vk_reply_authorization(app)
+install_vk_support_hardening(app)
+install_delivery_hardening(app)
+install_vk_contact_delivery_hardening(app)
+install_vk_restart_hardening(app)
+install_vk_core_flow_hardening(app)
+install_records_runtime_hardening(app)
+install_vk_email_payment_safety(app)
+install_vk_hardening(app)
+install_vk_student_navigation_hardening(app)
 
 
 async def main():

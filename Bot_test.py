@@ -1,11 +1,46 @@
 import inspect
 from datetime import timedelta
-from types import SimpleNamespace
+from types import FunctionType, SimpleNamespace
 
 import database as _db
 import Bot_test_legacy as legacy
 from Bot_test_legacy import *
 from booking_records import format_dt, render_event, sync_booking_record
+from fiscal_agent import get_tutor_phone, normalize_supplier_phone, set_tutor_phone
+from payments import refund_booking_payment
+
+
+def _is_trial(booking) -> bool:
+    return bool(booking and booking.get("booking_type") == "trial")
+
+
+def _stack_has_caller(name: str) -> bool:
+    frame = inspect.currentframe()
+    try:
+        current = frame.f_back if frame else None
+        for _ in range(8):
+            if current is None:
+                break
+            if current.f_code.co_name == name:
+                return True
+            current = current.f_back
+        return False
+    finally:
+        del frame
+
+
+async def _contextual_add_booking(tutor_id, user_id, username, subject, date, time_slot,
+                                  channel_msg_id=None, user_platform="telegram",
+                                  booking_type="regular", trial_email=None):
+    if _stack_has_caller("confirm_trial_booking"):
+        booking_type = "trial"
+    return await _db.add_booking(
+        tutor_id, user_id, username, subject, date, time_slot,
+        channel_msg_id=channel_msg_id,
+        user_platform=user_platform,
+        booking_type=booking_type,
+        trial_email=trial_email,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -79,17 +114,16 @@ def _tg_student_can_change(booking) -> bool:
     if booking.get("status") == "pending":
         return True
     if booking.get("status") == "confirmed":
-        return (start - now) > timedelta(hours=24)
+        return _is_trial(booking) or (start - now) > timedelta(hours=24)
     return False
 
 
 async def _tg_render_records(message):
     user_id = message.from_user.id
-    bookings = await _db.get_all_bookings()
-    rows = [
-        (bid, booking) for bid, booking in bookings.items()
-        if booking["user_id"] == user_id and booking["status"] in {"pending", "confirmed", "paid"}
-    ]
+    bookings = await _db.get_bookings_for_account(
+        "telegram", user_id, statuses={"pending", "confirmed", "paid"}
+    )
+    rows = list(bookings.items())
     if not rows:
         await message.answer(
             "У вас пока нет активных записей.",
@@ -106,24 +140,39 @@ async def _tg_render_records(message):
     for bid, booking in rows:
         tutor_name = tutors.get(booking["tutor_id"], {}).get("name", "Неизвестный")
         can_change = _tg_student_can_change(booking)
+        can_reschedule = can_change
+        if _is_trial(booking):
+            can_reschedule = (
+                legacy.parse_booking_time(booking) - legacy.now_msk_naive()
+            ) > timedelta(hours=24)
         status_text = {
             "pending": "ожидает подтверждения",
             "confirmed": "подтверждено, ожидает оплаты",
             "paid": "оплачено",
         }.get(booking["status"], booking["status"])
+        if _is_trial(booking) and booking["status"] == "confirmed":
+            status_text = "пробное подтверждено, оплата не требуется"
+        action_note = "⚠️ Действия недоступны"
+        if can_change:
+            action_note = (
+                "⚠️ Можно отменить; пробное будет считаться использованным"
+                if _is_trial(booking) and not can_reschedule
+                else "✅ Можно отменить/перенести"
+            )
         text_lines.append(
             f"👨‍🏫 {tutor_name}\n"
             f"📚 {booking['subject']}\n"
             f"📅 {booking['date']} 🕒 {booking['time_slot']} ({status_text})\n"
-            + ("✅ Можно отменить/перенести" if can_change else "⚠️ Действия недоступны")
+            + action_note
         )
-        if can_change:
+        if can_reschedule:
             buttons.append([
                 legacy.InlineKeyboardButton(
                     text=f"🔄 Перенести: {tutor_name} {booking['date']} {booking['time_slot']}"[:64],
                     callback_data=f"reschedule_student_{bid}",
                 )
             ])
+        if can_change:
             buttons.append([
                 legacy.InlineKeyboardButton(
                     text=f"❌ Отменить: {tutor_name} {booking['date']} {booking['time_slot']}"[:64],
@@ -144,6 +193,12 @@ async def _tg_my_records(message, state):
     await legacy._tg_render_records(message)
 
 
+async def _tg_back_to_my_records(call, state):
+    await legacy.safe_answer(call)
+    await state.clear()
+    await legacy._tg_render_records(call.message)
+
+
 async def _tg_cancel_student_booking(call, bot):
     await legacy.safe_answer(call)
     bid = int(call.data.split("_")[2])
@@ -151,7 +206,7 @@ async def _tg_cancel_student_booking(call, bot):
     if not booking:
         await call.message.edit_text("Запись не найдена.")
         return
-    if not legacy.actor_is_booking_owner(call.from_user.id, booking):
+    if not await _db.account_owns_booking("telegram", call.from_user.id, booking):
         await call.message.edit_text("⛔ Доступ запрещён.")
         return
     if booking["status"] == "paid":
@@ -176,8 +231,15 @@ async def _tg_cancel_student_booking(call, bot):
         f"❌ Ученик {current['username']} отменил занятие:\n"
         f"📚 {current['subject']}\n📅 {current['date']} 🕒 {current['time_slot']}",
     )
+    cancellation_text = "✅ Запись отменена."
+    if _is_trial(current):
+        cancellation_text += (
+            " Поскольку до начала оставалось не более 24 часов, пробное считается использованным."
+            if current.get("trial_consumed")
+            else " Пробное не израсходовано — вы сможете выбрать другое время."
+        )
     await call.message.edit_text(
-        "✅ Запись отменена.",
+        cancellation_text,
         reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=[
             [legacy.InlineKeyboardButton(text="🔙 К моим записям", callback_data="back_to_my_records")]
         ]),
@@ -191,12 +253,20 @@ async def _tg_student_reschedule_start(call, state):
     if not booking:
         await call.message.edit_text("Запись не найдена.")
         return
-    if not legacy.actor_is_booking_owner(call.from_user.id, booking):
+    if not await _db.account_owns_booking("telegram", call.from_user.id, booking):
         await call.message.edit_text("⛔ Доступ запрещён.")
         return
     if booking["status"] == "paid":
         await call.message.edit_text("Оплаченное занятие переносится через поддержку.")
         return
+    if _is_trial(booking):
+        start = legacy.parse_booking_time(booking)
+        if (start - legacy.now_msk_naive()) <= timedelta(hours=24):
+            await call.message.edit_text(
+                "Пробное уже нельзя переносить менее чем за 24 часа. Его можно отменить, "
+                "но оно будет считаться использованным."
+            )
+            return
     if not legacy._tg_student_can_change(booking):
         await call.message.edit_text("Эту запись уже нельзя перенести.")
         return
@@ -271,7 +341,7 @@ async def _tg_confirm_student_reschedule(call, state, bot):
     data = await state.get_data()
     bid = data["old_booking_id"]
     booking = await _db.get_booking(bid)
-    if not booking or booking["user_id"] != call.from_user.id:
+    if not booking or not await _db.account_owns_booking("telegram", call.from_user.id, booking):
         await call.message.edit_text("Запись не найдена.")
         await state.clear()
         return
@@ -297,15 +367,66 @@ async def _tg_confirm_student_reschedule(call, state, bot):
     await state.clear()
 
 
+async def _trial_aware_tutor_confirm_booking(call, bot, state):
+    await legacy.safe_answer(call)
+    bid = int(call.data.split("_")[2])
+    booking = await _db.get_booking(bid)
+    if not _is_trial(booking):
+        return await legacy._original_tutor_confirm_booking(call, bot, state)
+    if not booking:
+        await call.message.edit_text("Заявка не найдена.")
+        return
+    if not await legacy._require_booking_tutor(call, booking):
+        return
+    if booking["status"] != "pending":
+        await call.message.edit_text("Заявка уже обработана.")
+        return
+
+    await _db.update_booking(
+        bid,
+        status="confirmed",
+        amount=0,
+        commission_percent=0,
+        _actor_type="tutor",
+        _actor_id=call.from_user.id,
+        _event_type="confirmed",
+    )
+    await legacy.send_to_user(
+        booking["user_id"],
+        booking.get("user_platform", "telegram"),
+        (
+            "✅ Бесплатное пробное занятие подтверждено!\n"
+            f"📚 {booking['subject']}\n"
+            f"📅 {booking['date']} 🕒 {booking['time_slot']}\n\n"
+            "Оплата не требуется."
+        ),
+    )
+    await state.clear()
+    await call.message.edit_text("✅ Бесплатное пробное занятие подтверждено. Оплата не требуется.")
+
+
 # В aiogram обработчики уже зарегистрированы в legacy.dp, поэтому меняем код
 # зарегистрированных функций, а вспомогательные функции кладём в globals legacy.
+legacy.legacy = legacy
+legacy._db = _db
+legacy._is_trial = _is_trial
 legacy._tg_student_can_change = _tg_student_can_change
 legacy._tg_render_records = _tg_render_records
 legacy._tg_reschedule_unpaid_in_place = _tg_reschedule_unpaid_in_place
 legacy.my_records.__code__ = _tg_my_records.__code__
+legacy.back_to_my_records.__code__ = _tg_back_to_my_records.__code__
 legacy.cancel_student_booking.__code__ = _tg_cancel_student_booking.__code__
 legacy.student_reschedule_start.__code__ = _tg_student_reschedule_start.__code__
 legacy.confirm_student_reschedule.__code__ = _tg_confirm_student_reschedule.__code__
+legacy._original_tutor_confirm_booking = FunctionType(
+    legacy.tutor_confirm_booking.__code__,
+    legacy.tutor_confirm_booking.__globals__,
+    name=legacy.tutor_confirm_booking.__name__,
+    argdefs=legacy.tutor_confirm_booking.__defaults__,
+    closure=legacy.tutor_confirm_booking.__closure__,
+)
+legacy.tutor_confirm_booking.__code__ = _trial_aware_tutor_confirm_booking.__code__
+legacy.add_booking = _contextual_add_booking
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +442,8 @@ async def _cleanup_with_unpaid_autocancel():
     bookings = await _db.get_all_bookings()
     for bid, booking in bookings.items():
         if booking.get("status") != "confirmed":
+            continue
+        if _is_trial(booking):
             continue
         try:
             start = legacy.parse_booking_time(booking)
@@ -425,15 +548,139 @@ _original_admin_actions_keyboard = legacy.admin_actions_keyboard
 
 def admin_actions_keyboard():
     keyboard = _original_admin_actions_keyboard()
-    button = legacy.InlineKeyboardButton(
+    bookings_button = legacy.InlineKeyboardButton(
         text="📚 Управление занятиями",
         callback_data="admin_bookings",
     )
-    keyboard.inline_keyboard.insert(1, [button])
+    keyboard.inline_keyboard.insert(1, [bookings_button])
     return keyboard
 
 
 legacy.admin_actions_keyboard = admin_actions_keyboard
+
+
+def _tg_tutor_edit_keyboard(tutor_id: int):
+    return legacy.InlineKeyboardMarkup(inline_keyboard=[
+        [legacy.InlineKeyboardButton(text="Изменить имя", callback_data="edit_name")],
+        [legacy.InlineKeyboardButton(text="Изменить описание", callback_data="edit_desc")],
+        [legacy.InlineKeyboardButton(text="Изменить фото", callback_data="edit_photo")],
+        [legacy.InlineKeyboardButton(text="Изменить Telegram ID", callback_data="edit_telegram_id")],
+        [legacy.InlineKeyboardButton(text="Изменить VK ID", callback_data="edit_vk_id")],
+        [legacy.InlineKeyboardButton(text="🆔 Изменить ИНН", callback_data="edit_inn")],
+        [legacy.InlineKeyboardButton(
+            text="📞 Изменить телефон",
+            callback_data=f"admin_tutor_phone_{tutor_id}",
+        )],
+        [legacy.InlineKeyboardButton(text="📚 Управление предметами", callback_data="manage_subjects")],
+        [legacy.InlineKeyboardButton(text="💰 Изменить комиссию", callback_data="edit_commission")],
+        [legacy.InlineKeyboardButton(text="🔄 Режим комиссии", callback_data="toggle_commission_mode")],
+        [legacy.InlineKeyboardButton(text="🔙 К списку", callback_data="admin_edit_list")],
+    ])
+
+
+async def _tg_edit_tutor_choice(call, state):
+    await safe_answer(call)
+    tutor_id = int(call.data.split("_")[-1])
+    await state.update_data(edit_tutor_id=tutor_id)
+    tutors = await get_all_tutors()
+    tutor = tutors.get(tutor_id)
+    if not tutor:
+        await call.message.edit_text("Репетитор не найден.")
+        return
+    phone = await get_tutor_phone(tutor_id)
+    await call.message.edit_text(
+        f"Редактирование: {tutor['name']}\n"
+        f"Телефон для чека: {phone or 'не указан'}\n\n"
+        "Что хотите изменить?",
+        reply_markup=_tg_tutor_edit_keyboard(tutor_id),
+    )
+    await state.set_state(AdminStates.waiting_edit_choice)
+
+
+async def _tg_back_to_edit_tutor(call, state):
+    await safe_answer(call)
+    data = await state.get_data()
+    tutor_id = data.get("edit_tutor_id")
+    tutors = await get_all_tutors()
+    tutor = tutors.get(tutor_id)
+    if not tutor:
+        await call.message.edit_text("Репетитор не найден.")
+        return
+    phone = await get_tutor_phone(tutor_id)
+    await call.message.edit_text(
+        f"Редактирование: {tutor['name']}\n"
+        f"Телефон для чека: {phone or 'не указан'}\n\n"
+        "Что хотите изменить?",
+        reply_markup=_tg_tutor_edit_keyboard(tutor_id),
+    )
+    await state.set_state(AdminStates.waiting_edit_choice)
+
+
+legacy.get_tutor_phone = get_tutor_phone
+legacy._tg_tutor_edit_keyboard = _tg_tutor_edit_keyboard
+legacy.edit_tutor_choice.__code__ = _tg_edit_tutor_choice.__code__
+legacy.back_to_edit_tutor.__code__ = _tg_back_to_edit_tutor.__code__
+
+
+class FiscalAdminStates(legacy.StatesGroup):
+    waiting_tutor_phone = legacy.State()
+
+
+@legacy.dp.callback_query(legacy.F.data.regexp(r"^admin_tutor_phone_\d+$"))
+async def admin_tutor_phone_start(call: legacy.CallbackQuery, state: legacy.FSMContext):
+    await legacy.safe_answer(call)
+    if call.from_user.id != legacy.ADMING_ID:
+        return
+    tutor_id = int(call.data.rsplit("_", 1)[1])
+    tutors = await _db.get_all_tutors()
+    tutor = tutors.get(tutor_id)
+    if not tutor:
+        await call.message.edit_text("Репетитор не найден.")
+        return
+    current = await get_tutor_phone(tutor_id)
+    await state.update_data(fiscal_phone_tutor_id=tutor_id)
+    await state.set_state(FiscalAdminStates.waiting_tutor_phone)
+    await call.message.edit_text(
+        f"Репетитор: <b>{legacy.html.quote(str(tutor['name']))}</b>\n"
+        f"Текущий телефон: <code>{legacy.html.quote(current or 'не указан')}</code>\n\n"
+        "Отправьте контактный телефон поставщика, например "
+        "<code>+79991234567</code>. Пробелы, скобки и дефисы допустимы."
+    )
+
+
+@legacy.dp.message(FiscalAdminStates.waiting_tutor_phone)
+async def admin_tutor_phone_save(message: legacy.Message, state: legacy.FSMContext):
+    if message.from_user.id != legacy.ADMING_ID:
+        await state.clear()
+        return
+    phone = normalize_supplier_phone(message.text)
+    if not phone:
+        await message.answer(
+            "Некорректный номер. Отправьте от 7 до 18 цифр, "
+            "например <code>+79991234567</code>."
+        )
+        return
+    data = await state.get_data()
+    tutor_id = data.get("fiscal_phone_tutor_id")
+    saved = await set_tutor_phone(tutor_id, phone) if tutor_id else None
+    await state.clear()
+    if not saved:
+        await message.answer("Репетитор не найден, телефон не сохранён.")
+        return
+    await message.answer(
+        f"✅ Телефон для <b>{legacy.html.quote(str(saved['name']))}</b> сохранён: "
+        f"<code>{legacy.html.quote(saved['phone'])}</code>",
+        reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=[
+            [legacy.InlineKeyboardButton(
+                text="🔙 К карточке репетитора",
+                callback_data=f"edit_tutor_{saved['id']}",
+            )],
+            [legacy.InlineKeyboardButton(
+                text="🔙 В админ-панель",
+                callback_data="admin_panel_open",
+            )],
+        ]),
+    )
 
 
 async def _show_admin_booking(call, booking_id: int):
@@ -465,7 +712,7 @@ async def _show_admin_booking(call, booking_id: int):
         f"{cancelled_line}"
     )
     buttons = []
-    if booking["status"] in {"pending", "confirmed", "paid"}:
+    if booking["status"] in {"pending", "confirmed", "paid", "completed"}:
         buttons.append([
             legacy.InlineKeyboardButton(
                 text="❌ Отменить занятие",
@@ -475,8 +722,8 @@ async def _show_admin_booking(call, booking_id: int):
     if booking.get("refund_status") in {"required", "pending"}:
         buttons.append([
             legacy.InlineKeyboardButton(
-                text="↩️ Отметить возврат выполненным",
-                callback_data=f"admin_booking_refund_{booking_id}",
+                text="↩️ Вернуть деньги клиенту",
+                callback_data=f"admin_booking_refund_confirm_{booking_id}",
             )
         ])
     buttons.append([
@@ -559,10 +806,11 @@ async def admin_booking_cancel_confirm(call: legacy.CallbackQuery):
         await call.message.edit_text("Занятие не найдено.")
         return
     warning = ""
-    if booking["status"] == "paid":
+    if booking["status"] in {"paid", "completed"} and (booking.get("amount") or 0) > 0:
         warning = (
-            "\n\n⚠️ Занятие оплачено. После отмены возврат будет отмечен как "
-            "<b>требуется</b>, но деньги автоматически не возвращаются."
+            "\n\n⚠️ Это оплаченное занятие. После отмены возврат будет отмечен как "
+            "<b>требуется</b>, но статистика пока не уменьшится. Занятие будет "
+            "исключено только после подтверждения полного возврата банком."
         )
     keyboard = legacy.InlineKeyboardMarkup(inline_keyboard=[
         [legacy.InlineKeyboardButton(text="✅ Да, отменить", callback_data=f"admin_do_booking_cancel_{booking_id}")],
@@ -604,17 +852,67 @@ async def admin_booking_cancel_do(call: legacy.CallbackQuery):
     await _show_admin_booking(call, booking_id)
 
 
-@legacy.dp.callback_query(legacy.F.data.startswith("admin_booking_refund_"))
-async def admin_booking_refund(call: legacy.CallbackQuery):
+@legacy.dp.callback_query(legacy.F.data.regexp(r"^admin_booking_refund_confirm_\d+$"))
+async def admin_booking_refund_confirm(call: legacy.CallbackQuery):
     await legacy.safe_answer(call)
     if call.from_user.id != legacy.ADMING_ID:
         return
     booking_id = int(call.data.rsplit("_", 1)[1])
-    ok = await _db.mark_booking_refunded(booking_id, call.from_user.id)
-    if not ok:
-        await call.message.edit_text("Возврат уже отмечен или не требуется.")
+    booking = await _db.get_booking(booking_id)
+    if not booking or booking.get("refund_status") not in {"required", "pending"}:
+        await call.message.edit_text("Возврат уже подтверждён или не требуется.")
         return
-    await _show_admin_booking(call, booking_id)
+    amount = (booking.get("amount") or 0) / 100
+    keyboard = legacy.InlineKeyboardMarkup(inline_keyboard=[
+        [legacy.InlineKeyboardButton(
+            text=f"✅ Вернуть {amount:.2f} ₽",
+            callback_data=f"admin_do_booking_refund_{booking_id}",
+        )],
+        [legacy.InlineKeyboardButton(
+            text="🔙 Назад",
+            callback_data=f"admin_booking_view_{booking_id}",
+        )],
+    ])
+    await call.message.edit_text(
+        f"Подтвердите полный возврат <b>{amount:.2f} ₽</b> клиенту за занятие "
+        f"#{booking_id}.\n\nДеньги действительно будут возвращены через Т‑Банк. "
+        "Статистика уменьшится только после банковского подтверждения.",
+        reply_markup=keyboard,
+    )
+
+
+@legacy.dp.callback_query(legacy.F.data.regexp(r"^admin_do_booking_refund_\d+$"))
+async def admin_booking_refund_do(call: legacy.CallbackQuery):
+    await legacy.safe_answer(call)
+    if call.from_user.id != legacy.ADMING_ID:
+        return
+    booking_id = int(call.data.rsplit("_", 1)[1])
+    result = await refund_booking_payment(booking_id, call.from_user.id)
+    if result.get("success"):
+        await _show_admin_booking(call, booking_id)
+        return
+    if result.get("pending"):
+        await call.message.edit_text(
+            "⏳ Т‑Банк принял запрос на возврат, но ещё не подтвердил его завершение. "
+            "Статистика пока не изменена; бот проверит статус автоматически.",
+            reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=[
+                [legacy.InlineKeyboardButton(
+                    text="🔙 К занятию",
+                    callback_data=f"admin_booking_view_{booking_id}",
+                )]
+            ]),
+        )
+        return
+    await call.message.edit_text(
+        "❌ Т‑Банк не подтвердил возврат. Деньги и статистика не изменены. "
+        "Откройте занятие и повторите попытку позже.",
+        reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=[
+            [legacy.InlineKeyboardButton(
+                text="🔙 К занятию",
+                callback_data=f"admin_booking_view_{booking_id}",
+            )]
+        ]),
+    )
 
 
 @legacy.dp.callback_query(legacy.F.data.startswith("admin_booking_history_"))

@@ -6,6 +6,7 @@ from typing import Optional
 
 MSK = ZoneInfo("Europe/Moscow")
 EMAIL_RE = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,63}$", re.I)
+FULL_REFUND_STATUSES = frozenset({"REFUNDED", "REVERSED"})
 
 
 def now_msk() -> datetime:
@@ -34,8 +35,12 @@ def valid_email(value: str) -> bool:
     return bool(value and len(value) <= 254 and EMAIL_RE.fullmatch(value))
 
 
-async def actor_is_booking_owner(booking: Optional[dict], actor_id: int) -> bool:
-    return bool(booking and booking.get("user_id") == actor_id)
+async def actor_is_booking_owner(booking: Optional[dict], actor_id: int,
+                                 platform: str = "telegram") -> bool:
+    if not booking:
+        return False
+    from database import account_owns_booking
+    return await account_owns_booking(platform, actor_id, booking)
 
 
 async def actor_is_tutor_for_booking(booking: Optional[dict], actor_platform_id: int, platform: str) -> bool:
@@ -52,6 +57,18 @@ async def actor_is_tutor_for_booking(booking: Optional[dict], actor_platform_id:
     return tid == booking.get("tutor_id")
 
 
+def booking_needs_payment_poll(booking: Optional[dict]) -> bool:
+    """Нужно ли продолжать GetState для оплаты или ожидаемого полного возврата."""
+    if not booking or not booking.get("tinkoff_payment_id"):
+        return False
+    if booking.get("status") == "confirmed":
+        return True
+    return (
+        booking.get("status") == "cancelled"
+        and (booking.get("refund_status") or "none") in {"required", "pending"}
+    )
+
+
 async def process_booking_payment_status(booking_id: int, status: str):
     """Единая идемпотентная обработка статуса оплаты. Возвращает (changed, booking).
 
@@ -62,10 +79,19 @@ async def process_booking_payment_status(booking_id: int, status: str):
     from database import (
         add_booking_event,
         get_booking,
+        confirm_booking_refunded,
         mark_booking_paid_once,
         mark_booking_payment_failed,
         update_booking,
     )
+
+    status = str(status or "").upper()
+
+    if status in FULL_REFUND_STATUSES:
+        return await confirm_booking_refunded(
+            booking_id,
+            actor_type="payment",
+        )
 
     if status in ("CONFIRMED", "AUTHORIZED"):
         booking = await get_booking(booking_id)
@@ -73,7 +99,8 @@ async def process_booking_payment_status(booking_id: int, status: str):
             return False, None
 
         if booking.get("status") == "cancelled":
-            if (booking.get("refund_status") or "none") != "required":
+            refund_status = booking.get("refund_status") or "none"
+            if refund_status == "none":
                 await add_booking_event(
                     booking_id,
                     "late_payment_after_cancel",
@@ -90,6 +117,8 @@ async def process_booking_payment_status(booking_id: int, status: str):
                     refund_status="required",
                     refund_updated_at=now_msk(),
                 )
+            # Повторный/запоздавший CONFIRMED не должен откатывать уже начатый
+            # или завершённый возврат обратно в required.
             # False намеренно: вызывающий код не должен отправлять сообщение
             # «занятие подтверждено» для уже отменённого занятия.
             return False, booking
