@@ -1,9 +1,9 @@
 """Harden the two interactive student->tutor message handlers.
 
 The legacy handlers ignored the boolean result of ``send_to_tutor`` and always
-showed a green success message.  We replace only those already-registered handler
-function code objects, leaving the shared bridge and background notification
-semantics untouched.
+showed a green success message. Reply callbacks also carried only a raw numeric
+student id, which is ambiguous across Telegram/VK namespaces. New callbacks carry
+source platform, student id and tutor id.
 """
 
 
@@ -32,11 +32,12 @@ async def _telegram_student_to_tutor(message, state, bot):
         f"✉️ Преподавателю: {tutor_name}\n\n"
         f"💬 Текст:\n{text}"
     )
+    reply_callback = f"reply_tg_{user.id}_{int(tid)}"
     reply_markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="↩️ Ответить", callback_data=f"reply_{user.id}")]
+        [InlineKeyboardButton(text="↩️ Ответить", callback_data=reply_callback)]
     ])
     vk_reply_kb = vk_keyboard([
-        [("↩️ Ответить", {"cmd": f"reply_{user.id}"}, "primary")]
+        [("↩️ Ответить", {"cmd": reply_callback}, "primary")]
     ])
     delivered = await send_to_tutor(
         tid,
@@ -76,27 +77,25 @@ async def _vk_student_to_tutor(message):
 
     forward_msg = (
         f"📨 Сообщение от ученика\n"
-        f"👤 {username} (ID: {message.from_id})\n"
+        f"👤 {username} (VK ID: {message.from_id})\n"
         f"✉️ Преподавателю: {tutor_name}\n\n"
         f"💬 Текст:\n{text}"
     )
-    kb = Keyboard(inline=True)
-    kb.add(Callback("↩️ Ответить", payload={"cmd": f"reply_{message.from_id}"}))
-    try:
-        await bot.api.messages.send(
-            user_id=ADMIN_VK_ID,
-            message=forward_msg,
-            keyboard=kb.get_json(),
-            random_id=random.randint(1, 2**31 - 1),
-        )
-    except Exception:
-        logging.exception("Не удалось продублировать сообщение ученика VK администратору")
+    reply_callback = f"reply_vk_{message.from_id}_{int(tid)}"
+    vk_kb = Keyboard(inline=True)
+    vk_kb.add(Callback("↩️ Ответить", payload={"cmd": reply_callback}))
+    tg_kb = json.dumps({
+        "inline_keyboard": [[{
+            "text": "↩️ Ответить",
+            "callback_data": reply_callback,
+        }]]
+    }, ensure_ascii=False)
 
     delivered = await send_to_tutor(
         tid,
         forward_msg,
-        reply_markup_tg=None,
-        keyboard_vk=kb.get_json(),
+        reply_markup_tg=tg_kb,
+        keyboard_vk=vk_kb.get_json(),
     )
     if delivered:
         await message.answer(
