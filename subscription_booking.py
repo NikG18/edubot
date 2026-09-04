@@ -26,13 +26,27 @@ async def _commission_percent(legacy, booking: dict) -> int:
     return int(tutor.get("commission_percent", 25))
 
 
+def _subscription_fiscal_snapshot_complete(subscription) -> bool:
+    required = (
+        "payment_id", "total_price", "customer_email", "supplier_name",
+        "supplier_inn", "supplier_phone",
+    )
+    for key in required:
+        value = subscription[key]
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return False
+    try:
+        return float(subscription["total_price"]) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 async def _confirm_from_subscription(legacy, booking_id: int, actor_id: int) -> dict | None:
     """Atomically reserve one package unit and mark the booking paid.
 
-    Returns None only when no matching paid subscription exists, so the caller may
-    run the ordinary payment flow. If a matching subscription exists but its ledger
-    is inconsistent, return an explicit error and fail closed rather than charging
-    the student separately.
+    Returns None only when no matching subscription balance exists, so the caller
+    may run the ordinary payment flow. Any matching legacy/quarantined/incomplete
+    subscription fails closed instead of risking a second charge to the student.
     """
     await subs.ensure_subscription_schema()
     booking = await _db.get_booking(int(booking_id))
@@ -68,18 +82,52 @@ async def _confirm_from_subscription(legacy, booking_id: int, actor_id: int) -> 
                 # make it payable again or bind a new package unit to the same row.
                 return {"error": "released_booking_usage"}
 
+            # Look at ANY positive matching balance, not only modern ledger-ready
+            # rows. Otherwise an old pre-hardening subscription could be ignored and
+            # the unchanged legacy flow could charge the student again.
             subscription = await conn.fetchrow(
                 """
                 SELECT * FROM subscriptions
                 WHERE student_id=$1 AND tutor_id=$2 AND subject=$3
-                  AND active=1 AND remaining_lessons>0 AND payment_id IS NOT NULL
-                ORDER BY activated_at NULLS LAST, id
+                  AND remaining_lessons>0
+                ORDER BY
+                  CASE WHEN active=1 AND payment_id IS NOT NULL THEN 0 ELSE 1 END,
+                  activated_at NULLS LAST,
+                  id
                 LIMIT 1 FOR UPDATE
                 """,
                 current["student_id"], current["tutor_id"], current["subject"],
             )
             if not subscription:
                 return None
+
+            if not subscription["payment_id"]:
+                logging.warning(
+                    "Booking=%s matched legacy subscription=%s without payment_id; ordinary payment fallback blocked",
+                    booking_id, subscription["id"],
+                )
+                return {
+                    "error": "legacy_subscription_requires_migration",
+                    "subscription_id": int(subscription["id"]),
+                }
+            if int(subscription["active"] or 0) != 1:
+                logging.error(
+                    "Booking=%s matched quarantined subscription=%s; ordinary payment fallback blocked",
+                    booking_id, subscription["id"],
+                )
+                return {
+                    "error": "subscription_quarantined",
+                    "subscription_id": int(subscription["id"]),
+                }
+            if not _subscription_fiscal_snapshot_complete(subscription):
+                logging.error(
+                    "Booking=%s matched subscription=%s with incomplete fiscal snapshot; ordinary payment fallback blocked",
+                    booking_id, subscription["id"],
+                )
+                return {
+                    "error": "subscription_fiscal_snapshot_incomplete",
+                    "subscription_id": int(subscription["id"]),
+                }
 
             reservation = await subs.reserve_locked_subscription_unit(
                 conn, int(booking_id), subscription
