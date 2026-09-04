@@ -45,6 +45,11 @@ async def ensure_subscription_schema() -> None:
                 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS supplier_phone TEXT;
                 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS activated_at TIMESTAMPTZ;
 
+                ALTER TABLE pending_subscriptions ADD COLUMN IF NOT EXISTS customer_email TEXT;
+                ALTER TABLE pending_subscriptions ADD COLUMN IF NOT EXISTS supplier_name TEXT;
+                ALTER TABLE pending_subscriptions ADD COLUMN IF NOT EXISTS supplier_inn TEXT;
+                ALTER TABLE pending_subscriptions ADD COLUMN IF NOT EXISTS supplier_phone TEXT;
+
                 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS subscription_id INTEGER
                     REFERENCES subscriptions(id) ON DELETE SET NULL;
                 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS subscription_unit_index INTEGER;
@@ -170,16 +175,25 @@ async def activate_subscription(payment_id: str) -> bool:
             if not tutor:
                 logging.error("Cannot activate subscription %s: tutor missing", payment_id)
                 return False
-            inn = str(tutor.get("inn") or "").strip()
+
+            # New purchases snapshot these values when T-Bank Init is created so
+            # later tutor/profile edits cannot rewrite the fiscal history. Old
+            # pending rows remain compatible and fall back to current data.
+            supplier_name = str(pending["supplier_name"] or "").strip() or str(tutor["name"])
+            inn = str(pending["supplier_inn"] or "").strip() or str(tutor.get("inn") or "").strip()
             direct = payments.is_operator_tutor(inn)
-            phone = payments.OPERATOR_PHONE if direct else await get_tutor_phone(int(pending["tutor_id"]))
+            phone = str(pending["supplier_phone"] or "").strip()
+            if not phone:
+                phone = payments.OPERATOR_PHONE if direct else await get_tutor_phone(int(pending["tutor_id"]))
             if not direct and not phone:
                 logging.error("Cannot activate subscription %s: supplier phone missing", payment_id)
                 return False
 
-            email = await conn.fetchval(
-                "SELECT email FROM student_profiles WHERE id=$1", pending["student_id"]
-            )
+            email = str(pending["customer_email"] or "").strip()
+            if not email:
+                email = str(await conn.fetchval(
+                    "SELECT email FROM student_profiles WHERE id=$1", pending["student_id"]
+                ) or "").strip()
             if not email:
                 logging.error("Cannot activate subscription %s: customer email missing", payment_id)
                 return False
@@ -195,7 +209,7 @@ async def activate_subscription(payment_id: str) -> bool:
                 pending["user_id"], pending["tutor_id"], pending["subject"],
                 pending["total_lessons"], pending["discount_percent"],
                 pending["user_platform"], pending["student_id"], str(payment_id),
-                pending["total_price"], str(email), tutor["name"], inn,
+                pending["total_price"], email, supplier_name, inn,
                 phone or payments.OPERATOR_PHONE,
             )
             await conn.execute("DELETE FROM pending_subscriptions WHERE id=$1", pending["id"])
