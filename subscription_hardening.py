@@ -15,6 +15,7 @@ import database as _db
 import payments
 from fiscal_agent import get_tutor_phone
 from receipt_retry_policy import closing_receipt_claim_action
+from subscription_rules import next_available_unit_index
 
 _SCHEMA_READY = False
 
@@ -67,9 +68,13 @@ async def ensure_subscription_schema() -> None:
                     reserved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     consumed_at TIMESTAMPTZ,
                     released_at TIMESTAMPTZ,
-                    UNIQUE(booking_id),
-                    UNIQUE(subscription_id, unit_index)
+                    UNIQUE(booking_id)
                 );
+                ALTER TABLE subscription_usages
+                    DROP CONSTRAINT IF EXISTS subscription_usages_subscription_id_unit_index_key;
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_subscription_usages_active_unit
+                    ON subscription_usages(subscription_id, unit_index)
+                    WHERE status IN ('reserved','consumed');
                 CREATE INDEX IF NOT EXISTS idx_subscription_usages_subscription
                     ON subscription_usages(subscription_id, status, unit_index);
 
@@ -168,6 +173,10 @@ async def reserve_for_booking(booking_id: int) -> dict | None:
             )
             if existing and existing["status"] in {"reserved", "consumed"}:
                 return dict(existing)
+            if existing and existing["status"] == "released":
+                # A cancelled historical booking must never be silently rebound to
+                # a subscription again; use a new booking row instead.
+                return None
 
             subscription = await conn.fetchrow(
                 """
@@ -182,11 +191,27 @@ async def reserve_for_booking(booking_id: int) -> dict | None:
             if not subscription:
                 return None
 
-            used_count = int(await conn.fetchval(
-                "SELECT COUNT(*) FROM subscription_usages WHERE subscription_id=$1",
+            occupied_rows = await conn.fetch(
+                """
+                SELECT unit_index
+                FROM subscription_usages
+                WHERE subscription_id=$1 AND status IN ('reserved','consumed')
+                ORDER BY unit_index
+                """,
                 subscription["id"],
-            ) or 0)
-            unit_index = used_count + 1
+            )
+            unit_index = next_available_unit_index(
+                int(subscription["total_lessons"]),
+                [row["unit_index"] for row in occupied_rows],
+            )
+            if unit_index is None:
+                logging.error(
+                    "Subscription %s reports remaining_lessons=%s but has no free active unit slot",
+                    subscription["id"],
+                    subscription["remaining_lessons"],
+                )
+                return None
+
             total_kop = _rub_to_kop(subscription["total_price"])
             amount_kop = allocated_unit_amount(total_kop, subscription["total_lessons"], unit_index)
 
