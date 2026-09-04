@@ -6,13 +6,12 @@ import help_text_hardening as help_text
 from receipt_retry_policy import closing_receipt_claim_action
 import telegram_messaging_identity_hardening as identity
 import telegram_payment_hardening as payment
+import tutor_students_hardening as tutor_students
+from tutor_students_rules import group_tutor_students, platform_label
 
 
 class RuntimePatchContractTests(unittest.TestCase):
     def test_registered_handler_replacements_are_closure_free(self):
-        # Keep this suite importable before third-party runtime dependencies are
-        # installed. Dependency-heavy patches are exercised by the later entrypoint
-        # smoke-import step.
         replacements = (
             help_text._telegram_help,
             help_text._vk_help,
@@ -24,6 +23,7 @@ class RuntimePatchContractTests(unittest.TestCase):
             identity._telegram_tutor_contact_chosen,
             financial_display._tutor_stats_menu,
             financial_display._tutor_stats_month,
+            tutor_students._telegram_show_students,
         )
         for function in replacements:
             with self.subTest(function=function.__name__):
@@ -67,6 +67,19 @@ class RuntimePatchContractTests(unittest.TestCase):
         for status, action in expected.items():
             with self.subTest(status=status):
                 self.assertEqual(closing_receipt_claim_action(status), action)
+
+    def test_tutor_panel_groups_linked_accounts_but_not_equal_unlinked_ids(self):
+        bookings = {
+            1: {"tutor_id": 7, "student_id": 100, "user_id": 111, "user_platform": "telegram", "username": "Иван", "status": "completed"},
+            2: {"tutor_id": 7, "student_id": 100, "user_id": 222, "user_platform": "vk", "username": "Иван", "status": "pending"},
+            3: {"tutor_id": 7, "student_id": None, "user_id": 555, "user_platform": "telegram", "username": "TG", "status": "pending"},
+            4: {"tutor_id": 7, "student_id": None, "user_id": 555, "user_platform": "vk", "username": "VK", "status": "confirmed"},
+        }
+        groups = group_tutor_students(bookings, 7)
+        self.assertEqual(len(groups), 3)
+        linked = next(group for group in groups if group["key"] == ("student", 100))
+        self.assertEqual(linked["completed_lessons"], 1)
+        self.assertEqual(platform_label(linked["platforms"]), "TG/VK")
 
 
 if __name__ == "__main__":
