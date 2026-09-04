@@ -14,9 +14,9 @@ from decimal import Decimal, ROUND_HALF_UP
 import database as _db
 import payments
 from fiscal_agent import get_tutor_phone
+from receipt_retry_policy import closing_receipt_claim_action
 
 _SCHEMA_READY = False
-_FINAL_RECEIPT_STATUSES = {"submitted", "sent"}
 
 
 def _rub_to_kop(value) -> int:
@@ -280,12 +280,7 @@ async def get_booking_usage(booking_id: int) -> dict | None:
 
 
 async def _claim_subscription_closing_receipt(conn, booking_id: int, usage: dict):
-    """Claim a first send or a safe retry after an explicit failed response.
-
-    `unknown` is deliberately not retried automatically: after a timeout we do not
-    know whether T-Bank/CloudKassir accepted the first request, so a blind retry can
-    duplicate the fiscal operation.
-    """
+    """Claim a first send or a safe retry after an explicit failed response."""
     claimed = await conn.fetchrow(
         """
         INSERT INTO subscription_closing_receipts
@@ -304,13 +299,15 @@ async def _claim_subscription_closing_receipt(conn, booking_id: int, usage: dict
     )
     if not existing:
         return None, "closing_receipt_claim_failed"
-    if existing["status"] in _FINAL_RECEIPT_STATUSES:
+
+    action = closing_receipt_claim_action(existing["status"])
+    if action == "already_submitted":
         return None, "already_submitted"
-    if existing["status"] == "sending":
+    if action == "in_progress":
         return None, "closing_receipt_in_progress"
-    if existing["status"] == "unknown":
+    if action == "unknown":
         return None, "closing_receipt_status_unknown"
-    if existing["status"] != "failed":
+    if action != "retry":
         return None, "closing_receipt_not_retryable"
 
     claimed = await conn.fetchrow(
