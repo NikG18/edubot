@@ -26,7 +26,10 @@ from contact_delivery_hardening import install_telegram_contact_delivery_hardeni
 from telegram_messaging_identity_hardening import install_telegram_messaging_identity_hardening
 from pagination_hardening import install_telegram_pagination_hardening
 from core_flow_hardening import install_telegram_core_flow_hardening
-from records_channel_hardening import install_records_channel_hardening
+from manual_test_hardening import (
+    install_records_runtime_hardening,
+    install_telegram_manual_test_hardening,
+)
 from runtime_hardening import install_telegram_hardening
 
 install_financial_hardening(app)
@@ -54,7 +57,8 @@ install_telegram_contact_delivery_hardening(app)
 install_telegram_messaging_identity_hardening(app)
 install_telegram_pagination_hardening(app)
 install_telegram_core_flow_hardening(app)
-install_records_channel_hardening()
+install_records_runtime_hardening(app)
+install_telegram_manual_test_hardening(app)
 install_telegram_hardening(app)
 
 
