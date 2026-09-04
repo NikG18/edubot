@@ -87,6 +87,7 @@ jobs:
           assert legacy._admin_booking_pagination_installed is True
           assert legacy._core_flow_tg_hardened is True
           assert legacy._manual_test_tg_hardened is True
+          assert legacy._telegram_email_payment_safety_installed is True
           assert legacy.RECORDS_CHANNEL_ID is None
           assert booking_records._accurate_cross_platform_records_installed is True
           assert booking_records._manual_records_runtime_hardened is True
@@ -117,6 +118,7 @@ jobs:
           assert legacy._vk_reply_authorization_installed is True
           assert legacy._vk_contact_delivery_hardened is True
           assert legacy._core_flow_vk_hardened is True
+          assert legacy._vk_email_payment_safety_installed is True
           assert booking_records._accurate_cross_platform_records_installed is True
           assert booking_records._manual_records_runtime_hardened is True
           assert payment._runtime_legacy is legacy
