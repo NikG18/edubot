@@ -1,10 +1,96 @@
-"""Cross-process deduplication for T-Bank payment status polling."""
+"""Cross-process deduplication for T-Bank payment status polling.
+
+Both ordinary booking payments and subscription prepayments are checked. The latter
+is a fallback for missed/delayed webhooks: activation is still idempotent and both
+Telegram/VK processes serialize checks by PaymentId with PostgreSQL advisory locks.
+"""
 
 from __future__ import annotations
 
 import logging
 
 import database as _db
+import subscription_hardening as subs
+
+
+async def _poll_pending_subscriptions(legacy) -> None:
+    """Recover package purchases when the T-Bank webhook was missed."""
+    await subs.ensure_subscription_schema()
+    await _db._ensure_pool()
+
+    async with _db._legacy.pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id,payment_id,user_id,user_platform,total_lessons
+            FROM pending_subscriptions
+            WHERE payment_id IS NOT NULL
+            ORDER BY id
+            """
+        )
+
+    for snapshot in rows:
+        payment_id = str(snapshot["payment_id"] or "")
+        if not payment_id:
+            continue
+
+        async with _db._legacy.pool.acquire() as conn:
+            async with conn.transaction():
+                # Telegram and VK polling loops may see the same package. Only one
+                # process may query/finalize a given PaymentId at a time.
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    f"payment-poll:{payment_id}",
+                )
+                current = await conn.fetchrow(
+                    """
+                    SELECT id,payment_id,user_id,user_platform,total_lessons
+                    FROM pending_subscriptions
+                    WHERE payment_id=$1
+                    """,
+                    payment_id,
+                )
+                if not current:
+                    continue
+
+                payment_state = await legacy.check_payment(payment_id)
+                if not payment_state.get("Success"):
+                    continue
+                status = str(payment_state.get("Status") or "").upper()
+
+                if status in {"REJECTED", "CANCELED"}:
+                    await conn.execute(
+                        "DELETE FROM pending_subscriptions WHERE payment_id=$1",
+                        payment_id,
+                    )
+                    rejected = dict(current)
+                else:
+                    rejected = None
+                    if status not in {"CONFIRMED", "AUTHORIZED"}:
+                        continue
+                    # Do not hold a row lock here: hardened activation performs its
+                    # own transaction/row lock and is idempotent by payment_id.
+                    confirmed = dict(current)
+
+        if rejected is not None:
+            await legacy.send_to_user(
+                rejected["user_id"],
+                rejected["user_platform"] or "telegram",
+                "❌ Платёж за абонемент не прошёл. Абонемент не активирован.",
+            )
+            continue
+
+        activated = await subs.activate_subscription(payment_id)
+        if activated:
+            await legacy.send_to_user(
+                confirmed["user_id"],
+                confirmed["user_platform"] or "telegram",
+                f"✅ Абонемент на {confirmed['total_lessons']} занятий активирован.",
+            )
+        else:
+            logging.error(
+                "Could not activate confirmed subscription payment_id=%s",
+                payment_id,
+            )
 
 
 async def _poll_pending(legacy, *, telegram_bot=None) -> None:
@@ -60,6 +146,8 @@ async def _poll_pending(legacy, *, telegram_bot=None) -> None:
                     booking.get("user_platform", "telegram"),
                     "❌ Платёж не прошёл. Запись отменена.",
                 )
+
+    await _poll_pending_subscriptions(legacy)
 
     if telegram_bot is not None:
         await _cleanup_telegram_payment_messages(legacy, telegram_bot)
