@@ -11,6 +11,7 @@ from tutor_archive_hardening import install_tutor_archive_hardening
 from subscription_booking import install_vk_subscription_booking
 from tutor_confirmation_hardening import install_vk_tutor_confirmation
 from subscription_cancel_hardening import install_subscription_cancel_release
+from completed_cancellation_hardening import install_completed_cancellation_guard
 from completion_hardening import install_vk_completion_hardening
 from vk_payment_hardening import install_vk_payment_hardening
 from vk_email_hardening import install_vk_email_hardening
@@ -32,6 +33,7 @@ install_tutor_archive_hardening(app)
 install_vk_subscription_booking(app)
 install_vk_tutor_confirmation(app)
 install_subscription_cancel_release(app)
+install_completed_cancellation_guard(app)
 install_vk_completion_hardening(app)
 install_vk_payment_hardening(app)
 install_vk_email_hardening(app)
