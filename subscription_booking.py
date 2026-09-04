@@ -136,45 +136,52 @@ def _clone_function(fn):
     )
 
 
+async def _telegram_subscription_confirm(call, bot, state):
+    """Closure-free code object for the already-registered Telegram handler."""
+    try:
+        bid = int(call.data.rsplit("_", 1)[1])
+    except (AttributeError, TypeError, ValueError):
+        return await _subscription_original_confirm(call, bot, state)
+
+    booking = await _subscription_db.get_booking(bid)
+    if not booking or booking.get("booking_type") == "trial":
+        return await _subscription_original_confirm(call, bot, state)
+    if not await _require_booking_tutor(call, booking):
+        return
+
+    result = await _subscription_confirm_from_subscription(legacy, bid, call.from_user.id)
+    if result is None:
+        return await _subscription_original_confirm(call, bot, state)
+
+    await send_to_user(
+        booking["user_id"], booking.get("user_platform", "telegram"),
+        "✅ Занятие подтверждено преподавателем и оплачено из абонемента.\n"
+        f"📚 {booking['subject']}\n📅 {booking['date']} 🕒 {booking['time_slot']}\n"
+        f"Осталось занятий в этом абонементе: {result['remaining_lessons']}."
+    )
+    await state.clear()
+    await call.message.edit_text(
+        "✅ Занятие подтверждено. Оплата списана из абонемента.\n"
+        f"Остаток: {result['remaining_lessons']} занятий."
+    )
+    await _subscription_db._sync_booking_record_safely(bid)
+
+
 def install_telegram_subscription_booking(app) -> None:
-    legacy = app.legacy
-    if getattr(legacy, "_subscription_booking_tg_installed", False):
+    legacy_module = app.legacy
+    if getattr(legacy_module, "_subscription_booking_tg_installed", False):
         return
     subs.install_subscription_database_aliases(app)
-    original_confirm = _clone_function(legacy.tutor_confirm_booking)
+    original_confirm = _clone_function(legacy_module.tutor_confirm_booking)
 
-    async def wrapped_confirm(call, bot, state):
-        try:
-            bid = int(call.data.rsplit("_", 1)[1])
-        except (AttributeError, TypeError, ValueError):
-            return await legacy._subscription_original_confirm(call, bot, state)
-        booking = await _db.get_booking(bid)
-        if not booking or booking.get("booking_type") == "trial":
-            return await legacy._subscription_original_confirm(call, bot, state)
-        if not await legacy._require_booking_tutor(call, booking):
-            return
-        result = await _confirm_from_subscription(legacy, bid, call.from_user.id)
-        if result is None:
-            return await legacy._subscription_original_confirm(call, bot, state)
-
-        await legacy.send_to_user(
-            booking["user_id"], booking.get("user_platform", "telegram"),
-            "✅ Занятие подтверждено преподавателем и оплачено из абонемента.\n"
-            f"📚 {booking['subject']}\n📅 {booking['date']} 🕒 {booking['time_slot']}\n"
-            f"Осталось занятий в этом абонементе: {result['remaining_lessons']}."
-        )
-        await state.clear()
-        await call.message.edit_text(
-            "✅ Занятие подтверждено. Оплата списана из абонемента.\n"
-            f"Остаток: {result['remaining_lessons']} занятий."
-        )
-        await _db._sync_booking_record_safely(bid)
-
-    legacy._db = _db
-    legacy._confirm_from_subscription = _confirm_from_subscription
-    legacy._subscription_original_confirm = original_confirm
-    legacy.tutor_confirm_booking.__code__ = wrapped_confirm.__code__
-    legacy._subscription_booking_tg_installed = True
+    legacy_module.legacy = legacy_module
+    legacy_module._subscription_db = _db
+    legacy_module._subscription_confirm_from_subscription = _confirm_from_subscription
+    legacy_module._subscription_original_confirm = original_confirm
+    if legacy_module.tutor_confirm_booking.__code__.co_freevars or _telegram_subscription_confirm.__code__.co_freevars:
+        raise RuntimeError("Telegram subscription confirmation replacement cannot use closures")
+    legacy_module.tutor_confirm_booking.__code__ = _telegram_subscription_confirm.__code__
+    legacy_module._subscription_booking_tg_installed = True
 
 
 def install_vk_subscription_booking(app) -> None:
