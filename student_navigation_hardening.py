@@ -60,10 +60,12 @@ def install_telegram_student_navigation_hardening(app) -> None:
 
     @legacy.dp.callback_query(legacy.F.data.regexp(
         r"^(?:"
-        r"date_.+|slot_.+|confirm_booking|cancel_booking|"
+        r"date_.+|slot_.+|confirm_booking|cancel_booking|back_to_date|"
         r"trial_subject_.+|trial_date_.+|back_to_trial_dates|trial_slot_.+|confirm_trial|"
         r"reschedule_date_.+|back_to_reschedule_date|reschedule_slot_.+|confirm_student_reschedule|"
-        r"buy_subject_.+|back_to_buy_packages|confirm_buy_subscription"
+        r"buy_subject_.+|back_to_buy_tutors|back_to_buy_packages|confirm_buy_subscription|"
+        r"back_tutor_reschedule_date|back_to_schedule|back_to_schedule_day|add_range_back|"
+        r"back_to_edit_tutor|back_to_subjects_list"
         r")$"
     ))
     async def expired_student_callback(call: legacy.CallbackQuery, state: legacy.FSMContext):
@@ -79,6 +81,15 @@ def install_telegram_student_navigation_hardening(app) -> None:
             await call.message.edit_text(text, reply_markup=keyboard)
         except legacy.TelegramBadRequest:
             await call.message.answer(text, reply_markup=keyboard)
+
+    # Compatibility with buttons already sent before the route names were fixed.
+    @legacy.dp.callback_query(legacy.F.data == "back_to_booking_tutors")
+    async def legacy_booking_back(call: legacy.CallbackQuery, state: legacy.FSMContext):
+        await legacy.back_to_tutors_booking(call, state)
+
+    @legacy.dp.callback_query(legacy.F.data == "back_to_pay")
+    async def legacy_payment_back(call: legacy.CallbackQuery):
+        await legacy.back_to_payment_menu(call)
 
     legacy._student_navigation_tg_hardened = True
 

@@ -28,6 +28,7 @@ from manual_test_hardening import install_records_runtime_hardening
 from email_payment_safety_hardening import install_vk_email_payment_safety
 from runtime_hardening import install_vk_hardening
 from student_navigation_hardening import install_vk_student_navigation_hardening
+from acquisition_hardening import install_vk_acquisition_hardening
 
 install_financial_hardening(app)
 install_student_stats_hardening(app)
@@ -55,6 +56,7 @@ install_records_runtime_hardening(app)
 install_vk_email_payment_safety(app)
 install_vk_hardening(app)
 install_vk_student_navigation_hardening(app)
+install_vk_acquisition_hardening(app)
 
 
 async def main():

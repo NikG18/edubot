@@ -161,7 +161,7 @@ def install_telegram_callback_hardening(app) -> None:
                 row = []
         if row:
             buttons.append(row)
-        buttons.append([legacy.InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_booking_tutors")])
+        buttons.append([legacy.InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_tutors_booking")])
         await call.message.edit_text(
             f"Вы выбрали предмет: {subject}\nВыберите дату:",
             reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=buttons),

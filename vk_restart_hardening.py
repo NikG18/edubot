@@ -42,6 +42,7 @@ _REQUIREMENTS = {
     # Tutor schedule continuation. schedule_main itself rebuilds tid safely.
     "edit_day": ("tid",),
     "back_to_schedule": ("tid",),
+    "back_to_schedule_day": ("tid", "current_day"),
     "handle_block_day": ("tid",),
     "handle_unblock_day": ("tid",),
     "add_slot_start": ("tid", "current_day"),
