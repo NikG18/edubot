@@ -592,7 +592,8 @@ async def repet(message: types.Message):
 
 
 @dp.callback_query(F.data == "back_to_tutors")
-async def back_to_tutors(call: CallbackQuery):
+async def back_to_tutors(call: CallbackQuery, state: FSMContext):
+    await state.clear()
     keyboard = await make_tutors_keyboard("tutor_info")
     if call.message.content_type == 'photo':
         try:

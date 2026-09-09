@@ -585,12 +585,14 @@ async def info_repetitors(message: Message):
 
 
 async def back_to_tutors(event: MessageEvent):
+    await state_dispenser.delete(event.user_id)
     await edit_event_message(event, "Кто из репетиторов вас интересует?",
                              keyboard=await make_tutors_keyboard("tutor_info"))
 
 
 async def show_tutor_info(event: MessageEvent):
     tid = event.payload.get("tutor_id")
+    await state_dispenser.delete(event.user_id)
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
     if not tutor:
@@ -705,7 +707,7 @@ async def show_trial_dates(event: MessageEvent, tid: int):
     available_dates = await get_available_dates(tid, days_ahead=7)
     if not available_dates:
         keyboard = Keyboard(inline=True)
-        keyboard.add(Callback("🔙 К анкете", payload={"cmd": "tutor_info", "tutor_id": tid}))
+        keyboard.add(Callback("🔙 К анкете", payload={"cmd": f"tutor_info_{tid}"}))
         await edit_event_message(event, "На ближайшие 7 дней у репетитора нет свободных слотов.",
                                  keyboard=keyboard.get_json())
         return
@@ -728,7 +730,7 @@ async def show_trial_dates(event: MessageEvent, tid: int):
         for b in row:
             kb.add(b)
         kb.row()
-    kb.add(Callback("🔙 К анкете", payload={"cmd": "tutor_info", "tutor_id": tid}))
+    kb.add(Callback("🔙 К анкете", payload={"cmd": f"tutor_info_{tid}"}))
     await edit_event_message(event, "Выберите дату пробного занятия:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, TrialBookingStates.waiting_date)
 
@@ -3244,8 +3246,15 @@ async def universal_callback_handler(event: MessageEvent):
         await account_link_enter(event)
     elif cmd == "back_to_tutors":
         await back_to_tutors(event)
-    elif cmd.startswith("tutor_info_"):
-        tid = int(cmd.split("_")[-1])
+    elif cmd == "tutor_info" or cmd.startswith("tutor_info_"):
+        # Старые сообщения содержат cmd=tutor_info и tutor_id отдельным
+        # полем. Новые кнопки кодируют ID в cmd, как остальные VK-маршруты.
+        tid = event.payload.get("tutor_id") if cmd == "tutor_info" else cmd.split("_")[-1]
+        try:
+            tid = int(tid)
+        except (TypeError, ValueError):
+            await answer_event(event, "Кнопка устарела. Откройте список репетиторов заново.", snackbar=True)
+            return
         event.payload["tutor_id"] = tid
         await show_tutor_info(event)
     # --- Пробное занятие ---

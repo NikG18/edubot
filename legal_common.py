@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import database as _db
 
-DOC_VERSION = "2026-09-03-r1"
+DOC_VERSION = "2026-09-09-r1"
 DOC_BASE_URL = os.environ.get(
     "LEGAL_DOCS_BASE_URL",
     "https://github.com/NikG18/edubot/blob/main/legal",
@@ -25,7 +25,7 @@ DOCS = {
     "privacy_policy": {
         "title": "Политика обработки ПД",
         "url": f"{DOC_BASE_URL}/03_privacy_policy.md",
-        "hash": "aab1969c082f8222879b406fa6e7d0a92aa4ea96cff9596d021e8a74047deff6",
+        "hash": "8718ac723f7b528792310ad9a605b7db62b8329eecc1eecac1997d81ff6de532",
     },
     "tutor_pd_consent": {
         "title": "Согласие репетитора на обработку ПД",

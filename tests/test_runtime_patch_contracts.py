@@ -14,6 +14,7 @@ import tutor_students_hardening as tutor_students
 from tutor_students_rules import group_tutor_students, platform_label
 import vk_admin_stats_hardening as vk_stats
 import vk_restart_hardening as vk_restart
+import acquisition_hardening as acquisition
 
 
 class RuntimePatchContractTests(unittest.TestCase):
@@ -39,6 +40,8 @@ class RuntimePatchContractTests(unittest.TestCase):
             navigation._telegram_fresh_back,
             navigation._vk_fresh_back,
             subscription_purchase._telegram_confirm_buy_subscription,
+            acquisition._telegram_start_with_acquisition,
+            acquisition._vk_start_with_acquisition,
         )
         for function in replacements:
             with self.subTest(function=function.__name__):

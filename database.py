@@ -127,6 +127,17 @@ async def init_db():
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS email TEXT;
+                ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS acquisition_source TEXT;
+                ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS acquisition_platform TEXT;
+                ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS acquisition_payload TEXT;
+                ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS acquired_at TIMESTAMPTZ;
+                ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS last_source TEXT;
+                ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS last_source_platform TEXT;
+                ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS last_source_payload TEXT;
+                ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+                ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS source_visits INTEGER NOT NULL DEFAULT 0;
+                CREATE INDEX IF NOT EXISTS idx_student_profiles_acquisition_source
+                    ON student_profiles(acquisition_source);
                 CREATE TABLE IF NOT EXISTS student_accounts (
                     platform TEXT NOT NULL CHECK (platform IN ('telegram','vk')),
                     platform_user_id BIGINT NOT NULL,
@@ -373,6 +384,64 @@ async def set_student_email(platform: str, platform_user_id: int, email: str) ->
     return normalized
 
 
+async def record_student_acquisition(platform: str, platform_user_id: int,
+                                     source: str, payload: str | None = None) -> dict:
+    """Persist immutable first-touch and updated last-touch attribution."""
+    platform = str(platform or "").lower()
+    if platform not in {"telegram", "vk"}:
+        raise ValueError("platform must be 'telegram' or 'vk'")
+    source = str(source or "direct").strip()[:64] or "direct"
+    payload = str(payload).strip()[:256] if payload is not None else None
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            student_id = await _student_for_account_conn(
+                conn, platform, platform_user_id, create=True
+            )
+            row = await conn.fetchrow(
+                """
+                UPDATE student_profiles
+                SET acquisition_source=COALESCE(acquisition_source,$2),
+                    acquisition_platform=COALESCE(acquisition_platform,$1),
+                    acquisition_payload=CASE
+                        WHEN acquisition_source IS NULL THEN $3
+                        ELSE acquisition_payload
+                    END,
+                    acquired_at=COALESCE(acquired_at,NOW()),
+                    last_source=$2,
+                    last_source_platform=$1,
+                    last_source_payload=$3,
+                    last_seen_at=NOW(),
+                    source_visits=source_visits+1
+                WHERE id=$4
+                RETURNING *
+                """,
+                platform, source, payload, student_id,
+            )
+    return dict(row)
+
+
+async def get_student_acquisition(platform: str, platform_user_id: int) -> Optional[dict]:
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            student_id = await _student_for_account_conn(
+                conn, platform, platform_user_id, create=False
+            )
+            if not student_id:
+                return None
+            row = await conn.fetchrow(
+                """
+                SELECT id,acquisition_source,acquisition_platform,acquisition_payload,
+                       acquired_at,last_source,last_source_platform,last_source_payload,
+                       last_seen_at,source_visits
+                FROM student_profiles WHERE id=$1
+                """,
+                student_id,
+            )
+    return dict(row) if row else None
+
+
 async def get_bookings_for_account(platform: str, platform_user_id: int,
                                    statuses=None) -> dict[int, dict]:
     await _ensure_pool()
@@ -587,6 +656,47 @@ async def consume_account_link_code(target_platform: str, target_platform_user_i
             await conn.execute(
                 "UPDATE student_profiles SET email=$1 WHERE id=$2",
                 merged_email, source_student_id,
+            )
+
+            # Preserve attribution from both profiles. The earliest touch remains
+            # the acquisition source; the newest touch remains the last source.
+            source_profile = dict(await conn.fetchrow(
+                "SELECT * FROM student_profiles WHERE id=$1", source_student_id
+            ))
+            target_profile = dict(await conn.fetchrow(
+                "SELECT * FROM student_profiles WHERE id=$1", target_student_id
+            ))
+            first_profile = min(
+                (p for p in (source_profile, target_profile) if p.get("acquired_at")),
+                key=lambda p: p["acquired_at"],
+                default=source_profile,
+            )
+            last_profile = max(
+                (p for p in (source_profile, target_profile) if p.get("last_seen_at")),
+                key=lambda p: p["last_seen_at"],
+                default=source_profile,
+            )
+            await conn.execute(
+                """
+                UPDATE student_profiles
+                SET acquisition_source=$1, acquisition_platform=$2,
+                    acquisition_payload=$3, acquired_at=$4,
+                    last_source=$5, last_source_platform=$6,
+                    last_source_payload=$7, last_seen_at=$8,
+                    source_visits=$9
+                WHERE id=$10
+                """,
+                first_profile.get("acquisition_source"),
+                first_profile.get("acquisition_platform"),
+                first_profile.get("acquisition_payload"),
+                first_profile.get("acquired_at"),
+                last_profile.get("last_source"),
+                last_profile.get("last_source_platform"),
+                last_profile.get("last_source_payload"),
+                last_profile.get("last_seen_at"),
+                int(source_profile.get("source_visits") or 0)
+                + int(target_profile.get("source_visits") or 0),
+                source_student_id,
             )
 
             await conn.execute(
