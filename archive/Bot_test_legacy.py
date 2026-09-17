@@ -1102,7 +1102,12 @@ async def back_to_date(call: CallbackQuery, state: FSMContext):
         dt = datetime.strptime(d, "%d.%m.%Y")
         label = f"{d} ({WEEKDAY_NAMES[WEEKDAYS[dt.weekday()]]})"
         buttons.append([InlineKeyboardButton(text=label, callback_data=f"date_{d}")])
-    buttons.append([InlineKeyboardButton(text="🔙 Назад к репетиторам", callback_data="back_to_tutors_booking")])
+    back_callback = (
+        "book_back_tutors"
+        if data.get("booking_subject_index") is not None
+        else "back_to_tutors_booking"
+    )
+    buttons.append([InlineKeyboardButton(text="🔙 Назад к преподавателям", callback_data=back_callback)])
     await call.message.edit_text("Выберите дату:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await state.set_state(BookingStates.waiting_date)
 

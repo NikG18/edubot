@@ -1025,7 +1025,12 @@ async def back_to_date(event: MessageEvent):
         for btn in row:
             kb.add(btn)
         kb.row()
-    kb.add(Callback("🔙 Назад к репетиторам", payload={"cmd": "back_to_tutors_booking"}))
+    back_command = (
+        "book_back_tutors"
+        if data.get("booking_subject_index") is not None
+        else "back_to_tutors_booking"
+    )
+    kb.add(Callback("🔙 Назад к преподавателям", payload={"cmd": back_command}))
     await edit_event_message(event, "Выберите дату:", keyboard=kb.get_json())
     await state_dispenser.set(event.user_id, BookingStates.waiting_date)
 
@@ -3273,6 +3278,14 @@ async def universal_callback_handler(event: MessageEvent):
     elif cmd == "confirm_trial":
         await confirm_trial_booking(event)
     # --- Запись на занятие ---
+    elif cmd.startswith("booksub_"):
+        await booking_subject_chosen(event)
+    elif cmd.startswith("booktutor_"):
+        await booking_tutor_chosen(event)
+    elif cmd == "book_back_subjects":
+        await booking_back_to_subjects(event)
+    elif cmd == "book_back_tutors":
+        await booking_back_to_tutors(event)
     elif cmd.startswith("tutor_booking_"):
         tid = int(cmd.split("_")[-1])
         event.payload["tutor_id"] = tid

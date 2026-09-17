@@ -15,6 +15,8 @@ from tutor_students_rules import group_tutor_students, platform_label
 import vk_admin_stats_hardening as vk_stats
 import vk_restart_hardening as vk_restart
 import acquisition_hardening as acquisition
+import subject_booking_hardening as subject_booking
+import tutor_info_photo_hardening as tutor_info_photo
 
 
 class RuntimePatchContractTests(unittest.TestCase):
@@ -42,6 +44,8 @@ class RuntimePatchContractTests(unittest.TestCase):
             subscription_purchase._telegram_confirm_buy_subscription,
             acquisition._telegram_start_with_acquisition,
             acquisition._vk_start_with_acquisition,
+            tutor_info_photo._hardened_back_to_tutors,
+            tutor_info_photo._hardened_show_tutor_info,
         )
         for function in replacements:
             with self.subTest(function=function.__name__):
@@ -55,6 +59,9 @@ class RuntimePatchContractTests(unittest.TestCase):
             f"reply_vk_{student_id}_{tutor_id}",
             f"tutor_contact_student_tg_{student_id}",
             f"tutor_contact_student_vk_{student_id}",
+            f"booktutor_{tutor_id}_999999",
+            "book_back_subjects",
+            "book_back_tutors",
         )
         for callback in callbacks:
             with self.subTest(callback=callback):
