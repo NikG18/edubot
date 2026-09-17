@@ -29,6 +29,7 @@ from email_payment_safety_hardening import install_vk_email_payment_safety
 from runtime_hardening import install_vk_hardening
 from student_navigation_hardening import install_vk_student_navigation_hardening
 from acquisition_hardening import install_vk_acquisition_hardening
+from subject_booking_hardening import install_vk_subject_booking
 
 install_financial_hardening(app)
 install_student_stats_hardening(app)
@@ -57,6 +58,7 @@ install_vk_email_payment_safety(app)
 install_vk_hardening(app)
 install_vk_student_navigation_hardening(app)
 install_vk_acquisition_hardening(app)
+install_vk_subject_booking(app)
 
 
 async def main():
