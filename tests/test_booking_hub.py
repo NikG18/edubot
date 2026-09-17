@@ -13,6 +13,10 @@ from booking_hub import (
 from vkbottle import Keyboard, Callback
 
 
+def payload(value):
+    return json.loads(value) if isinstance(value, str) else value
+
+
 class State:
     def __init__(self):
         self.data = {}
@@ -133,18 +137,18 @@ class BookingHubTests(unittest.IsolatedAsyncioTestCase):
         message = SimpleNamespace(from_id=77, answer=AsyncMock())
         await legacy.zapis(message)
         raw = json.loads(message.answer.await_args.kwargs["keyboard"])
-        payloads = [json.loads(r[0]["action"]["payload"]) for r in raw["buttons"]]
+        payloads = [payload(r[0]["action"]["payload"]) for r in raw["buttons"]]
         self.assertEqual(payloads[0]["cmd"], TRIAL)
         self.assertEqual(payloads[1]["cmd"], REGULAR)
         self.assertEqual(payloads[2], {"cmd": "qr", "action": "subscription_start", "booking_entry": True})
         event = SimpleNamespace(user_id=77, payload={"cmd": REGULAR})
         await legacy.booking_hub_entry(event)
         raw = json.loads(original_edit.await_args.kwargs["keyboard"])
-        self.assertEqual(json.loads(raw["buttons"][0][0]["action"]["payload"])["cmd"], HUB)
+        self.assertEqual(payload(raw["buttons"][0][0]["action"]["payload"])["cmd"], HUB)
         event.payload = {"cmd": TRIAL}
         await legacy.booking_hub_entry(event)
         raw = json.loads(original_edit.await_args.kwargs["keyboard"])
-        self.assertEqual(json.loads(raw["buttons"][0][0]["action"]["payload"]), {"cmd": "trials", "tutor_id": 1})
+        self.assertEqual(payload(raw["buttons"][0][0]["action"]["payload"]), {"cmd": "trials", "tutor_id": 1})
         event.payload = {"cmd": "qr", "action": "subscription_start", "booking_entry": True}
         await legacy.edit_event_message(event, "email required")
         self.assertIn(HUB, original_edit.await_args.kwargs["keyboard"])
