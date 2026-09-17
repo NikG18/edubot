@@ -43,14 +43,13 @@ class SubjectBookingCatalogTests(unittest.TestCase):
         self.assertIsNone(catalog_item(catalog, "1"))
         self.assertIsNone(catalog_item(catalog, "not-a-number"))
 
-    def test_legal_entrypoints_delegate_regular_booking_to_subject_flow(self):
+    def test_legal_entrypoints_start_with_tutors(self):
         root = Path(__file__).resolve().parents[1]
         telegram = (root / "legal_telegram.py").read_text(encoding="utf-8")
         vk = (root / "legal_vk.py").read_text(encoding="utf-8")
-        self.assertIn('getattr(legacy, "_subject_booking_start_message", None)', telegram)
-        self.assertIn('getattr(legacy, "_subject_booking_start_callback", None)', telegram)
-        self.assertIn('getattr(legacy, "_subject_booking_start_message", None)', vk)
-        self.assertIn('getattr(legacy, "_subject_booking_start_event", None)', vk)
+        for source in (telegram, vk):
+            self.assertNotIn('getattr(legacy, "_subject_booking_start_', source)
+            self.assertIn('make_tutors_keyboard("tutor_booking", back_callback="back_to_menu")', source)
 
     def test_vk_router_contains_every_subject_booking_route(self):
         source = (
