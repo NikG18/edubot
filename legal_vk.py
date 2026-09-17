@@ -122,9 +122,6 @@ legacy.process_payment_email.__code__ = _legal_process_payment_email.__code__
 
 # -------------------- Ранний privacy-gate: обычная запись --------------------
 async def _regular_booking_after_privacy(message):
-    subject_first = getattr(legacy, "_subject_booking_start_message", None)
-    if subject_first is not None:
-        return await subject_first(message)
     await message.answer(
         "Кто из репетиторов вас интересует?",
         keyboard=await legacy.make_tutors_keyboard("tutor_booking", back_callback="back_to_menu"),
@@ -170,9 +167,6 @@ async def _legal_back_to_tutors_booking(event):
     if data.get("legal_privacy_context") == "regular_booking":
         await record_student_privacy_continued(event.user_id, "vk", "regular_booking")
         await legacy.state_dispenser.delete(event.user_id)
-        subject_first = getattr(legacy, "_subject_booking_start_event", None)
-        if subject_first is not None:
-            return await subject_first(event)
     return await _original_back_to_tutors_booking(event)
 
 

@@ -97,9 +97,6 @@ async def legal_documents_menu(message):
 
 # Обычная запись: до первого сбора данных показываем текущую Политику ПД.
 async def _regular_booking_after_privacy(message, state):
-    subject_first = getattr(legacy, "_subject_booking_start_message", None)
-    if subject_first is not None:
-        return await subject_first(message, state)
     await message.answer("Переходим в раздел...", reply_markup=legacy.ReplyKeyboardRemove())
     keyboard = await legacy.make_tutors_keyboard("tutor_booking", back_callback="back_to_menu")
     await message.answer("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
@@ -129,9 +126,6 @@ async def legal_continue_regular_booking(call, state):
     await legacy.safe_answer(call)
     await record_student_privacy_continued(call.from_user.id, "telegram", "regular_booking")
     await state.clear()
-    subject_first = getattr(legacy, "_subject_booking_start_callback", None)
-    if subject_first is not None:
-        return await subject_first(call, state)
     keyboard = await legacy.make_tutors_keyboard("tutor_booking", back_callback="back_to_menu")
     await call.message.edit_text("Кто из репетиторов Вас интересует?", reply_markup=keyboard)
 
