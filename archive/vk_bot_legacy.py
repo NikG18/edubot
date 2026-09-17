@@ -939,13 +939,21 @@ async def back_to_tutors_booking(event: MessageEvent):
 
 
 async def subject_chosen(event: MessageEvent):
-    # payload: {"cmd": "subject_<tid>_<subject>"}
-    parts = event.payload["cmd"].split("_", 2)
-    if len(parts) < 3:
+    parts = str(event.payload.get("cmd") or "").split("_", 2)
+    try:
+        tid = int(parts[1])
+        subject = parts[2]
+    except (IndexError, ValueError):
+        await back_to_tutors_booking(event)
         return
-    tid = int(parts[1])
-    subject = parts[2]
-    await state_dispenser.update(event.user_id, subject=subject, tutor_id=tid)
+    tutors = await get_all_tutors()
+    tutor = tutors.get(tid)
+    if not tutor or subject not in (tutor.get("subjects") or {}):
+        await back_to_tutors_booking(event)
+        return
+    await state_dispenser.delete(event.user_id)
+    await state_dispenser.set(event.user_id, BookingStates.waiting_date)
+    await state_dispenser.update(event.user_id, subject=subject, tutor_id=tid, tutor_name=tutor["name"])
     dates = await get_available_dates(tid)
     if not dates:
         kb = Keyboard(inline=True)
