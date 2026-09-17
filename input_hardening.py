@@ -21,6 +21,7 @@ def install_telegram_input_hardening(app) -> None:
         return
 
     photo_state = getattr(legacy.AdminStates.waiting_photo, "state", None)
+    edit_state = getattr(legacy.AdminStates.waiting_new_value, "state", None)
     subject_name_states = {
         getattr(legacy.AdminStates.waiting_subject_name, "state", None),
         getattr(legacy.AdminStates.adding_subject_name, "state", None),
@@ -37,7 +38,11 @@ def install_telegram_input_hardening(app) -> None:
             current = await state.get_state() if state is not None else None
 
             if event.text is None:
-                if current and current != photo_state:
+                editing_photo = False
+                if current == edit_state and state is not None and event.photo:
+                    values = await state.get_data()
+                    editing_photo = values.get("edit_field") == "photo"
+                if current and current != photo_state and not editing_photo:
                     await event.answer(
                         "Сейчас бот ожидает текстовое сообщение. "
                         "Отправьте текст или вернитесь в меню."

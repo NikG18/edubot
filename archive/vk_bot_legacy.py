@@ -285,6 +285,8 @@ async def answer_event(event: MessageEvent, text: str = None, snackbar: bool = T
 
 # -------------------- Вспомогательные функции для создания клавиатур --------------------
 async def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_to_menu") -> str:
+    if callback_prefix == "tutor_booking" and back_callback == "back_to_menu":
+        back_callback = "booking_hub"
     tutors = await get_all_tutors()
     kb = Keyboard(inline=True)
     for tid, tdata in tutors.items():
@@ -925,6 +927,7 @@ async def choose_tutor_booking(event: MessageEvent):
     if not tutor:
         await edit_event_message(event, "Ошибка выбора репетитора.")
         return
+    await state_dispenser.delete(event.user_id)
     await state_dispenser.set(event.user_id, BookingStates.choosing_subject)
     await state_dispenser.update(event.user_id, tutor_id=tid, tutor_name=tutor["name"])
     await edit_event_message(event, "На занятие по какому предмету вы хотите записаться?",
@@ -938,13 +941,21 @@ async def back_to_tutors_booking(event: MessageEvent):
 
 
 async def subject_chosen(event: MessageEvent):
-    # payload: {"cmd": "subject_<tid>_<subject>"}
-    parts = event.payload["cmd"].split("_", 2)
-    if len(parts) < 3:
+    parts = str(event.payload.get("cmd") or "").split("_", 2)
+    try:
+        tid = int(parts[1])
+        subject = parts[2]
+    except (IndexError, ValueError):
+        await back_to_tutors_booking(event)
         return
-    tid = int(parts[1])
-    subject = parts[2]
-    await state_dispenser.update(event.user_id, subject=subject, tutor_id=tid)
+    tutors = await get_all_tutors()
+    tutor = tutors.get(tid)
+    if not tutor or subject not in (tutor.get("subjects") or {}):
+        await back_to_tutors_booking(event)
+        return
+    await state_dispenser.delete(event.user_id)
+    await state_dispenser.set(event.user_id, BookingStates.waiting_date)
+    await state_dispenser.update(event.user_id, subject=subject, tutor_id=tid, tutor_name=tutor["name"])
     dates = await get_available_dates(tid)
     if not dates:
         kb = Keyboard(inline=True)
@@ -3245,6 +3256,8 @@ async def universal_callback_handler(event: MessageEvent):
     if cmd == "back_to_menu":
         await state_dispenser.delete(user_id)
         await edit_event_message(event, "Главное меню", keyboard=await get_main_menu(user_id))
+    elif cmd in {"booking_hub", "booking_regular", "booking_trial"}:
+        await booking_hub_entry(event)
     elif cmd == "account_link_create":
         await account_link_create(event)
     elif cmd == "account_link_enter":

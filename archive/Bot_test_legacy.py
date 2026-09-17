@@ -297,6 +297,8 @@ async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
 
 # -------------------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ --------------------
 async def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_to_menu"):
+    if callback_prefix == "tutor_booking" and back_callback == "back_to_menu":
+        back_callback = "booking_hub"
     tutors = await get_all_tutors()
     buttons = []
     for tid, tdata in tutors.items():
@@ -1025,6 +1027,8 @@ async def choose_tutor_booking(call: CallbackQuery, state: FSMContext):
             ])
         )
         return
+    await state.clear()
+    await state.set_state(BookingStates.choosing_subject)
     await state.update_data(tutor_id=tid, tutor_name=tutor["name"])
     keyboard = await make_subjects_keyboard(tid, back_callback="back_to_tutors_booking")
     await call.message.edit_text("На занятие по какому предмету вы хотите записаться?", reply_markup=keyboard)
@@ -1041,13 +1045,21 @@ async def back_to_tutors_booking(call: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("subject_"))
 async def subject_chosen(call: CallbackQuery, state: FSMContext):
     await safe_answer(call)
-    parts = call.data.split("_", 2)
-    if len(parts) < 3:
-        await call.answer("Ошибка данных.", show_alert=True)
+    parts = str(call.data or "").split("_", 2)
+    try:
+        tid = int(parts[1])
+        subject = parts[2]
+    except (IndexError, ValueError):
+        await back_to_tutors_booking(call, state)
         return
-    tid = int(parts[1])
-    subject = parts[2]
-    await state.update_data(subject=subject, tutor_id=tid)
+    tutors = await get_all_tutors()
+    tutor = tutors.get(tid)
+    if not tutor or subject not in (tutor.get("subjects") or {}):
+        await back_to_tutors_booking(call, state)
+        return
+    await state.clear()
+    await state.set_state(BookingStates.waiting_date)
+    await state.update_data(subject=subject, tutor_id=tid, tutor_name=tutor["name"])
     dates = await get_available_dates(tid)
     if not dates:
         await call.message.edit_text(

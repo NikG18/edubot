@@ -71,6 +71,9 @@ install_telegram_acquisition_hardening(app)
 install_telegram_subject_booking(app)
 install_telegram_tutor_info_photo_hardening(app)
 
+from booking_hub import install_telegram_booking_hub
+install_telegram_booking_hub(app)
+
 
 async def main():
     return await app.main()
