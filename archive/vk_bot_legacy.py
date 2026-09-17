@@ -925,6 +925,7 @@ async def choose_tutor_booking(event: MessageEvent):
     if not tutor:
         await edit_event_message(event, "Ошибка выбора репетитора.")
         return
+    await state_dispenser.delete(event.user_id)
     await state_dispenser.set(event.user_id, BookingStates.choosing_subject)
     await state_dispenser.update(event.user_id, tutor_id=tid, tutor_name=tutor["name"])
     await edit_event_message(event, "На занятие по какому предмету вы хотите записаться?",

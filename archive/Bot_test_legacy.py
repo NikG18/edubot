@@ -1025,6 +1025,8 @@ async def choose_tutor_booking(call: CallbackQuery, state: FSMContext):
             ])
         )
         return
+    await state.clear()
+    await state.set_state(BookingStates.choosing_subject)
     await state.update_data(tutor_id=tid, tutor_name=tutor["name"])
     keyboard = await make_subjects_keyboard(tid, back_callback="back_to_tutors_booking")
     await call.message.edit_text("На занятие по какому предмету вы хотите записаться?", reply_markup=keyboard)
