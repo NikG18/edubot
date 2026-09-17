@@ -60,6 +60,9 @@ install_vk_student_navigation_hardening(app)
 install_vk_acquisition_hardening(app)
 install_vk_subject_booking(app)
 
+from booking_hub import install_vk_booking_hub
+install_vk_booking_hub(app)
+
 
 async def main():
     return await app.main()

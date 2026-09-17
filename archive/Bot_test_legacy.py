@@ -297,6 +297,8 @@ async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
 
 # -------------------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ --------------------
 async def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_to_menu"):
+    if callback_prefix == "tutor_booking" and back_callback == "back_to_menu":
+        back_callback = "booking_hub"
     tutors = await get_all_tutors()
     buttons = []
     for tid, tdata in tutors.items():

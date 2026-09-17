@@ -285,6 +285,8 @@ async def answer_event(event: MessageEvent, text: str = None, snackbar: bool = T
 
 # -------------------- Вспомогательные функции для создания клавиатур --------------------
 async def make_tutors_keyboard(callback_prefix: str, back_callback: str = "back_to_menu") -> str:
+    if callback_prefix == "tutor_booking" and back_callback == "back_to_menu":
+        back_callback = "booking_hub"
     tutors = await get_all_tutors()
     kb = Keyboard(inline=True)
     for tid, tdata in tutors.items():
@@ -3254,6 +3256,8 @@ async def universal_callback_handler(event: MessageEvent):
     if cmd == "back_to_menu":
         await state_dispenser.delete(user_id)
         await edit_event_message(event, "Главное меню", keyboard=await get_main_menu(user_id))
+    elif cmd in {"booking_hub", "booking_regular", "booking_trial"}:
+        await booking_hub_entry(event)
     elif cmd == "account_link_create":
         await account_link_create(event)
     elif cmd == "account_link_enter":
