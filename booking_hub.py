@@ -8,6 +8,39 @@ TRIAL = "booking_trial"
 SUBSCRIPTION = "booking_subscription"
 
 
+class TrialOriginMiddleware:
+    async def __call__(self, handler, event, data):
+        state = data.get("state")
+        command = event.data or ""
+        if state is None:
+            return await handler(event, data)
+        values = await state.get_data()
+        origin = bool(values.get("trial_from_hub"))
+        if command.startswith("hub_trials_"):
+            origin = True
+            event = event.model_copy(update={"data": command.removeprefix("hub_")})
+        elif command.startswith("trials_"):
+            origin = False
+        if command.startswith(("hub_trials_", "trials_")):
+            await state.update_data(trial_from_hub=origin)
+        if origin and (command == "back_to_tutors" or command.startswith("tutor_info_")):
+            event = event.model_copy(update={"data": TRIAL})
+        is_trial = command.startswith(("hub_trials_", "trial", "legal_continue_trial", "back_to_trial"))
+        if origin and is_trial:
+            tid = values.get("tutor_id") or values.get("legal_trial_tutor_id")
+            if command.startswith(("hub_trials_", "trials_")):
+                tid = command.rsplit("_", 1)[-1]
+            event = tg_call(event, {
+                "back_to_tutors": TRIAL, "back_to_menu": TRIAL,
+                f"tutor_info_{tid}": TRIAL,
+            })
+        result = await handler(event, data)
+        # Privacy continuation clears state; retain origin for its next screen.
+        if origin and is_trial and await state.get_data():
+            await state.update_data(trial_from_hub=True)
+        return result
+
+
 def clone(fn):
     return FunctionType(fn.__code__, fn.__globals__, fn.__name__,
                         fn.__defaults__, fn.__closure__)
@@ -30,6 +63,8 @@ def tg_markup(markup, mapping):
         for button in row:
             if button.callback_data in mapping:
                 button.callback_data = mapping[button.callback_data]
+                if button.callback_data == TRIAL:
+                    button.text = "🔙 К выбору преподавателя"
     return markup
 
 
@@ -83,6 +118,7 @@ def install_telegram_booking_hub(app):
         return
     regular_start = clone(legacy.zapis)
     subscription_start = clone(legacy.buy_subscription_start)
+    legacy.dp.callback_query.outer_middleware(TrialOriginMiddleware())
 
     def keyboard():
         return legacy.InlineKeyboardMarkup(inline_keyboard=[
@@ -132,7 +168,7 @@ def install_telegram_booking_hub(app):
             await state.clear()
             tutors = await legacy.get_all_tutors()
             rows = [[legacy.InlineKeyboardButton(
-                text=tutor["name"], callback_data=f"trials_{tid}"
+                text=tutor["name"], callback_data=f"hub_trials_{tid}"
             )] for tid, tutor in tutors.items() if tutor.get("subjects")]
             rows.append([legacy.InlineKeyboardButton(text="🔙 Назад", callback_data=HUB)])
             await call.message.edit_text(
@@ -188,6 +224,29 @@ def install_vk_booking_hub(app):
 
     async def edit(event, text, keyboard=None, **kwargs):
         kwargs["keyboard"] = keyboard
+        values = await legacy.state_dispenser.get_data(event.user_id)
+        trial_command = str((event.payload or {}).get("cmd") or "")
+        if (trial_command.startswith("trial") or trial_command == "back_to_trial_dates") and (
+            (event.payload or {}).get("trial_entry") or values.get("trial_from_hub")
+        ):
+            if keyboard:
+                value = json.loads(keyboard)
+                for row in value.get("buttons", []):
+                    for button in row:
+                        action = button.get("action", {})
+                        payload = action.get("payload")
+                        if not payload:
+                            continue
+                        payload = json.loads(payload) if isinstance(payload, str) else dict(payload)
+                        cmd = payload.get("cmd", "")
+                        if cmd == "back_to_tutors" or cmd.startswith("tutor_info_"):
+                            payload = {"cmd": TRIAL}
+                            action["label"] = "🔙 К выбору преподавателя"
+                        elif cmd.startswith("trial"):
+                            payload["trial_entry"] = True
+                        action["payload"] = json.dumps(payload, ensure_ascii=False)
+                kwargs["keyboard"] = json.dumps(value, ensure_ascii=False)
+            await legacy.state_dispenser.update(event.user_id, trial_from_hub=True)
         if (event.payload or {}).get("booking_entry"):
             kwargs["keyboard"] = vk_markup(kwargs.get("keyboard"), subscription=True)
             if not kwargs["keyboard"]:
@@ -207,7 +266,7 @@ def install_vk_booking_hub(app):
             for tid, tutor in tutors.items():
                 if not tutor.get("subjects"):
                     continue
-                kb.add(legacy.Callback(tutor["name"], payload={"cmd": "trials", "tutor_id": int(tid)}))
+                kb.add(legacy.Callback(tutor["name"], payload={"cmd": "trials", "tutor_id": int(tid), "trial_entry": True}))
                 kb.row()
             kb.add(legacy.Callback("🔙 Назад", payload={"cmd": HUB}))
             return await original_edit(event, "Выберите преподавателя для пробного занятия:", keyboard=kb.get_json())

@@ -8,7 +8,7 @@ from aiogram import F
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from booking_hub import (
     HUB, REGULAR, TRIAL, SUBSCRIPTION, install_telegram_booking_hub,
-    install_vk_booking_hub, tg_markup, vk_markup,
+    install_vk_booking_hub, tg_markup, vk_markup, TrialOriginMiddleware,
 )
 from vkbottle import Keyboard, Callback
 
@@ -34,6 +34,30 @@ def namespace(code, **values):
 
 
 class BookingHubTests(unittest.IsolatedAsyncioTestCase):
+    async def test_trial_origin_survives_privacy_and_returns_to_booking(self):
+        from aiogram.types import CallbackQuery, User
+        state = State()
+        call = CallbackQuery(id="1", from_user=User(id=77, is_bot=False, first_name="Student"),
+                             chat_instance="chat", data="hub_trials_4")
+        middleware = TrialOriginMiddleware()
+
+        async def privacy(event, data):
+            self.assertEqual(event.data, "trials_4")
+            await data["state"].clear()
+            await data["state"].update_data(legal_trial_tutor_id=4)
+
+        await middleware(privacy, call, {"state": state})
+        self.assertTrue(state.data["trial_from_hub"])
+        handler = AsyncMock()
+        await middleware(handler, call.model_copy(update={"data": "tutor_info_4"}), {"state": state})
+        self.assertEqual(handler.await_args.args[0].data, TRIAL)
+        handler.reset_mock()
+        await middleware(handler, call.model_copy(update={"data": "trials_4"}), {"state": state})
+        self.assertFalse(state.data["trial_from_hub"])
+        handler.reset_mock()
+        await middleware(handler, call.model_copy(update={"data": "tutor_info_4"}), {"state": state})
+        self.assertEqual(handler.await_args.args[0].data, "tutor_info_4")
+
     def test_keyboard_rewrite_keeps_original_and_payment_links(self):
         original = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Back", callback_data="back_to_payment_menu")],
@@ -79,6 +103,7 @@ class BookingHubTests(unittest.IsolatedAsyncioTestCase):
             "async def buy_subscription_start(call, state):\n    return await subscription(call, state)\n",
             regular=regular, subscription=subscription,
         )
+        register.outer_middleware = lambda middleware: None
         legacy.dp = SimpleNamespace(callback_query=register)
         legacy.F = F
         legacy.CallbackQuery = object
@@ -104,7 +129,7 @@ class BookingHubTests(unittest.IsolatedAsyncioTestCase):
             call.data = TRIAL
             await registered[0](call, state)
             rows = message.edit_text.await_args.kwargs["reply_markup"].inline_keyboard
-            self.assertEqual(rows[0][0].callback_data, "trials_1")
+            self.assertEqual(rows[0][0].callback_data, "hub_trials_1")
             self.assertEqual(rows[-1][0].callback_data, HUB)
             call.data = SUBSCRIPTION
             await registered[0](call, state)
@@ -130,7 +155,7 @@ class BookingHubTests(unittest.IsolatedAsyncioTestCase):
         legacy.Keyboard, legacy.Callback = Keyboard, Callback
         original_edit = AsyncMock()
         legacy.edit_event_message = original_edit
-        legacy.state_dispenser = SimpleNamespace(delete=AsyncMock())
+        legacy.state_dispenser = SimpleNamespace(delete=AsyncMock(), get_data=AsyncMock(return_value={}), update=AsyncMock())
         legacy.get_all_tutors = AsyncMock(return_value={1: {"name": "Tutor", "subjects": {"Math": 100}}})
         install_vk_booking_hub(SimpleNamespace(legacy=legacy))
         globals_.update(vars(legacy))
@@ -148,7 +173,16 @@ class BookingHubTests(unittest.IsolatedAsyncioTestCase):
         event.payload = {"cmd": TRIAL}
         await legacy.booking_hub_entry(event)
         raw = json.loads(original_edit.await_args.kwargs["keyboard"])
-        self.assertEqual(payload(raw["buttons"][0][0]["action"]["payload"]), {"cmd": "trials", "tutor_id": 1})
+        self.assertEqual(payload(raw["buttons"][0][0]["action"]["payload"]), {"cmd": "trials", "tutor_id": 1, "trial_entry": True})
+        event.payload = {"cmd": "trials", "tutor_id": 1, "trial_entry": True}
+        kb = Keyboard(inline=True)
+        kb.add(Callback("К анкете", payload={"cmd": "tutor_info_1"}))
+        await legacy.edit_event_message(event, "dates", keyboard=kb.get_json())
+        raw = json.loads(original_edit.await_args.kwargs["keyboard"])
+        self.assertEqual(payload(raw["buttons"][0][0]["action"]["payload"])["cmd"], TRIAL)
+        event.payload = {"cmd": "trials", "tutor_id": 1}
+        await legacy.edit_event_message(event, "dates", keyboard=kb.get_json())
+        self.assertEqual(original_edit.await_args.kwargs["keyboard"], kb.get_json())
         event.payload = {"cmd": "qr", "action": "subscription_start", "booking_entry": True}
         await legacy.edit_event_message(event, "email required")
         self.assertIn(HUB, original_edit.await_args.kwargs["keyboard"])

@@ -2317,7 +2317,6 @@ async def support_send_reply(message: Message, state: FSMContext, bot: Bot):
 # ==================== АДМИН-ПАНЕЛЬ ====================
 def admin_actions_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💵 Подтверждение оплат", callback_data="admin_confirm_payments")],
         [InlineKeyboardButton(text="➕ Добавить репетитора", callback_data="admin_add")],
         [InlineKeyboardButton(text="✏️ Редактировать репетитора", callback_data="admin_edit_list")],
         [InlineKeyboardButton(text="❌ Удалить репетитора", callback_data="admin_delete_list")],

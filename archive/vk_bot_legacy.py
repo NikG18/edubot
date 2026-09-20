@@ -3277,6 +3277,7 @@ async def universal_callback_handler(event: MessageEvent):
         await show_tutor_info(event)
     # --- Пробное занятие ---
     elif cmd == "trials":
+        await state_dispenser.update(user_id, trial_from_hub=bool(event.payload.get("trial_entry")))
         await start_trials_booking(event)
     elif cmd == "trial_resume":
         await resume_trial_after_email(event)
