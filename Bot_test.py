@@ -430,58 +430,17 @@ legacy.add_booking = _contextual_add_booking
 
 
 # ---------------------------------------------------------------------------
-# Автоотмена подтверждённых, но неоплаченных занятий за 72 часа
+# Фоновое завершение занятий без отмены неоплаченных записей
 # ---------------------------------------------------------------------------
 
 _original_cleanup_old_bookings = _db.cleanup_old_bookings
 
 
 async def _cleanup_with_unpaid_autocancel():
-    result = await _original_cleanup_old_bookings()
-    now = legacy.now_msk_naive()
-    bookings = await _db.get_all_bookings()
-    for bid, booking in bookings.items():
-        if booking.get("status") != "confirmed":
-            continue
-        if _is_trial(booking):
-            continue
-        try:
-            start = legacy.parse_booking_time(booking)
-        except Exception:
-            legacy.logging.warning("Не удалось разобрать время booking %s для автоотмены", bid)
-            continue
-        remaining = start - now
-        if remaining.total_seconds() <= 0 or remaining > timedelta(days=3):
-            continue
-        changed, cancelled = await _db.cancel_booking_record(
-            bid,
-            actor_type="system",
-            reason="Не оплачено за 72 часа до занятия",
-            expected_statuses={"confirmed"},
-        )
-        if not changed or not cancelled:
-            continue
-        text = (
-            f"❌ Занятие #{bid} автоматически отменено, потому что оплата не поступила "
-            "за 72 часа до начала.\n"
-            f"📚 {cancelled['subject']}\n"
-            f"📅 {cancelled['date']} 🕒 {cancelled['time_slot']}"
-        )
-        try:
-            await legacy.send_to_user(
-                cancelled["user_id"], cancelled.get("user_platform", "telegram"), text
-            )
-        except Exception:
-            legacy.logging.exception("Не удалось уведомить ученика об автоотмене booking %s", bid)
-        try:
-            await legacy.send_to_tutor(
-                cancelled["tutor_id"],
-                f"❌ Занятие #{bid} с {cancelled['username']} автоматически отменено: "
-                "оплата не поступила за 72 часа до начала.",
-            )
-        except Exception:
-            legacy.logging.exception("Не удалось уведомить преподавателя об автоотмене booking %s", bid)
-    return result
+    # Keep the compatibility entry point used by the running cleanup loop.
+    # completion_hardening replaces this delegate with trial-only completion.
+    # Confirmed regular bookings remain payable even after their scheduled end.
+    return await _original_cleanup_old_bookings()
 
 
 legacy.update_booking = _contextual_update_booking
