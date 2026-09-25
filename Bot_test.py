@@ -518,7 +518,7 @@ def admin_actions_keyboard():
 legacy.admin_actions_keyboard = admin_actions_keyboard
 
 
-def _tg_tutor_edit_keyboard(tutor_id: int):
+def _tg_tutor_edit_keyboard(tutor_id: int, commission_mode="manual"):
     return legacy.InlineKeyboardMarkup(inline_keyboard=[
         [legacy.InlineKeyboardButton(text="Изменить имя", callback_data="edit_name")],
         [legacy.InlineKeyboardButton(text="Изменить описание", callback_data="edit_desc")],
@@ -532,7 +532,7 @@ def _tg_tutor_edit_keyboard(tutor_id: int):
         )],
         [legacy.InlineKeyboardButton(text="📚 Управление предметами", callback_data="manage_subjects")],
         [legacy.InlineKeyboardButton(text="💰 Изменить комиссию", callback_data="edit_commission")],
-        [legacy.InlineKeyboardButton(text="🔄 Режим комиссии", callback_data="toggle_commission_mode")],
+        [legacy.InlineKeyboardButton(text=f"🔄 Комиссия: {'авто' if commission_mode == 'auto' else 'ручная'}", callback_data="toggle_commission_mode")],
         [legacy.InlineKeyboardButton(text="🔙 К списку", callback_data="admin_edit_list")],
     ])
 
@@ -551,7 +551,7 @@ async def _tg_edit_tutor_choice(call, state):
         f"Редактирование: {tutor['name']}\n"
         f"Телефон для чека: {phone or 'не указан'}\n\n"
         "Что хотите изменить?",
-        reply_markup=_tg_tutor_edit_keyboard(tutor_id),
+        reply_markup=_tg_tutor_edit_keyboard(tutor_id, tutor.get("commission_mode", "manual")),
     )
     await state.set_state(AdminStates.waiting_edit_choice)
 
@@ -570,7 +570,7 @@ async def _tg_back_to_edit_tutor(call, state):
         f"Редактирование: {tutor['name']}\n"
         f"Телефон для чека: {phone or 'не указан'}\n\n"
         "Что хотите изменить?",
-        reply_markup=_tg_tutor_edit_keyboard(tutor_id),
+        reply_markup=_tg_tutor_edit_keyboard(tutor_id, tutor.get("commission_mode", "manual")),
     )
     await state.set_state(AdminStates.waiting_edit_choice)
 

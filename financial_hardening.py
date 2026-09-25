@@ -1,6 +1,6 @@
 """Financial correctness layer installed on top of the legacy database API.
 
-Automatic commission is a MONTHLY tier for a third-party tutor. Direct owner lessons
+Automatic commission is a half-month payout tier for a third-party tutor. Direct owner lessons
 remain zero-commission. Manual mode keeps the immutable booking snapshots so later
 admin edits do not rewrite historical months.
 """
@@ -11,25 +11,13 @@ from datetime import date, datetime
 
 import database as _db
 import payments
+from agent_report_rules import percent_amount_kop
 from financial_rules import (
-    booking_commission_rub,
     booking_revenue_rub,
     commission_rate,
     early_fifteen_unlock_date,
+    payout_commission_rates,
 )
-
-
-async def _first_lesson_date(tutor_id: int):
-    await _db._ensure_pool()
-    async with _db._legacy.pool.acquire() as conn:
-        return await conn.fetchval(
-            """
-            SELECT MIN(to_date(date,'DD.MM.YYYY'))
-            FROM bookings
-            WHERE tutor_id=$1 AND stats_counted=TRUE AND booking_type<>'trial'
-            """,
-            int(tutor_id),
-        )
 
 
 def _full_months_since(first: date, year: int, month: int) -> int:
@@ -80,37 +68,49 @@ def _month_end_date(year: int, month: int) -> date:
     return date(int(year), int(month) + 1, 1)
 
 
-async def calculate_auto_commission(tutor_id: int, year: int, month: int):
-    """Progressive MONTHLY rate with permanent early unlock and one retention month."""
-    await _db._ensure_pool()
-    first = await _first_lesson_date(int(tutor_id))
-    async with _db._legacy.pool.acquire() as conn:
-        lessons = await _month_lesson_count(conn, tutor_id, year, month)
-        if not first:
-            return 25, lessons
+async def _auto_period_rates(conn, tutor_id: int, year: int, month: int):
+    first = await conn.fetchval(
+        """SELECT MIN(to_date(date,'DD.MM.YYYY')) FROM bookings
+           WHERE tutor_id=$1 AND stats_counted=TRUE AND booking_type<>'trial'""",
+        int(tutor_id),
+    )
+    lessons = await _month_lesson_count(conn, tutor_id, year, month)
+    if not first:
+        return (25, 25), lessons
+    unlock_date = await _early_unlock_date(conn, tutor_id, first)
+    py, pm = _previous_month(year, month)
+    previous_lessons = await _month_lesson_count(conn, tutor_id, py, pm)
+    def natural(y, m, count):
+        return commission_rate(
+            lessons_this_month=count,
+            full_months_since_first_lesson=_full_months_since(first, y, m),
+            early_fifteen_unlocked=bool(unlock_date and unlock_date < _month_end_date(y, m)),
+        ).percent
+    return payout_commission_rates(
+        natural(py, pm, previous_lessons), natural(year, month, lessons)
+    ), lessons
 
-        unlock_date = await _early_unlock_date(conn, tutor_id, first)
-        target_month_end = _month_end_date(year, month)
-        early_unlocked = bool(unlock_date and unlock_date < target_month_end)
 
-        py, pm = _previous_month(year, month)
-        previous_lessons = await _month_lesson_count(conn, tutor_id, py, pm)
-        previous_month_end = _month_end_date(py, pm)
-        previous_early_unlocked = bool(unlock_date and unlock_date < previous_month_end)
-        previous_natural = commission_rate(
-            lessons_this_month=previous_lessons,
-            full_months_since_first_lesson=_full_months_since(first, py, pm),
-            early_fifteen_unlocked=previous_early_unlocked,
-            previous_month_percent=None,
-        )
+async def calculate_auto_commission(tutor_id: int, year: int, month: int,
+                                    period_no: int | None = None, *, conn=None):
+    """Use an explicit payout half for reports, regardless of generation date.
 
-        decision = commission_rate(
-            lessons_this_month=lessons,
-            full_months_since_first_lesson=_full_months_since(first, year, month),
-            early_fifteen_unlocked=early_unlocked,
-            previous_month_percent=previous_natural.percent,
-        )
-        return decision.percent, lessons
+    Payment callers without a half get today's applicable rate. For other months
+    the default is the closing half. Current-month rates remain provisional until
+    all counted lessons are known; reports freeze the final financial values.
+    """
+    if period_no is None:
+        now = datetime.now(_db.MSK)
+        period_no = 1 if (year, month) == (now.year, now.month) and now.day <= 15 else 2
+    if period_no not in (1, 2):
+        raise ValueError("period_no must be 1 or 2")
+    if conn is None:
+        await _db._ensure_pool()
+        async with _db._legacy.pool.acquire() as connection:
+            rates, lessons = await _auto_period_rates(connection, tutor_id, year, month)
+    else:
+        rates, lessons = await _auto_period_rates(conn, tutor_id, year, month)
+    return rates[period_no - 1], lessons
 
 
 async def _month_rows(conn, tutor_id: int, year: int, month: int):
@@ -118,7 +118,10 @@ async def _month_rows(conn, tutor_id: int, year: int, month: int):
         """
         SELECT b.*, s.price AS fallback_price
         FROM bookings b
-        LEFT JOIN subjects s ON s.tutor_id=b.tutor_id AND s.name=b.subject
+        LEFT JOIN LATERAL (
+            SELECT price FROM subjects WHERE tutor_id=b.tutor_id AND name=b.subject
+            ORDER BY id DESC LIMIT 1
+        ) s ON TRUE
         WHERE b.tutor_id=$1
           AND b.stats_counted=TRUE
           AND EXTRACT(YEAR FROM to_date(b.date,'DD.MM.YYYY'))=$2
@@ -139,25 +142,45 @@ async def recalculate_monthly_stats(tutor_id: int, year: int, month: int):
     async with _db._legacy.pool.acquire() as conn:
         rows = await _month_rows(conn, tutor_id, year, month)
         paid_rows = [dict(row) for row in rows if row["booking_type"] != "trial"]
-        lessons = len(paid_rows)
-        total_income = sum(
-            booking_revenue_rub(booking, booking.get("fallback_price"))
-            for booking in paid_rows
-        )
-
         direct_owner = payments.is_operator_tutor(tutor.get("inn"))
-        if direct_owner:
-            display_percent = 0
-            commission = 0.0
-        elif tutor.get("commission_mode") == "auto":
-            display_percent, _ = await calculate_auto_commission(tutor_id, year, month)
-            commission = total_income * float(display_percent) / 100.0
-        else:
-            display_percent = int(tutor.get("commission_percent", 25))
-            commission = 0.0
+        rates = (0, 0)
+        if not direct_owner and tutor.get("commission_mode") == "auto":
+            rates, _ = await _auto_period_rates(conn, tutor_id, year, month)
+        display_percent = 0 if direct_owner else int(tutor.get("commission_percent", 25))
+        if not direct_owner and tutor.get("commission_mode") == "auto":
+            now = datetime.now(_db.MSK)
+            first_half_now = (year, month) == (now.year, now.month) and now.day <= 15
+            display_percent = rates[0 if first_half_now else 1]
+        commission_kop = 0
+        # Existing PDF snapshots remain authoritative after rate/mode edits.
+        reports = {}
+        if await conn.fetchval("SELECT to_regclass('agent_reports')"):
+            reports = {int(r["period_no"]): r for r in await conn.fetch(
+                "SELECT * FROM agent_reports WHERE tutor_id=$1 AND year=$2 AND month=$3",
+                int(tutor_id), int(year), int(month),
+            )}
+        gross_kop = 0
+        lessons = 0
+        for half in (1, 2):
+            if half in reports:
+                frozen = reports[half]
+                gross_kop += int(frozen["gross_amount_kop"])
+                commission_kop += int(frozen["commission_amount_kop"])
+                lessons += int(frozen["lessons_count"])
+                continue
             for booking in paid_rows:
-                revenue = booking_revenue_rub(booking, booking.get("fallback_price"))
-                commission += booking_commission_rub(booking, revenue)
+                day = datetime.strptime(booking["date"], "%d.%m.%Y").day
+                if (1 if day <= 15 else 2) != half:
+                    continue
+                gross = int(round(booking_revenue_rub(booking, booking.get("fallback_price")) * 100))
+                percent = (0 if direct_owner else rates[half - 1]
+                           if tutor.get("commission_mode") == "auto"
+                           else float(booking.get("commission_percent") or 0))
+                gross_kop += gross
+                commission_kop += percent_amount_kop(gross, percent)
+                lessons += 1
+        total_income = gross_kop / 100
+        commission = commission_kop / 100
 
         net = total_income - commission
         await conn.execute(
@@ -180,8 +203,28 @@ async def recalculate_monthly_stats(tutor_id: int, year: int, month: int):
         )
 
 
+async def _category_counts(tutor_id: int, year=None, month=None):
+    async with _db._legacy.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """SELECT COUNT(*) FILTER (WHERE booking_type='trial') AS trial_lessons,
+                      COUNT(*) FILTER (WHERE booking_type<>'trial') AS paid_lessons
+               FROM bookings WHERE tutor_id=$1 AND stats_counted=TRUE
+                 AND ($2::int IS NULL OR EXTRACT(YEAR FROM to_date(date,'DD.MM.YYYY'))=$2)
+                 AND ($3::int IS NULL OR EXTRACT(MONTH FROM to_date(date,'DD.MM.YYYY'))=$3)""",
+            int(tutor_id), year, month,
+        )
+        active = await conn.fetchval(
+            """SELECT COUNT(*) FROM subscriptions
+               WHERE tutor_id=$1 AND active=1 AND remaining_lessons>0""", int(tutor_id),
+        )
+    return {"trial_lessons": int(row["trial_lessons"] or 0),
+            "paid_lessons": int(row["paid_lessons"] or 0),
+            "active_subscriptions": int(active or 0)}
+
+
 async def get_tutor_financials(tutor_id: int, year: int = None, month: int = None) -> dict:
     await _db._ensure_pool()
+    categories = await _category_counts(tutor_id, year, month)
     if year is not None and month is not None:
         await recalculate_monthly_stats(tutor_id, year, month)
         async with _db._legacy.pool.acquire() as conn:
@@ -190,9 +233,10 @@ async def get_tutor_financials(tutor_id: int, year: int = None, month: int = Non
                 int(tutor_id), int(year), int(month),
             )
         if not row:
-            return {"total_lessons": 0, "total_income": 0.0, "commission_amount": 0.0,
+            return {**categories, "total_lessons": 0, "total_income": 0.0, "commission_amount": 0.0,
                     "net_income": 0.0, "commission_percent": 0}
         return {
+            **categories,
             "total_lessons": int(row["lessons_count"] or 0),
             "total_income": float(row["total_income"] or 0),
             "commission_amount": float(row["commission_amount"] or 0),
@@ -247,12 +291,26 @@ async def get_tutor_financials(tutor_id: int, year: int = None, month: int = Non
     else:
         display_percent = int(tutor.get("commission_percent", 25))
     return {
+        **categories,
         "total_lessons": int(totals["lessons"] or 0),
         "total_income": float(totals["income"] or 0),
         "commission_amount": float(totals["commission"] or 0),
         "net_income": float(totals["net"] or 0),
         "commission_percent": float(display_percent),
     }
+
+
+async def get_all_tutors_stats_by_month(year=None, month=None):
+    result = []
+    for tid, tutor in (await _db.get_all_tutors()).items():
+        fin = await get_tutor_financials(tid, year, month)
+        result.append({**fin, "tutor_id": tid, "name": tutor["name"],
+                       "commission": fin["commission_amount"]})
+    return result
+
+
+async def get_all_tutors_stats():
+    return await get_all_tutors_stats_by_month()
 
 
 def install_financial_hardening(app) -> None:
@@ -262,3 +320,5 @@ def install_financial_hardening(app) -> None:
         target.calculate_auto_commission = calculate_auto_commission
         target.recalculate_monthly_stats = recalculate_monthly_stats
         target.get_tutor_financials = get_tutor_financials
+        target.get_all_tutors_stats = get_all_tutors_stats
+        target.get_all_tutors_stats_by_month = get_all_tutors_stats_by_month

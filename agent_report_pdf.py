@@ -150,8 +150,8 @@ def build_report_pdf(report: dict, items: Iterable[dict]) -> bytes:
         "Предмет",
         "Результат",
         "Стоимость",
-        "Комиссия",
-        "Вознаграждение агента",
+        "Ставка",
+        "Комиссия агента",
         "К перечислению",
     ]
     rows = [[_p(value, section) for value in header]]
@@ -172,18 +172,7 @@ def build_report_pdf(report: dict, items: Iterable[dict]) -> bytes:
     lesson_table = Table(
         rows,
         repeatRows=1,
-        colWidths=[
-            8 * mm,
-            20 * mm,
-            22 * mm,
-            42 * mm,
-            35 * mm,
-            42 * mm,
-            25 * mm,
-            18 * mm,
-            31 * mm,
-            28 * mm,
-        ],
+        colWidths=[width * doc.width / 277 for width in (8, 23, 25, 38, 32, 39, 27, 19, 35, 31)],
     )
     lesson_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EDEDED")),

@@ -142,7 +142,7 @@ def install_telegram_agent_reports(app) -> None:
                 if complete else "🟡 Сформирован, отправка не завершена"
             )
             text = (
-                summary_text(report, str(tutor.get("name") or "Репетитор"))
+                legacy.html.quote(summary_text(report, str(tutor.get("name") or "Репетитор")))
                 + f"\n\n{status}"
             )
             if not complete:
@@ -155,7 +155,7 @@ def install_telegram_agent_reports(app) -> None:
                 f"📄 {legacy.html.quote(str(tutor.get('name') or 'Репетитор'))}\n"
                 f"Период: {start:%d.%m.%Y}-{end:%d.%m.%Y}\n\n"
                 "PDF будет сформирован из зафиксированных занятий. После формирования "
-                "отчёт становится snapshot и не пересчитывается задним числом."
+                "суммы и PDF сохраняются и не пересчитываются задним числом."
             )
             buttons.append([legacy.InlineKeyboardButton(
                 text="📄 Сформировать и отправить PDF",
@@ -196,10 +196,8 @@ def install_telegram_agent_reports(app) -> None:
                 "operator_tutor_has_no_agent_report": (
                     "Для собственных занятий ИП агентский отчёт не формируется."
                 ),
-                "commission_mode_changed_between_reports": (
-                    "Между первым и вторым отчётом изменился режим комиссии. "
-                    "Автоматическая корректировка остановлена — нужна проверка администратора."
-                ),
+                "report_not_found": "Сохранённый отчёт не найден.",
+                "report_checksum_mismatch": "Контрольная сумма PDF не совпадает. Отправка остановлена.",
             }
             await call.message.answer(f"⚠️ {messages.get(str(exc), str(exc))}")
             return
@@ -220,7 +218,7 @@ def install_telegram_agent_reports(app) -> None:
             ("✅ Отчёт сформирован и отправлен." if created
              else "✅ Отправка отчёта завершена.")
             + "\n\n"
-            + summary_text(current, str(tutor_name))
+            + legacy.html.quote(summary_text(current, str(tutor_name)))
             + f"\nАрхивная группа: {'✅' if result['archive_sent'] else '❌'}"
             + f"\nРепетитор: {'✅' if result['tutor_sent'] else '❌'}"
         )

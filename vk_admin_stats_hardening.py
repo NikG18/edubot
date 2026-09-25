@@ -81,7 +81,9 @@ async def _vk_admin_stats_tutors_overview(event):
     for row in visible:
         lines.extend([
             f"👨‍🏫 {row['name']}",
-            f"   Занятий: {int(row.get('total_lessons') or 0)}",
+            f"   Пробные: {int(row.get('trial_lessons') or 0)}",
+            f"   Платные: {int(row.get('paid_lessons') or 0)}",
+            f"   Активные абонементы сейчас: {int(row.get('active_subscriptions') or 0)}",
             f"   Доход: {float(row.get('total_income') or 0):.2f} руб.",
             f"   Комиссия: {float(row.get('commission') or 0):.2f} руб.",
             f"   После комиссии: {float(row.get('net_income') or 0):.2f} руб.",
@@ -89,7 +91,9 @@ async def _vk_admin_stats_tutors_overview(event):
         ])
     lines.extend([
         "📌 Общий итог:",
-        f"   Всего занятий: {int(total_lessons)}",
+        f"   Пробные: {sum(int(r.get('trial_lessons') or 0) for r in stats)}",
+        f"   Платные: {sum(int(r.get('paid_lessons') or 0) for r in stats)}",
+        f"   Активные абонементы сейчас: {sum(int(r.get('active_subscriptions') or 0) for r in stats)}",
         f"   Общий доход: {total_income:.2f} руб.",
         f"   Общая комиссия: {total_commission:.2f} руб.",
     ])
@@ -140,7 +144,9 @@ async def _vk_admin_stats_tutors_month(event):
     for row in visible:
         lines.extend([
             f"👨‍🏫 {row['name']}",
-            f"   Занятий: {int(row.get('total_lessons') or 0)}",
+            f"   Пробные: {int(row.get('trial_lessons') or 0)}",
+            f"   Платные: {int(row.get('paid_lessons') or 0)}",
+            f"   Активные абонементы сейчас: {int(row.get('active_subscriptions') or 0)}",
             f"   Доход: {float(row.get('total_income') or 0):.2f} руб.",
             f"   Комиссия: {float(row.get('commission') or 0):.2f} руб.",
             f"   После комиссии: {float(row.get('net_income') or 0):.2f} руб.",
@@ -148,7 +154,9 @@ async def _vk_admin_stats_tutors_month(event):
         ])
     lines.extend([
         "📌 Итог месяца:",
-        f"   Занятий: {int(total_lessons)}",
+        f"   Пробные: {sum(int(r.get('trial_lessons') or 0) for r in stats)}",
+        f"   Платные: {sum(int(r.get('paid_lessons') or 0) for r in stats)}",
+        f"   Активные абонементы сейчас: {sum(int(r.get('active_subscriptions') or 0) for r in stats)}",
         f"   Доход: {total_income:.2f} руб.",
         f"   Комиссия: {total_commission:.2f} руб.",
     ])

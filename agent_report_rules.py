@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
 
 
 def period_bounds(year: int, month: int, period_no: int) -> tuple[date, date]:
@@ -35,12 +36,5 @@ def report_key(tutor_id: int, year: int, month: int, period_no: int) -> str:
 
 def percent_amount_kop(amount_kop: int, percent: int | float) -> int:
     amount = int(amount_kop)
-    pct = float(percent)
-    return int(round(amount * pct / 100.0))
-
-
-def second_period_commission_adjustment_kop(
-    *, first_gross_kop: int, first_commission_kop: int, final_percent: int | float
-) -> int:
-    target = percent_amount_kop(int(first_gross_kop), final_percent)
-    return target - int(first_commission_kop)
+    pct = Decimal(str(percent))
+    return int((Decimal(amount) * pct / 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))

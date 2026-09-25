@@ -16,7 +16,6 @@ from agent_report_rules import (
     period_label,
     percent_amount_kop,
     report_key,
-    second_period_commission_adjustment_kop,
 )
 from financial_hardening import calculate_auto_commission
 
@@ -206,7 +205,9 @@ async def create_snapshot(tutor_id: int, year: int, month: int, period_no: int):
             mode = str(tutor.get("commission_mode") or "manual")
             applied_percent = None
             if mode == "auto":
-                applied_percent, _ = await calculate_auto_commission(tutor_id, year, month)
+                applied_percent, _ = await calculate_auto_commission(
+                    tutor_id, year, month, period_no, conn=conn
+                )
                 applied_percent = float(applied_percent)
 
             items = []
@@ -234,16 +235,6 @@ async def create_snapshot(tutor_id: int, year: int, month: int, period_no: int):
             gross_total = sum(item["gross_kop"] for item in items)
             item_commission = sum(item["commission_kop"] for item in items)
             adjustment = 0
-            if mode == "auto" and int(period_no) == 2:
-                first = await _existing(conn, tutor_id, year, month, 1)
-                if first:
-                    if str(first["commission_mode"]) != "auto":
-                        raise ValueError("commission_mode_changed_between_reports")
-                    adjustment = second_period_commission_adjustment_kop(
-                        first_gross_kop=int(first["gross_amount_kop"]),
-                        first_commission_kop=int(first["commission_amount_kop"]),
-                        final_percent=float(applied_percent or 0),
-                    )
 
             commission_total = item_commission + adjustment
             tutor_total = gross_total - commission_total
@@ -325,30 +316,36 @@ async def send_report(bot, report: dict) -> dict:
     if channel_id is None:
         raise ValueError("reports_channel_not_configured")
 
-    data = bytes(report["pdf_bytes"])
-    filename = f"agent_report_{report['report_key']}.pdf"
-    caption = summary_text(report, str(tutor.get("name") or "Репетитор"))
-    archive_sent = bool(report.get("archive_sent_at"))
-    tutor_sent = bool(report.get("tutor_sent_at"))
-
-    if not archive_sent:
-        await bot.send_document(
-            int(channel_id), BufferedInputFile(data, filename=filename), caption=caption
-        )
-        async with db._legacy.pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE agent_reports SET archive_sent_at=NOW() WHERE id=$1", int(report["id"])
-            )
-        archive_sent = True
-
-    if not tutor_sent:
-        await bot.send_document(
-            int(tutor["telegram_id"]), BufferedInputFile(data, filename=filename), caption=caption
-        )
-        async with db._legacy.pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE agent_reports SET tutor_sent_at=NOW() WHERE id=$1", int(report["id"])
-            )
-        tutor_sent = True
-
-    return {"archive_sent": archive_sent, "tutor_sent": tutor_sent}
+    await ensure_schema()
+    # Serialize clicks across both bot processes and always reload delivery flags.
+    # A session lock lets each successful recipient be committed independently;
+    # a failed tutor delivery must not roll back the successful archive delivery.
+    async with db._legacy.pool.acquire() as conn:
+        lock_key = f"agent-report-delivery:{int(report['id'])}"
+        await conn.execute("SELECT pg_advisory_lock(hashtextextended($1, 0))", lock_key)
+        try:
+            fresh = await conn.fetchrow("SELECT * FROM agent_reports WHERE id=$1", int(report["id"]))
+            if not fresh:
+                raise ValueError("report_not_found")
+            current = dict(fresh)
+            data = bytes(current["pdf_bytes"])
+            if hashlib.sha256(data).hexdigest() != current["pdf_sha256"]:
+                raise ValueError("report_checksum_mismatch")
+            filename = f"agent_report_{current['report_key']}.pdf"
+            caption = summary_text(current, str(tutor.get("name") or "Репетитор"))
+            for column, recipient in (("archive_sent_at", channel_id),
+                                      ("tutor_sent_at", tutor["telegram_id"])):
+                if current.get(column):
+                    continue
+                await bot.send_document(
+                    int(recipient), BufferedInputFile(data, filename=filename),
+                    caption=caption, parse_mode=None,
+                )
+                await conn.execute(
+                    f"UPDATE agent_reports SET {column}=NOW() WHERE id=$1", int(current["id"])
+                )
+                current[column] = True
+            return {"archive_sent": bool(current["archive_sent_at"]),
+                    "tutor_sent": bool(current["tutor_sent_at"])}
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock(hashtextextended($1, 0))", lock_key)

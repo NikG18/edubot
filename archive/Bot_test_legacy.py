@@ -2445,7 +2445,9 @@ async def admin_stats_tutors_overview(call: CallbackQuery):
     total_lessons = total_income = total_commission = 0.0
     for t in stats:
         lines.append(f"👨‍🏫 {t['name']}:")
-        lines.append(f"   Занятий: {t['total_lessons']}")
+        lines.append(f"   Пробные: {t['trial_lessons']}")
+        lines.append(f"   Платные: {t['paid_lessons']}")
+        lines.append(f"   Активные абонементы сейчас: {t['active_subscriptions']}")
         lines.append(f"   Доход: {t['total_income']:.2f} руб.")
         lines.append(f"   Комиссия: {t['commission']:.2f} руб.")
         lines.append(f"   Доход после комиссии: {t['net_income']:.2f} руб.")
@@ -2454,7 +2456,9 @@ async def admin_stats_tutors_overview(call: CallbackQuery):
         total_income += t['total_income']
         total_commission += t['commission']
     lines.append(f"📌 Общий итог:")
-    lines.append(f"   Всего занятий: {total_lessons}")
+    lines.append(f"   Пробные: {sum(t['trial_lessons'] for t in stats)}")
+    lines.append(f"   Платные: {sum(t['paid_lessons'] for t in stats)}")
+    lines.append(f"   Активные абонементы сейчас: {sum(t['active_subscriptions'] for t in stats)}")
     lines.append(f"   Общий доход: {total_income:.2f} руб.")
     lines.append(f"   Общая комиссия: {total_commission:.2f} руб.")
     text = "\n".join(lines)
@@ -2476,7 +2480,9 @@ async def admin_stats_tutors_month(call: CallbackQuery):
     total_lessons = total_income = total_commission = 0.0
     for t in stats:
         lines.append(f"👨‍🏫 {t['name']}:")
-        lines.append(f"   Занятий: {t['total_lessons']}")
+        lines.append(f"   Пробные: {t['trial_lessons']}")
+        lines.append(f"   Платные: {t['paid_lessons']}")
+        lines.append(f"   Активные абонементы сейчас: {t['active_subscriptions']}")
         lines.append(f"   Доход: {t['total_income']:.2f} руб.")
         lines.append(f"   Комиссия: {t['commission']:.2f} руб.")
         lines.append(f"   Доход после комиссии: {t['net_income']:.2f} руб.")
@@ -2485,7 +2491,9 @@ async def admin_stats_tutors_month(call: CallbackQuery):
         total_income += t['total_income']
         total_commission += t['commission']
     lines.append(f"📌 Общий итог:")
-    lines.append(f"   Всего занятий: {total_lessons}")
+    lines.append(f"   Пробные: {sum(t['trial_lessons'] for t in stats)}")
+    lines.append(f"   Платные: {sum(t['paid_lessons'] for t in stats)}")
+    lines.append(f"   Активные абонементы сейчас: {sum(t['active_subscriptions'] for t in stats)}")
     lines.append(f"   Общий доход: {total_income:.2f} руб.")
     lines.append(f"   Общая комиссия: {total_commission:.2f} руб.")
     text = "\n".join(lines)
@@ -2689,22 +2697,18 @@ async def edit_commission_start(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "toggle_commission_mode", StateFilter("*"))
 async def toggle_commission_mode(call: CallbackQuery, state: FSMContext):
-    await safe_answer(call)
+    if call.from_user.id != ADMING_ID:
+        await safe_answer(call, "⛔ Только администратор", show_alert=True)
+        return
     data = await state.get_data()
     tid = data.get("edit_tutor_id")
-    if not tid:
+    tutor = (await get_all_tutors()).get(tid)
+    if not tutor:
+        await safe_answer(call, "Репетитор не выбран. Откройте его карточку.", show_alert=True)
         return
-    tutors = await get_all_tutors()
-    tutor = tutors.get(tid)
-    current_mode = tutor.get("commission_mode", "manual")
-    new_mode = "auto" if current_mode == "manual" else "manual"
+    new_mode = "manual" if tutor.get("commission_mode") == "auto" else "auto"
     await update_tutor(tid, commission_mode=new_mode)
-    await call.message.edit_text(
-        f"Режим комиссии изменён на {'автоматический' if new_mode=='auto' else 'ручной'}.\n"
-        "При автоматическом режиме процент рассчитывается по прогрессивной шкале."
-    )
-    # Возвращаемся в меню редактирования репетитора
-    await edit_tutor_choice(call, state)
+    await back_to_edit_tutor(call, state)
 
 
 
