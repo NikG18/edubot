@@ -76,6 +76,9 @@ from booking_hub import install_telegram_booking_hub
 install_telegram_booking_hub(app)
 install_telegram_agent_reports(app)
 
+from tax_admin import install_telegram_tax_accounting
+install_telegram_tax_accounting(app)
+
 
 async def main():
     return await app.main()
