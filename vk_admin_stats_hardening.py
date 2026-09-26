@@ -48,7 +48,8 @@ def _add_pager(legacy, kb, *, cmd: str, page: int, max_page: int):
     if page < max_page:
         buttons.append(legacy.Callback("➡️", payload={"cmd": cmd, "page": page + 1}))
     if buttons:
-        kb.add(*buttons)
+        for button in buttons:
+            kb.add(button)
         kb.row()
 
 
@@ -86,6 +87,7 @@ async def _vk_admin_stats_tutors_overview(event):
             f"   Активные абонементы сейчас: {int(row.get('active_subscriptions') or 0)}",
             f"   Доход: {float(row.get('total_income') or 0):.2f} руб.",
             f"   Комиссия: {float(row.get('commission') or 0):.2f} руб.",
+            f"   Текущая ставка комиссии: {row['current_commission_label']}",
             f"   После комиссии: {float(row.get('net_income') or 0):.2f} руб.",
             "",
         ])
@@ -110,11 +112,13 @@ async def _vk_admin_stats_tutors_overview(event):
             )
         )
         if len(month_buttons) == 3:
-            kb.add(*month_buttons)
+            for button in month_buttons:
+                kb.add(button)
             kb.row()
             month_buttons = []
     if month_buttons:
-        kb.add(*month_buttons)
+        for button in month_buttons:
+            kb.add(button)
         kb.row()
     kb.add(legacy.Callback("🔙 К разделам статистики", payload={"cmd": "admin_stats"}))
     await legacy.edit_event_message(event, "\n".join(lines), keyboard=kb.get_json())
@@ -149,6 +153,7 @@ async def _vk_admin_stats_tutors_month(event):
             f"   Активные абонементы сейчас: {int(row.get('active_subscriptions') or 0)}",
             f"   Доход: {float(row.get('total_income') or 0):.2f} руб.",
             f"   Комиссия: {float(row.get('commission') or 0):.2f} руб.",
+            f"   Текущая ставка комиссии: {row['current_commission_label']}",
             f"   После комиссии: {float(row.get('net_income') or 0):.2f} руб.",
             "",
         ])

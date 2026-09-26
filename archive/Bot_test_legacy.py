@@ -2450,6 +2450,7 @@ async def admin_stats_tutors_overview(call: CallbackQuery):
         lines.append(f"   Активные абонементы сейчас: {t['active_subscriptions']}")
         lines.append(f"   Доход: {t['total_income']:.2f} руб.")
         lines.append(f"   Комиссия: {t['commission']:.2f} руб.")
+        lines.append(f"   Текущая ставка комиссии: {t['current_commission_label']}")
         lines.append(f"   Доход после комиссии: {t['net_income']:.2f} руб.")
         lines.append("")
         total_lessons += t['total_lessons']
@@ -2485,6 +2486,7 @@ async def admin_stats_tutors_month(call: CallbackQuery):
         lines.append(f"   Активные абонементы сейчас: {t['active_subscriptions']}")
         lines.append(f"   Доход: {t['total_income']:.2f} руб.")
         lines.append(f"   Комиссия: {t['commission']:.2f} руб.")
+        lines.append(f"   Текущая ставка комиссии: {t['current_commission_label']}")
         lines.append(f"   Доход после комиссии: {t['net_income']:.2f} руб.")
         lines.append("")
         total_lessons += t['total_lessons']
