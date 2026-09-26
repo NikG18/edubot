@@ -283,13 +283,7 @@ async def get_tutor_financials(tutor_id: int, year: int = None, month: int = Non
         )
     tutors = await _db.get_all_tutors()
     tutor = tutors.get(int(tutor_id), {})
-    if payments.is_operator_tutor(tutor.get("inn")):
-        display_percent = 0
-    elif tutor.get("commission_mode") == "auto":
-        now = datetime.now(_db.MSK)
-        display_percent, _ = await calculate_auto_commission(int(tutor_id), now.year, now.month)
-    else:
-        display_percent = int(tutor.get("commission_percent", 25))
+    display_percent = await current_commission_percent(tutor_id, tutor)
     return {
         **categories,
         "total_lessons": int(totals["lessons"] or 0),
@@ -300,12 +294,33 @@ async def get_tutor_financials(tutor_id: int, year: int = None, month: int = Non
     }
 
 
+async def current_commission_percent(tutor_id: int, tutor: dict) -> float:
+    """Today's applicable payout rate, independent of the viewed stats month."""
+    if payments.is_operator_tutor(tutor.get("inn")):
+        return 0.0
+    if tutor.get("commission_mode") == "auto":
+        now = datetime.now(_db.MSK)
+        percent, _ = await calculate_auto_commission(int(tutor_id), now.year, now.month)
+        return float(percent)
+    configured = tutor.get("commission_percent")
+    return float(25 if configured is None else configured)
+
+
 async def get_all_tutors_stats_by_month(year=None, month=None):
     result = []
     for tid, tutor in (await _db.get_all_tutors()).items():
         fin = await get_tutor_financials(tid, year, month)
+        # Monthly commission_percent is a historical display field, not today's
+        # rate. Preserve all historical totals and expose the current rate separately.
+        current_percent = (await current_commission_percent(tid, tutor)
+                           if year is not None and month is not None
+                           else fin["commission_percent"])
+        mode = ("свои занятия" if payments.is_operator_tutor(tutor.get("inn"))
+                else "авто" if tutor.get("commission_mode") == "auto" else "ручная")
         result.append({**fin, "tutor_id": tid, "name": tutor["name"],
-                       "commission": fin["commission_amount"]})
+                       "commission": fin["commission_amount"],
+                       "current_commission_percent": float(current_percent),
+                       "current_commission_label": f"{current_percent:g}% ({mode})"})
     return result
 
 
