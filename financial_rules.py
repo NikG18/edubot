@@ -123,3 +123,16 @@ def booking_commission_rub(booking: dict, revenue_rub: float) -> float:
         return 0.0
     percent = float(booking.get("commission_percent") or 0)
     return float(revenue_rub) * percent / 100.0
+
+
+def payout_commission_rates(previous_natural_percent: int, current_natural_percent: int) -> tuple[int, int]:
+    """First half retains last month's earned tier; improvements start in half two.
+
+    Only a naturally earned tier carries into the following month. A retained
+    tier cannot renew itself, and a downgrade never changes the retained month.
+    """
+    previous = int(previous_natural_percent)
+    current = int(current_natural_percent)
+    if previous not in {15, 20, 25} or current not in {15, 20, 25}:
+        raise ValueError("invalid automatic commission tier")
+    return previous, min(previous, current)

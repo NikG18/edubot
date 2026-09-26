@@ -17,7 +17,9 @@ async def _tutor_stats_menu(call):
     auto_suffix = " (авто)" if tutor and tutor.get("commission_mode") == "auto" else ""
     text = (
         f"📊 Статистика за всё время\n"
-        f"• Проведено занятий: {fin['total_lessons']}\n"
+        f"• Пробные (засчитано): {fin['trial_lessons']}\n"
+        f"• Платные (засчитано): {fin['paid_lessons']}\n"
+        f"• Активные абонементы сейчас: {fin['active_subscriptions']}\n"
         f"• Общий доход: {fin['total_income']:.2f} руб.\n"
         f"• Комиссия за всё время: {fin['commission_amount']:.2f} руб.\n"
         f"• Доход после комиссии: {fin['net_income']:.2f} руб.\n"
@@ -60,9 +62,10 @@ async def _tutor_stats_month(call):
     comm_label = f"{comm_percent:g}"
     text = (
         f"📊 Статистика за {year}-{month:02d}\n"
-        f"• Проведено занятий: {fin['total_lessons']}\n"
+        f"• Пробные (засчитано): {fin['trial_lessons']}\n"
+        f"• Платные (засчитано): {fin['paid_lessons']}\n"
+        f"• Активные абонементы сейчас: {fin['active_subscriptions']}\n"
         f"• Доход: {fin['total_income']:.2f} руб.\n"
-        f"• Ставка комиссии месяца: {comm_label}%\n"
         f"• Комиссия: {fin['commission_amount']:.2f} руб.\n"
         f"• Доход после комиссии: {fin['net_income']:.2f} руб."
     )

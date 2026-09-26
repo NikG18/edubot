@@ -48,7 +48,8 @@ def _add_pager(legacy, kb, *, cmd: str, page: int, max_page: int):
     if page < max_page:
         buttons.append(legacy.Callback("➡️", payload={"cmd": cmd, "page": page + 1}))
     if buttons:
-        kb.add(*buttons)
+        for button in buttons:
+            kb.add(button)
         kb.row()
 
 
@@ -81,15 +82,20 @@ async def _vk_admin_stats_tutors_overview(event):
     for row in visible:
         lines.extend([
             f"👨‍🏫 {row['name']}",
-            f"   Занятий: {int(row.get('total_lessons') or 0)}",
+            f"   Пробные: {int(row.get('trial_lessons') or 0)}",
+            f"   Платные: {int(row.get('paid_lessons') or 0)}",
+            f"   Активные абонементы сейчас: {int(row.get('active_subscriptions') or 0)}",
             f"   Доход: {float(row.get('total_income') or 0):.2f} руб.",
             f"   Комиссия: {float(row.get('commission') or 0):.2f} руб.",
+            f"   Текущая ставка комиссии: {row['current_commission_label']}",
             f"   После комиссии: {float(row.get('net_income') or 0):.2f} руб.",
             "",
         ])
     lines.extend([
         "📌 Общий итог:",
-        f"   Всего занятий: {int(total_lessons)}",
+        f"   Пробные: {sum(int(r.get('trial_lessons') or 0) for r in stats)}",
+        f"   Платные: {sum(int(r.get('paid_lessons') or 0) for r in stats)}",
+        f"   Активные абонементы сейчас: {sum(int(r.get('active_subscriptions') or 0) for r in stats)}",
         f"   Общий доход: {total_income:.2f} руб.",
         f"   Общая комиссия: {total_commission:.2f} руб.",
     ])
@@ -106,11 +112,13 @@ async def _vk_admin_stats_tutors_overview(event):
             )
         )
         if len(month_buttons) == 3:
-            kb.add(*month_buttons)
+            for button in month_buttons:
+                kb.add(button)
             kb.row()
             month_buttons = []
     if month_buttons:
-        kb.add(*month_buttons)
+        for button in month_buttons:
+            kb.add(button)
         kb.row()
     kb.add(legacy.Callback("🔙 К разделам статистики", payload={"cmd": "admin_stats"}))
     await legacy.edit_event_message(event, "\n".join(lines), keyboard=kb.get_json())
@@ -140,15 +148,20 @@ async def _vk_admin_stats_tutors_month(event):
     for row in visible:
         lines.extend([
             f"👨‍🏫 {row['name']}",
-            f"   Занятий: {int(row.get('total_lessons') or 0)}",
+            f"   Пробные: {int(row.get('trial_lessons') or 0)}",
+            f"   Платные: {int(row.get('paid_lessons') or 0)}",
+            f"   Активные абонементы сейчас: {int(row.get('active_subscriptions') or 0)}",
             f"   Доход: {float(row.get('total_income') or 0):.2f} руб.",
             f"   Комиссия: {float(row.get('commission') or 0):.2f} руб.",
+            f"   Текущая ставка комиссии: {row['current_commission_label']}",
             f"   После комиссии: {float(row.get('net_income') or 0):.2f} руб.",
             "",
         ])
     lines.extend([
         "📌 Итог месяца:",
-        f"   Занятий: {int(total_lessons)}",
+        f"   Пробные: {sum(int(r.get('trial_lessons') or 0) for r in stats)}",
+        f"   Платные: {sum(int(r.get('paid_lessons') or 0) for r in stats)}",
+        f"   Активные абонементы сейчас: {sum(int(r.get('active_subscriptions') or 0) for r in stats)}",
         f"   Доход: {total_income:.2f} руб.",
         f"   Комиссия: {total_commission:.2f} руб.",
     ])

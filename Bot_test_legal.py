@@ -36,6 +36,7 @@ from student_navigation_hardening import install_telegram_student_navigation_har
 from acquisition_hardening import install_telegram_acquisition_hardening
 from subject_booking_hardening import install_telegram_subject_booking
 from tutor_info_photo_hardening import install_telegram_tutor_info_photo_hardening
+from agent_reports import install_telegram_agent_reports
 
 install_financial_hardening(app)
 install_telegram_financial_display_hardening(app)
@@ -73,6 +74,7 @@ install_telegram_tutor_info_photo_hardening(app)
 
 from booking_hub import install_telegram_booking_hub
 install_telegram_booking_hub(app)
+install_telegram_agent_reports(app)
 
 
 async def main():

@@ -2321,20 +2321,18 @@ async def confirm_delete_subject(event: MessageEvent):
 
 
 async def toggle_commission_mode(event: MessageEvent):
+    if event.user_id != ADMIN_VK_ID:
+        await answer_event(event, "Только администратор", snackbar=True)
+        return
     data = await state_dispenser.get_data(event.user_id)
     tid = data.get("edit_tutor_id")
-    if not tid:
+    tutor = (await get_all_tutors()).get(tid)
+    if not tutor:
+        await answer_event(event, "Репетитор не выбран. Откройте его карточку.", snackbar=True)
         return
-    tutors = await get_all_tutors()
-    tutor = tutors.get(tid)
-    current_mode = tutor.get("commission_mode", "manual")
-    new_mode = "auto" if current_mode == "manual" else "manual"
+    new_mode = "manual" if tutor.get("commission_mode") == "auto" else "auto"
     await update_tutor(tid, commission_mode=new_mode)
-    await edit_event_message(event,
-                             f"Режим комиссии изменён на {'автоматический' if new_mode == 'auto' else 'ручной'}.\n"
-                             "При автоматическом режиме процент рассчитывается по прогрессивной шкале."
-                             )
-    await edit_tutor_choice(event)  # вернуться в меню редактирования
+    await back_to_edit_tutor(event)
 
 
 # -------------------- Удаление репетитора --------------------
@@ -3116,12 +3114,15 @@ async def tutor_stats_menu(event: MessageEvent):
     fin = await get_tutor_financials(tid)
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
-    comm_percent = tutor.get("commission_percent", 15) if tutor else 15
+    comm_percent = fin.get("commission_percent", 0)
     text = (
         f"📊 Статистика за всё время\n"
-        f"• Проведено занятий: {fin['total_lessons']}\n"
+        f"• Пробные (засчитано): {fin['trial_lessons']}\n"
+        f"• Платные (засчитано): {fin['paid_lessons']}\n"
+        f"• Активные абонементы сейчас: {fin['active_subscriptions']}\n"
         f"• Общий доход: {fin['total_income']:.2f} руб.\n"
-        f"• Комиссия ({comm_percent}%{', авто' if tutor.get('commission_mode') == 'auto' else ''}): {fin['commission_amount']:.2f} руб.\n"
+        f"• Текущая ставка: {comm_percent:g}%\n"
+        f"• Комиссия: {fin['commission_amount']:.2f} руб.\n"
         f"• Доход после комиссии: {fin['net_income']:.2f} руб.\n\n"
         "Выберите месяц для детализации:"
     )
@@ -3156,12 +3157,14 @@ async def tutor_stats_month(event: MessageEvent):
     fin = await get_tutor_financials(tid, year, month)
     tutors = await get_all_tutors()
     tutor = tutors.get(tid)
-    comm_percent = tutor.get("commission_percent", 15) if tutor else 15
+    comm_percent = fin.get("commission_percent", 0)
     text = (
         f"📊 Статистика за {year}-{month:02d}\n"
-        f"• Проведено занятий: {fin['total_lessons']}\n"
+        f"• Пробные (засчитано): {fin['trial_lessons']}\n"
+        f"• Платные (засчитано): {fin['paid_lessons']}\n"
+        f"• Активные абонементы сейчас: {fin['active_subscriptions']}\n"
         f"• Доход: {fin['total_income']:.2f} руб.\n"
-        f"• Комиссия ({comm_percent}%): {fin['commission_amount']:.2f} руб.\n"
+        f"• Комиссия по периодам: {fin['commission_amount']:.2f} руб.\n"
         f"• Доход после комиссии: {fin['net_income']:.2f} руб."
     )
     kb = Keyboard(inline=True)

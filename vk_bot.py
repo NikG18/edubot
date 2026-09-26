@@ -13,7 +13,7 @@ class FiscalAdminStates(legacy.BaseStateGroup):
     waiting_tutor_phone = "waiting_tutor_phone"
 
 
-def _vk_tutor_edit_keyboard():
+def _vk_tutor_edit_keyboard(commission_mode="manual"):
     keyboard = legacy.Keyboard(inline=True)
     buttons = [
         ("Изменить имя", "edit_name"),
@@ -24,7 +24,7 @@ def _vk_tutor_edit_keyboard():
         ("📞 Изменить телефон", "edit_phone"),
         ("📚 Управление предметами", "manage_subjects"),
         ("💰 Изменить комиссию", "edit_commission"),
-        ("🔄 Режим комиссии", "toggle_commission_mode"),
+        (f"🔄 Комиссия: {'авто' if commission_mode == 'auto' else 'ручная'}", "toggle_commission_mode"),
         ("🔙 К списку", "admin_edit_list"),
     ]
     for index, (label, command) in enumerate(buttons):
@@ -46,7 +46,7 @@ async def _vk_show_tutor_editor(event, tutor_id: int):
         f"Редактирование: {tutor['name']}\n"
         f"Телефон для чека: {phone or 'не указан'}\n\n"
         "Что хотите изменить?",
-        keyboard=_vk_tutor_edit_keyboard(),
+        keyboard=_vk_tutor_edit_keyboard(tutor.get("commission_mode", "manual")),
     )
     return True
 
@@ -151,7 +151,9 @@ async def vk_admin_tutor_phone_save(message: legacy.Message):
     await legacy.state_dispenser.update(message.from_id, edit_tutor_id=tutor_id)
     await message.answer(
         f"✅ Телефон для {saved['name']} сохранён: {saved['phone']}",
-        keyboard=_vk_tutor_edit_keyboard(),
+        keyboard=_vk_tutor_edit_keyboard(
+            (await legacy.get_all_tutors()).get(tutor_id, {}).get("commission_mode", "manual")
+        ),
     )
 
 
