@@ -847,6 +847,30 @@ async def get_booking_events(booking_id: int) -> list:
     return [dict(row) for row in rows]
 
 
+async def replace_expired_booking_payment(booking_id: int, old_payment_id: str,
+                                          new_payment_id: str) -> bool:
+    """Attach the new payment without rewriting the lesson or its price snapshot."""
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """UPDATE bookings SET tinkoff_payment_id=$3, updated_at=NOW()
+                   WHERE id=$1 AND tinkoff_payment_id=$2 AND status='confirmed'
+                     AND booking_type='regular'
+                   RETURNING id""",
+                int(booking_id), str(old_payment_id), str(new_payment_id),
+            )
+            if not row:
+                return False
+            await _add_booking_event(
+                conn, int(booking_id), "payment_renewed", "confirmed", "confirmed",
+                "payment", None,
+                {"old_payment_id": str(old_payment_id), "payment_id": str(new_payment_id),
+                 "reason": "DEADLINE_EXPIRED"},
+            )
+    return True
+
+
 async def _sync_booking_record_safely(booking_id: int):
     try:
         from booking_records import sync_booking_record

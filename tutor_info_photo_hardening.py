@@ -116,12 +116,66 @@ async def _hardened_show_tutor_info(call, state):
         await state.update_data(**{_PHOTO_STATE_KEY: photo_message.message_id})
 
 
+async def _hardened_show_tutor_own_profile(call):
+    legacy = _runtime_legacy
+    tid = int(call.data.rsplit("_", 1)[1])
+    if await legacy.get_tutor_by_telegram_id(call.from_user.id) != tid:
+        await legacy.safe_answer(call, "⛔ Доступ запрещён.", show_alert=True)
+        return
+    await legacy.safe_answer(call)
+    state = legacy.dp.fsm.get_context(
+        call.bot, chat_id=call.message.chat.id, user_id=call.from_user.id,
+    )
+    await _delete_tracked_photo(call, state)
+    tutor = (await legacy.get_all_tutors()).get(tid)
+    if not tutor:
+        await _replace_with_text(call, "Анкета не найдена.", None)
+        return
+    lines = [str(tutor.get("description") or "Описание пока не добавлено."),
+             "", "Предметы и цены:"]
+    for subject, price in (tutor.get("subjects") or {}).items():
+        lines.append(f"• {subject} — {price} руб.")
+    keyboard = legacy.InlineKeyboardMarkup(inline_keyboard=[
+        [legacy.InlineKeyboardButton(
+            text="🔙 Назад в панель", callback_data=f"back_to_tutor_panel_{tid}",
+        )],
+    ])
+    if tutor.get("photo"):
+        try:
+            sent = await call.bot.send_photo(chat_id=call.message.chat.id, photo=tutor["photo"])
+            await state.update_data(**{_PHOTO_STATE_KEY: sent.message_id})
+        except legacy.TelegramBadRequest:
+            legacy.logging.exception("Не удалось показать фото своей анкеты tutor=%s", tid)
+    # Keep the description and navigation in text, including descriptions longer
+    # than Telegram's 1024-character photo-caption limit.
+    await _replace_with_text(call, "\n".join(lines), keyboard)
+
+
+async def _hardened_back_to_tutor_panel(call):
+    legacy = _runtime_legacy
+    tid = int(call.data.rsplit("_", 1)[1])
+    if await legacy.get_tutor_by_telegram_id(call.from_user.id) != tid:
+        await legacy.safe_answer(call, "⛔ Доступ запрещён.", show_alert=True)
+        return
+    state = legacy.dp.fsm.get_context(
+        call.bot, chat_id=call.message.chat.id, user_id=call.from_user.id,
+    )
+    await _delete_tracked_photo(call, state)
+    await legacy._own_profile_original_back(call)
+
+
 def install_telegram_tutor_info_photo_hardening(app) -> None:
     global _runtime_legacy
     legacy = app.legacy
     if getattr(legacy, "_telegram_tutor_info_photo_hardened", False):
         return
     _runtime_legacy = legacy
+
+    from types import FunctionType
+    original = legacy.back_to_tutor_panel
+    legacy._own_profile_original_back = FunctionType(
+        original.__code__, original.__globals__, original.__name__, original.__defaults__,
+    )
 
     # These function objects were registered by aiogram during legacy import.
     # Transplant closure-free code so the dispatcher keeps pointing at them.
@@ -131,6 +185,8 @@ def install_telegram_tutor_info_photo_hardening(app) -> None:
     for target, replacement in (
         (legacy.back_to_tutors, _hardened_back_to_tutors),
         (legacy.show_tutor_info, _hardened_show_tutor_info),
+        (legacy.show_tutor_own_profile, _hardened_show_tutor_own_profile),
+        (legacy.back_to_tutor_panel, _hardened_back_to_tutor_panel),
     ):
         if target.__code__.co_freevars or replacement.__code__.co_freevars:
             raise RuntimeError("Tutor info navigation replacement cannot use closures")
