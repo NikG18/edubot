@@ -1,0 +1,12 @@
+{
+  "version": "2026-10-06-r1",
+  "sha256": {
+    "09_refund_rules.md": "ff7bf74c3f795e324dcfd37abc636181b1725c4d1032d634d3d3b5b26c513beb",
+    "03_privacy_policy.md": "8718ac723f7b528792310ad9a605b7db62b8329eecc1eecac1997d81ff6de532",
+    "02_student_offer.md": "14a3b30fd94e8a0d91f5759bca56543ac8d68aebe91dcf0d5a5145899e15b967",
+    "01_agent_agreement.md": "5289d463fdf0a1e9ca92ccdf74c9f4510e8a7983662551c27f82be72e97cf909",
+    "05_tutor_distribution_consent.md": "23b497d7861d06dde6eae2956d82315f1bc304f2c4445b96b0b9ccb258b30cfa",
+    "06_user_consent.md": "42ddd5ce0d6500822513bacca79dd1304c2e7b12d4f9528db8f3c2191856d296",
+    "04_tutor_pd_consent.md": "34b245e8cb48c9621d38fd9e2c1ba06683211177e64e00edefa1c4de216e09a5"
+  }
+}

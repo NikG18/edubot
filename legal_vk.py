@@ -4,6 +4,7 @@ import vk_bot_legacy as legacy
 
 from legal_common import (
     DOCS,
+    BEFORE_PAYMENT_DOC_TYPES,
     STUDENT_DOC_TYPES,
     TUTOR_DOC_TYPES,
     install_payment_acceptance_hook,
@@ -39,9 +40,9 @@ async def _send_student_legal_before_payment(user_id: int, booking_id=None):
     await legacy.send_to_user(
         user_id,
         "vk",
-        "Перед оплатой ознакомьтесь с публичной офертой и Политикой обработки персональных данных. "
+        "Перед оплатой ознакомьтесь с публичной офертой, правилами отмены и возврата и Политикой обработки персональных данных. "
         "Оплата конкретного заказа является акцептом оферты в указанной редакции.",
-        keyboard_vk=_docs_keyboard(("student_offer", "privacy_policy")),
+        keyboard_vk=_docs_keyboard(BEFORE_PAYMENT_DOC_TYPES),
     )
 
 
@@ -70,7 +71,7 @@ legacy.get_main_menu = _legal_get_main_menu
 async def _legal_documents_reply(message):
     tutor_id = await legacy.get_tutor_by_vk_id(message.from_id)
     is_tutor = tutor_id is not None and message.from_id != legacy.ADMIN_VK_ID
-    doc_types = TUTOR_DOC_TYPES if is_tutor else STUDENT_DOC_TYPES
+    doc_types = tuple(DOCS) if message.from_id == legacy.ADMIN_VK_ID else TUTOR_DOC_TYPES if is_tutor else STUDENT_DOC_TYPES
     intro = (
         "📄 Документы репетитора\n\n"
         "Первичный акцепт агентского договора и отдельные согласия репетитора оформляются "

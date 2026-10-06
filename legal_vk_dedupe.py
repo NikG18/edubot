@@ -1,7 +1,7 @@
 """Не допускает повторной отправки оферты/Политики для одной VK-записи и редакции."""
 
 import legal_vk
-from legal_common import record_student_docs_presented
+from legal_common import BEFORE_PAYMENT_DOC_TYPES, record_student_docs_presented
 
 
 async def _deduplicated_send_student_legal_before_payment(user_id: int, booking_id=None):
@@ -12,9 +12,9 @@ async def _deduplicated_send_student_legal_before_payment(user_id: int, booking_
     await legal_vk.legacy.send_to_user(
         user_id,
         "vk",
-        "Перед оплатой ознакомьтесь с публичной офертой и Политикой обработки персональных данных. "
+        "Перед оплатой ознакомьтесь с публичной офертой, правилами отмены и возврата и Политикой обработки персональных данных. "
         "Оплата конкретного заказа является акцептом оферты в указанной редакции.",
-        keyboard_vk=legal_vk._docs_keyboard(("student_offer", "privacy_policy")),
+        keyboard_vk=legal_vk._docs_keyboard(BEFORE_PAYMENT_DOC_TYPES),
     )
 
 

@@ -3,6 +3,7 @@ import Bot_test_legacy as legacy
 
 from legal_common import (
     DOCS,
+    BEFORE_PAYMENT_DOC_TYPES,
     STUDENT_DOC_TYPES,
     TUTOR_DOC_TYPES,
     install_payment_acceptance_hook,
@@ -29,11 +30,11 @@ def _url_keyboard(doc_types):
 
 async def _send_student_legal_before_payment(user_id: int, booking_id=None):
     await record_student_docs_presented(user_id, "telegram", booking_id)
-    keyboard = _url_keyboard(("student_offer", "privacy_policy"))
+    keyboard = _url_keyboard(BEFORE_PAYMENT_DOC_TYPES)
     await legacy.send_to_user(
         user_id,
         "telegram",
-        "Перед оплатой ознакомьтесь с публичной офертой и Политикой обработки персональных данных. "
+        "Перед оплатой ознакомьтесь с публичной офертой, правилами отмены и возврата и Политикой обработки персональных данных. "
         "Оплата конкретного заказа является акцептом оферты в редакции, указанной в документах.",
         reply_markup_tg=keyboard.model_dump_json(),
     )
@@ -83,7 +84,7 @@ legacy.get_main_menu = _legal_get_main_menu
 async def legal_documents_menu(message):
     tutor_id = await legacy.get_tutor_by_telegram_id(message.from_user.id)
     is_tutor = tutor_id is not None and message.from_user.id != legacy.ADMING_ID
-    doc_types = TUTOR_DOC_TYPES if is_tutor else STUDENT_DOC_TYPES
+    doc_types = tuple(DOCS) if message.from_user.id == legacy.ADMING_ID else TUTOR_DOC_TYPES if is_tutor else STUDENT_DOC_TYPES
     intro = (
         "📄 Документы репетитора\n\n"
         "Первичный акцепт агентского договора и отдельные согласия репетитора оформляются "

@@ -73,11 +73,6 @@ def _booking_has_ended(legacy, booking: dict) -> bool:
 def completion_outcome_details(outcome: str) -> tuple[str, str]:
     """Return stable audit event type and human-readable reason for finalization."""
     normalized = str(outcome or "held").strip().lower()
-    if normalized == "late_student_cancel":
-        return (
-            "late_student_cancel_counted",
-            "Поздняя отмена или неявка ученика: занятие засчитано по правилу менее 24 часов",
-        )
     if normalized == "held":
         return "completed", "Факт проведения подтверждён администратором"
     raise ValueError("unsupported completion outcome")
@@ -176,10 +171,6 @@ async def _render_admin_booking_with_completion(legacy, call, booking_id: int):
             text="✅ Занятие проведено",
             callback_data=f"admin_booking_complete_{booking_id}",
         )])
-        buttons.append([legacy.InlineKeyboardButton(
-            text="⚠️ Поздняя отмена / неявка",
-            callback_data=f"admin_booking_late_cancel_{booking_id}",
-        )])
     elif booking["status"] == "completed":
         buttons.append([legacy.InlineKeyboardButton(
             text="🧾 Проверить/повторить закрывающий чек",
@@ -205,6 +196,16 @@ async def _render_admin_booking_with_completion(legacy, call, booking_id: int):
 
 
 async def _finalize_admin_outcome(app, legacy, call, booking_id: int, outcome: str) -> None:
+    # Old messages may still carry the removed late-cancellation callback.
+    # Refusal/no-show is not proof that a lesson was actually delivered.
+    if outcome != "held":
+        await legacy.safe_answer(
+            call,
+            "Поздняя отмена/неявка требует проверки по оферте. "
+            "Занятие не отмечено проведённым; списание и закрывающий чек не созданы.",
+            show_alert=True,
+        )
+        return
     booking = await _db.get_booking(booking_id)
     if not booking:
         await call.message.edit_text("Занятие не найдено.")
@@ -220,10 +221,7 @@ async def _finalize_admin_outcome(app, legacy, call, booking_id: int, outcome: s
         await _mark_completed(booking_id, call.from_user.id, outcome=outcome)
     result = await _finalize_completed_booking(booking_id)
 
-    if outcome == "late_student_cancel":
-        prefix = "✅ Поздняя отмена/неявка засчитана как использованное занятие."
-    else:
-        prefix = "✅ Проведение подтверждено."
+    prefix = "✅ Проведение подтверждено."
     if result.get("ok"):
         note = f"{prefix} Закрывающий чек принят банком."
     elif result.get("already_sent"):
