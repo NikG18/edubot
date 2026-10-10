@@ -291,6 +291,7 @@ async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="✉️ Связь с преподавателем")],
         [KeyboardButton(text="🆘 Поддержка")],
         [KeyboardButton(text="❓ Помощь")],
+        [KeyboardButton(text="🌍 Часовой пояс")],
         [KeyboardButton(text="🔗 Связать Telegram и VK")],
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -473,6 +474,46 @@ async def back_to_menu(call: CallbackQuery, state: FSMContext):
         await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
     except TelegramBadRequest:
         logging.exception("Не удалось показать главное меню")
+
+
+@dp.message(F.text.in_(["🌍 Часовой пояс", "/timezone"]))
+async def timezone_menu(message: types.Message, state: FSMContext):
+    await state.clear()
+    rows = []
+    row = []
+    current = await get_student_timezone_offset("telegram", message.from_user.id)
+    for label, offset in SUPPORTED_TIMEZONES:
+        text = ("✅ " if offset == current else "") + label
+        row.append(InlineKeyboardButton(text=text, callback_data=f"tzset_{offset}"))
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_to_menu")])
+    await message.answer(
+        f"Ваш часовой пояс: {timezone_label(current)}\nВыберите свой часовой пояс. Время записи будет отображаться с его учётом.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@dp.callback_query(F.data.startswith("tzset_"))
+async def timezone_set(call: CallbackQuery):
+    await safe_answer(call)
+    try:
+        offset = int(call.data.split("_", 1)[1])
+        if offset not in {value for _, value in SUPPORTED_TIMEZONES}:
+            raise ValueError("unsupported timezone")
+    except (TypeError, ValueError, IndexError):
+        await call.message.edit_text("Не удалось определить часовой пояс.")
+        return
+    await set_student_timezone_offset("telegram", call.from_user.id, offset)
+    await call.message.edit_text(
+        f"✅ Часовой пояс сохранён: {timezone_label(offset)}.\nТеперь время записи будет показываться в вашем часовом поясе.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_to_menu")],
+        ]),
+    )
 
 
 def _account_link_result_text(result: dict) -> str:
@@ -854,7 +895,7 @@ async def trial_date_chosen(call: CallbackQuery, state: FSMContext):
     )] for s in slots]
     buttons.append([InlineKeyboardButton(text="🔙 К выбору даты", callback_data="back_to_trial_dates")])
 
-    prompt = f"Выберите время ({timezone_label(tz_offset)}). Чтобы изменить часовой пояс: /timezone"
+    prompt = f"Выберите время ({timezone_label(tz_offset)}). Изменить часовой пояс можно кнопкой «🌍 Часовой пояс» в главном меню."
     if call.message.content_type != 'text':
         await call.message.delete()
         await call.message.answer(
@@ -996,39 +1037,6 @@ async def confirm_trial_booking(call: CallbackQuery, state: FSMContext, bot: Bot
     await state.clear()
 
 
-@dp.message(F.text == "/timezone")
-async def timezone_menu(message: types.Message):
-    rows = []
-    row = []
-    current = await get_student_timezone_offset("telegram", message.from_user.id)
-    for label, offset in SUPPORTED_TIMEZONES:
-        text = ("✅ " if offset == current else "") + label
-        row.append(InlineKeyboardButton(text=text, callback_data=f"tzset_{offset}"))
-        if len(row) == 3:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    await message.answer(
-        f"Ваш часовой пояс: {timezone_label(current)}\nВыберите часовой пояс. Расписание преподавателей хранится по Москве, а вам время будет показываться локально.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-    )
-
-
-@dp.callback_query(F.data.startswith("tzset_"))
-async def timezone_set(call: CallbackQuery):
-    await safe_answer(call)
-    try:
-        offset = int(call.data.split("_", 1)[1])
-    except (TypeError, ValueError, IndexError):
-        await call.message.edit_text("Не удалось определить часовой пояс.")
-        return
-    await set_student_timezone_offset("telegram", call.from_user.id, offset)
-    await call.message.edit_text(
-        f"✅ Часовой пояс сохранён: {timezone_label(offset)}.\nТеперь время записи будет показываться в вашем часовом поясе."
-    )
-
-
 # ==================== ИНФОРМАЦИЯ О ЗАНЯТИЯХ ====================
 @dp.message(F.text.in_(["📚 Информация о занятиях"]))
 async def lesson_info(message: types.Message):
@@ -1145,7 +1153,7 @@ async def choose_date(call: CallbackQuery, state: FSMContext):
     )] for s in slots]
     buttons.append([InlineKeyboardButton(text="🔙 К выбору даты", callback_data="back_to_date")])
     await call.message.edit_text(
-        f"Выберите время ({timezone_label(tz_offset)}). Чтобы изменить часовой пояс: /timezone",
+        f"Выберите время ({timezone_label(tz_offset)}). Изменить часовой пояс можно кнопкой «🌍 Часовой пояс» в главном меню.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await state.set_state(BookingStates.waiting_time)

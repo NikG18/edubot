@@ -254,6 +254,7 @@ async def get_main_menu(user_id: int) -> str:
     kb.row()
     kb.add(Text("❓ Помощь"), color=KeyboardButtonColor.PRIMARY)
     kb.row()
+    kb.add(Text("🌍 Часовой пояс"), color=KeyboardButtonColor.PRIMARY)
     kb.add(Text("🔗 Связать Telegram и VK"), color=KeyboardButtonColor.PRIMARY)
     return kb.get_json()
 
@@ -523,6 +524,43 @@ def account_link_result_text(result: dict) -> str:
     return "⚠️ Код не найден или уже использован. Проверьте код либо создайте новый."
 
 
+@bot.on.private_message(text=["🌍 Часовой пояс", "/timezone"])
+async def timezone_menu(message: Message):
+    await state_dispenser.delete(message.from_id)
+    current = await get_student_timezone_offset("vk", message.from_id)
+    kb = Keyboard(inline=True)
+    for index, (label, offset) in enumerate(SUPPORTED_TIMEZONES):
+        text = ("✅ " if offset == current else "") + label
+        kb.add(Callback(text, payload={"cmd": f"timezone_set_{offset}"}))
+        if (index + 1) % 3 == 0:
+            kb.row()
+    if len(SUPPORTED_TIMEZONES) % 3:
+        kb.row()
+    kb.add(Callback("🔙 В главное меню", payload={"cmd": "back_to_menu"}))
+    await message.answer(
+        f"Ваш часовой пояс: {timezone_label(current)}\nВыберите свой часовой пояс. Время записи будет отображаться с его учётом.",
+        keyboard=kb.get_json(),
+    )
+
+
+async def timezone_set(event: MessageEvent):
+    try:
+        offset = int(event.payload["cmd"].rsplit("_", 1)[1])
+        if offset not in {value for _, value in SUPPORTED_TIMEZONES}:
+            raise ValueError("unsupported timezone")
+    except (KeyError, ValueError, IndexError):
+        await answer_event(event, "Не удалось определить часовой пояс.", snackbar=True)
+        return
+    await set_student_timezone_offset("vk", event.user_id, offset)
+    kb = Keyboard(inline=True)
+    kb.add(Callback("🔙 В главное меню", payload={"cmd": "back_to_menu"}))
+    await edit_event_message(
+        event,
+        f"✅ Часовой пояс сохранён: {timezone_label(offset)}. Теперь время записи будет показываться локально.",
+        keyboard=kb.get_json(),
+    )
+
+
 @bot.on.private_message(text="🔗 Связать Telegram и VK")
 async def account_link_menu(message: Message):
     await state_dispenser.delete(message.from_id)
@@ -770,7 +808,7 @@ async def trial_date_chosen(event: MessageEvent):
     kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_trial_dates"}))
     await edit_event_message(
         event,
-        f"Выберите время ({timezone_label(tz_offset)}). Чтобы изменить часовой пояс, отправьте /timezone",
+        f"Выберите время ({timezone_label(tz_offset)}). Изменить часовой пояс можно кнопкой «🌍 Часовой пояс» в главном меню.",
         keyboard=kb.get_json(),
     )
     await state_dispenser.set(event.user_id, TrialBookingStates.waiting_time)
@@ -868,34 +906,6 @@ async def confirm_trial_booking(event: MessageEvent):
         random_id=random.randint(1, 2 ** 31 - 1)
     )
     await state_dispenser.delete(event.user_id)
-
-
-@bot.on.private_message(text="/timezone")
-async def timezone_menu(message: Message):
-    current = await get_student_timezone_offset("vk", message.from_id)
-    kb = Keyboard(inline=True)
-    for index, (label, offset) in enumerate(SUPPORTED_TIMEZONES):
-        text = ("✅ " if offset == current else "") + label
-        kb.add(Callback(text, payload={"cmd": f"timezone_set_{offset}"}))
-        if index != len(SUPPORTED_TIMEZONES) - 1:
-            kb.row()
-    await message.answer(
-        f"Ваш часовой пояс: {timezone_label(current)}\nВыберите новый. Расписание преподавателей хранится по Москве, а вам время будет показываться локально.",
-        keyboard=kb.get_json(),
-    )
-
-
-async def timezone_set(event: MessageEvent):
-    try:
-        offset = int(event.payload["cmd"].rsplit("_", 1)[1])
-    except (KeyError, ValueError, IndexError):
-        await answer_event(event, "Не удалось определить часовой пояс.", snackbar=True)
-        return
-    await set_student_timezone_offset("vk", event.user_id, offset)
-    await edit_event_message(
-        event,
-        f"✅ Часовой пояс сохранён: {timezone_label(offset)}. Теперь время записи будет показываться локально.",
-    )
 
 
 # ==================== ИНФОРМАЦИЯ О ЗАНЯТИЯХ ====================
@@ -1054,7 +1064,7 @@ async def choose_date(event: MessageEvent):
     kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_date"}))
     await edit_event_message(
         event,
-        f"Выберите время ({timezone_label(tz_offset)}). Чтобы изменить часовой пояс, отправьте /timezone",
+        f"Выберите время ({timezone_label(tz_offset)}). Изменить часовой пояс можно кнопкой «🌍 Часовой пояс» в главном меню.",
         keyboard=kb.get_json(),
     )
     await state_dispenser.set(event.user_id, BookingStates.waiting_time)
