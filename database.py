@@ -70,6 +70,32 @@ def _stats_counted_after_status_change(old_status: str, new_status: str,
     return bool(currently_counted)
 
 
+async def get_student_timezone_offset(platform: str, platform_user_id: int) -> int:
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        student_id = await _student_for_account_conn(conn, platform, platform_user_id, create=True)
+        value = await conn.fetchval(
+            "SELECT timezone_offset_minutes FROM student_profiles WHERE id=$1",
+            int(student_id),
+        )
+    return int(value if value is not None else 180)
+
+
+async def set_student_timezone_offset(platform: str, platform_user_id: int, offset_minutes: int) -> int:
+    offset_minutes = int(offset_minutes)
+    if offset_minutes < -720 or offset_minutes > 840:
+        raise ValueError("timezone offset is out of supported range")
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            student_id = await _student_for_account_conn(conn, platform, platform_user_id, create=True)
+            await conn.execute(
+                "UPDATE student_profiles SET timezone_offset_minutes=$1 WHERE id=$2",
+                offset_minutes, int(student_id),
+            )
+    return offset_minutes
+
+
 async def _student_for_account_conn(conn, platform: str, platform_user_id: int,
                                     *, create: bool = True) -> Optional[int]:
     platform = str(platform or "").lower()
@@ -127,6 +153,7 @@ async def init_db():
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS email TEXT;
+                ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS timezone_offset_minutes INTEGER NOT NULL DEFAULT 180;
                 ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS acquisition_source TEXT;
                 ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS acquisition_platform TEXT;
                 ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS acquisition_payload TEXT;
