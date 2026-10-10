@@ -3495,7 +3495,7 @@ async def _show_day_management(call: CallbackQuery, state: FSMContext):
 
     buttons = [
         [InlineKeyboardButton(text="➕ Добавить слот", callback_data="add_slot")],
-        [InlineKeyboardButton(text="📅 Заполнить промежуток", callback_data="add_range")],
+        [InlineKeyboardButton(text="📅 Интервал/несколько слотов", callback_data="add_range")],
     ]
     if slots:
         buttons.append([InlineKeyboardButton(text="❌ Удалить слот", callback_data="del_slot")])
@@ -3598,7 +3598,7 @@ async def process_add_slot(message: Message, state: FSMContext):
     text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + "\n".join(f"• {s}" for s in slots)
     buttons = [
         [InlineKeyboardButton(text="➕ Добавить слот", callback_data="add_slot")],
-        [InlineKeyboardButton(text="📅 Заполнить промежуток", callback_data="add_range")],
+        [InlineKeyboardButton(text="📅 Интервал/несколько слотов", callback_data="add_range")],
         [InlineKeyboardButton(text="❌ Удалить слот", callback_data="del_slot")],
         [InlineKeyboardButton(text="🔙 К дням недели", callback_data="back_to_schedule")]
     ]
@@ -3717,7 +3717,7 @@ async def process_add_range(message: Message, state: FSMContext):
     display_text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + "\n".join(f"• {s}" for s in existing)
     buttons = [
         [InlineKeyboardButton(text="➕ Добавить слот", callback_data="add_slot")],
-        [InlineKeyboardButton(text="📅 Заполнить промежуток", callback_data="add_range")],
+        [InlineKeyboardButton(text="📅 Интервал/несколько слотов", callback_data="add_range")],
         [InlineKeyboardButton(text="❌ Удалить слот", callback_data="del_slot")],
         [InlineKeyboardButton(text="🔙 К дням недели", callback_data="back_to_schedule")]
     ]
@@ -3766,7 +3766,7 @@ async def confirm_del_slot(call: CallbackQuery, state: FSMContext):
     text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + "\n".join(f"• {s}" for s in slots) if slots else "Нет слотов."
     buttons = [
         [InlineKeyboardButton(text="➕ Добавить слот", callback_data="add_slot")],
-        [InlineKeyboardButton(text="📅 Заполнить промежуток", callback_data="add_range")],
+        [InlineKeyboardButton(text="📅 Интервал/несколько слотов", callback_data="add_range")],
     ]
     if slots:
         buttons.append([InlineKeyboardButton(text="❌ Удалить слот", callback_data="del_slot")])
