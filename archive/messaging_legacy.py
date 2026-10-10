@@ -168,6 +168,8 @@ async def send_vk_message(user_id: int, text: str, keyboard=None) -> bool:
     normalized_keyboard = _normalize_vk_keyboard(keyboard)
     if normalized_keyboard:
         params["keyboard"] = normalized_keyboard
+        from vk_keyboard_pagination import prepare_message
+        params = await prepare_message(params)
     try:
         async with session.post("https://api.vk.com/method/messages.send", data=params) as resp:
             data = await resp.json(content_type=None)

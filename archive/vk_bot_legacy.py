@@ -37,6 +37,7 @@ from database import (
     get_bookings_for_account, get_student_timezone_offset, set_student_timezone_offset,
 )
 from timezone_support import SUPPORTED_TIMEZONES, booking_local_text, slot_button_label, timezone_label
+from vk_keyboard_pagination import PaginatedAPI, show_page
 from payments import create_payment, check_payment
 from messaging import (
     send_to_user, send_to_tutor, send_telegram_message,
@@ -101,7 +102,7 @@ if not TELEGRAM_BOT_TOKEN:
 
 # -------------------- Бот и диспетчер состояний --------------------
 state_dispenser = StateDispenserWithUpdate()
-bot = Bot(token=BOT_TOKEN, state_dispenser=state_dispenser)
+bot = Bot(api=PaginatedAPI(BOT_TOKEN), state_dispenser=state_dispenser)
 
 
 # -------------------- Группы состояний (FSM) --------------------
@@ -3311,7 +3312,9 @@ async def universal_callback_handler(event: MessageEvent):
         return
 
     # --- Навигация и общие действия ---
-    if cmd.startswith("timezone_set_"):
+    if cmd == "keyboard_page":
+        await show_page(sys.modules[__name__], event)
+    elif cmd.startswith("timezone_set_"):
         await timezone_set(event)
     elif cmd == "back_to_menu":
         await state_dispenser.delete(user_id)
