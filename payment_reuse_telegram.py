@@ -1,6 +1,7 @@
 """Идемпотентная оплата занятия через СБП для Telegram entrypoint.
 
-Одна бронь получает один T-Bank PaymentId. Кнопку СБП можно получать заново через
+Действующий T-Bank PaymentId используется повторно. После DEADLINE_EXPIRED
+создаётся новый платёж для той же брони с сохранением цены и комиссии. Кнопку СБП можно получать заново через
 GetQr для того же PaymentId, поэтому потеря старого сообщения не требует нового Init
 и не порождает повторных уведомлений преподавателю.
 """
@@ -67,7 +68,10 @@ async def _send_payment_link(source, bot, booking, booking_id: int, payment_url:
     platform = booking.get("user_platform", "telegram")
     if platform == "telegram":
         keyboard = legacy.InlineKeyboardMarkup(inline_keyboard=[
-            [legacy.InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)]
+            [legacy.InlineKeyboardButton(text="💳 Оплатить через СБП", url=payment_url)],
+            [legacy.InlineKeyboardButton(
+                text="🔄 Получить ссылку заново", callback_data=f"pay_single_{booking_id}",
+            )],
         ])
         try:
             sent = await bot.send_message(booking["user_id"], student_msg, reply_markup=keyboard)
@@ -112,7 +116,18 @@ async def _idempotent_create_and_send_payment(source, bot, booking, email, booki
             return {"payment_id": None, "link_sent": False, "reason": "invalid_booking"}
 
         existing_payment_id = current.get("tinkoff_payment_id")
+        renewing = False
         if existing_payment_id:
+            action = await _payments.booking_payment_action(str(existing_payment_id))
+            if action == "paid":
+                await legacy.process_booking_payment_status(booking_id, "CONFIRMED")
+                await _respond(source, "✅ Оплата уже получена. Новая ссылка не требуется.")
+                return {"payment_id": str(existing_payment_id), "link_sent": False, "reason": "already_paid"}
+            if action in {"unavailable", "blocked"}:
+                await _respond(source, "Не удалось выдать ссылку: платёж обрабатывается или его статус недоступен. Попробуйте позже.")
+                return {"payment_id": str(existing_payment_id), "link_sent": False, "reason": action}
+            renewing = action == "renew"
+        if existing_payment_id and not renewing:
             payment_url = await _sbp_link_for_existing(existing_payment_id)
             if not payment_url:
                 await _respond(
@@ -163,6 +178,9 @@ async def _idempotent_create_and_send_payment(source, bot, booking, email, booki
             else:
                 percent = tutor.get("commission_percent", 25)
 
+        if renewing:
+            percent = current.get("commission_percent", percent)
+
         description = (
             f"Занятие: {current['subject']} с {tutor['name']} "
             f"{current['date']} {current['time_slot']}"
@@ -180,14 +198,23 @@ async def _idempotent_create_and_send_payment(source, bot, booking, email, booki
         )
 
         if payment_id:
-            await legacy.update_booking(
-                booking_id,
-                status="confirmed",
-                reminded=0,
-                amount=amount_kop,
-                commission_percent=percent,
-                tinkoff_payment_id=payment_id,
-            )
+            if renewing:
+                attached = await _db.replace_expired_booking_payment(
+                    booking_id, str(existing_payment_id), str(payment_id),
+                )
+                if not attached:
+                    await _payments.cancel_full_payment(str(payment_id))
+                    await _respond(source, "Статус занятия изменился. Откройте оплату заново.")
+                    return {"payment_id": None, "link_sent": False, "reason": "booking_changed"}
+            else:
+                await legacy.update_booking(
+                    booking_id,
+                    status="confirmed",
+                    reminded=0,
+                    amount=amount_kop,
+                    commission_percent=percent,
+                    tinkoff_payment_id=payment_id,
+                )
             try:
                 await snapshot_booking_prepayment(
                     booking_id=booking_id,
@@ -223,12 +250,12 @@ async def _idempotent_create_and_send_payment(source, bot, booking, email, booki
         await _save_payment_url(booking_id, payment_url)
         refreshed = await _db.get_booking(booking_id) or current
         delivered = await _send_payment_link(source, bot, refreshed, booking_id, payment_url, price_rub)
-        if delivered:
+        if delivered and not renewing:
             await legacy.send_to_tutor(
                 refreshed["tutor_id"],
                 f"✅ Занятие с {refreshed['username']} подтверждено. Ожидается оплата.",
             )
-        return {"payment_id": str(payment_id), "link_sent": delivered, "reused": False}
+        return {"payment_id": str(payment_id), "link_sent": delivered, "reused": False, "renewed": renewing}
 
 
 legacy.create_and_send_payment = _idempotent_create_and_send_payment

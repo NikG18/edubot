@@ -30,8 +30,9 @@ from database import (
     mark_booking_paid_once, mark_booking_payment_failed, reschedule_booking, move_booking_in_place,
     get_student_email, set_student_email, is_trial_available,
     get_linked_accounts, create_account_link_code, consume_account_link_code,
-    get_bookings_for_account,
+    get_bookings_for_account, get_student_timezone_offset, set_student_timezone_offset,
 )
+from timezone_support import SUPPORTED_TIMEZONES, booking_local_text, slot_button_label, timezone_label
 from aiogram.exceptions import TelegramBadRequest
 from payments import create_payment, check_payment
 from webhook_server import create_webhook_app
@@ -290,6 +291,7 @@ async def get_main_menu(user_id: int) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="✉️ Связь с преподавателем")],
         [KeyboardButton(text="🆘 Поддержка")],
         [KeyboardButton(text="❓ Помощь")],
+        [KeyboardButton(text="🌍 Часовой пояс")],
         [KeyboardButton(text="🔗 Связать Telegram и VK")],
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -472,6 +474,46 @@ async def back_to_menu(call: CallbackQuery, state: FSMContext):
         await call.message.answer("Главное меню:", reply_markup=await get_main_menu(call.from_user.id))
     except TelegramBadRequest:
         logging.exception("Не удалось показать главное меню")
+
+
+@dp.message(F.text.in_(["🌍 Часовой пояс", "/timezone"]))
+async def timezone_menu(message: types.Message, state: FSMContext):
+    await state.clear()
+    rows = []
+    row = []
+    current = await get_student_timezone_offset("telegram", message.from_user.id)
+    for label, offset in SUPPORTED_TIMEZONES:
+        text = ("✅ " if offset == current else "") + label
+        row.append(InlineKeyboardButton(text=text, callback_data=f"tzset_{offset}"))
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_to_menu")])
+    await message.answer(
+        f"Ваш часовой пояс: {timezone_label(current)}\nВыберите свой часовой пояс. Время записи будет отображаться с его учётом.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@dp.callback_query(F.data.startswith("tzset_"))
+async def timezone_set(call: CallbackQuery):
+    await safe_answer(call)
+    try:
+        offset = int(call.data.split("_", 1)[1])
+        if offset not in {value for _, value in SUPPORTED_TIMEZONES}:
+            raise ValueError("unsupported timezone")
+    except (TypeError, ValueError, IndexError):
+        await call.message.edit_text("Не удалось определить часовой пояс.")
+        return
+    await set_student_timezone_offset("telegram", call.from_user.id, offset)
+    await call.message.edit_text(
+        f"✅ Часовой пояс сохранён: {timezone_label(offset)}.\nТеперь время записи будет показываться в вашем часовом поясе.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_to_menu")],
+        ]),
+    )
 
 
 def _account_link_result_text(result: dict) -> str:
@@ -846,14 +888,25 @@ async def trial_date_chosen(call: CallbackQuery, state: FSMContext):
         )
         return
 
-    buttons = [[InlineKeyboardButton(text=s, callback_data=f"trial_slot_{s}")] for s in slots]
+    tz_offset = await get_student_timezone_offset("telegram", call.from_user.id)
+    buttons = [[InlineKeyboardButton(
+        text=slot_button_label(date_str, s, tz_offset),
+        callback_data=f"trial_slot_{s}",
+    )] for s in slots]
     buttons.append([InlineKeyboardButton(text="🔙 К выбору даты", callback_data="back_to_trial_dates")])
 
+    prompt = f"Выберите время ({timezone_label(tz_offset)}). Изменить часовой пояс можно кнопкой «🌍 Часовой пояс» в главном меню."
     if call.message.content_type != 'text':
         await call.message.delete()
-        await call.message.answer("Выберите время:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        await call.message.answer(
+            prompt,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
     else:
-        await call.message.edit_text("Выберите время:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        await call.message.edit_text(
+            prompt,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
     await state.set_state(TrialBookingStates.waiting_time)
 
 
@@ -886,8 +939,8 @@ async def trial_slot_chosen(call: CallbackQuery, state: FSMContext):
         f"🎓 <b>Пробное занятие</b>\n"
         f"👨‍🏫 Репетитор: {tutor_name}\n"
         f"📚 Предмет: {data['subject']}\n"
-        f"📅 Дата: {data['date']} (МСК)\n"
-        f"🕒 Время: {slot}\n\n"
+        f"📅 Когда: {booking_local_text(data['date'], slot, await get_student_timezone_offset('telegram', call.from_user.id))}\n"
+        f"🇷🇺 По Москве: {data['date']} {slot}\n\n"
         f"Подтвердить запись?"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1093,9 +1146,16 @@ async def choose_date(call: CallbackQuery, state: FSMContext):
                                          [InlineKeyboardButton(text="🔙 К выбору даты", callback_data="back_to_date")]
                                      ]))
         return
-    buttons = [[InlineKeyboardButton(text=s, callback_data=f"slot_{s}")] for s in slots]
+    tz_offset = await get_student_timezone_offset("telegram", call.from_user.id)
+    buttons = [[InlineKeyboardButton(
+        text=slot_button_label(date_str, s, tz_offset),
+        callback_data=f"slot_{s}",
+    )] for s in slots]
     buttons.append([InlineKeyboardButton(text="🔙 К выбору даты", callback_data="back_to_date")])
-    await call.message.edit_text("Выберите время:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await call.message.edit_text(
+        f"Выберите время ({timezone_label(tz_offset)}). Изменить часовой пояс можно кнопкой «🌍 Часовой пояс» в главном меню.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
     await state.set_state(BookingStates.waiting_time)
 
 
@@ -1148,8 +1208,8 @@ async def choose_slot(call: CallbackQuery, state: FSMContext):
         f"Проверьте данные:\n"
         f"👨‍🏫 Репетитор: {data['tutor_name']}\n"
         f"📚 Предмет: {data['subject']}\n"
-        f"📅 Дата: {data['date']}\n"
-        f"🕒 Время: {slot}\n\nВсё верно?",
+        f"📅 Когда: {booking_local_text(data['date'], slot, await get_student_timezone_offset('telegram', call.from_user.id))}\n"
+        f"🇷🇺 По Москве: {data['date']} {slot}\n\nВсё верно?",
         reply_markup=keyboard
     )
     await state.set_state(BookingStates.waiting_confirmation)
@@ -3443,7 +3503,7 @@ async def _show_day_management(call: CallbackQuery, state: FSMContext):
 
     buttons = [
         [InlineKeyboardButton(text="➕ Добавить слот", callback_data="add_slot")],
-        [InlineKeyboardButton(text="📅 Заполнить промежуток", callback_data="add_range")],
+        [InlineKeyboardButton(text="📅 Интервал/несколько слотов", callback_data="add_range")],
     ]
     if slots:
         buttons.append([InlineKeyboardButton(text="❌ Удалить слот", callback_data="del_slot")])
@@ -3546,7 +3606,7 @@ async def process_add_slot(message: Message, state: FSMContext):
     text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + "\n".join(f"• {s}" for s in slots)
     buttons = [
         [InlineKeyboardButton(text="➕ Добавить слот", callback_data="add_slot")],
-        [InlineKeyboardButton(text="📅 Заполнить промежуток", callback_data="add_range")],
+        [InlineKeyboardButton(text="📅 Интервал/несколько слотов", callback_data="add_range")],
         [InlineKeyboardButton(text="❌ Удалить слот", callback_data="del_slot")],
         [InlineKeyboardButton(text="🔙 К дням недели", callback_data="back_to_schedule")]
     ]
@@ -3665,7 +3725,7 @@ async def process_add_range(message: Message, state: FSMContext):
     display_text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + "\n".join(f"• {s}" for s in existing)
     buttons = [
         [InlineKeyboardButton(text="➕ Добавить слот", callback_data="add_slot")],
-        [InlineKeyboardButton(text="📅 Заполнить промежуток", callback_data="add_range")],
+        [InlineKeyboardButton(text="📅 Интервал/несколько слотов", callback_data="add_range")],
         [InlineKeyboardButton(text="❌ Удалить слот", callback_data="del_slot")],
         [InlineKeyboardButton(text="🔙 К дням недели", callback_data="back_to_schedule")]
     ]
@@ -3714,7 +3774,7 @@ async def confirm_del_slot(call: CallbackQuery, state: FSMContext):
     text = f"Слоты для {WEEKDAY_NAMES[day]}:\n" + "\n".join(f"• {s}" for s in slots) if slots else "Нет слотов."
     buttons = [
         [InlineKeyboardButton(text="➕ Добавить слот", callback_data="add_slot")],
-        [InlineKeyboardButton(text="📅 Заполнить промежуток", callback_data="add_range")],
+        [InlineKeyboardButton(text="📅 Интервал/несколько слотов", callback_data="add_range")],
     ]
     if slots:
         buttons.append([InlineKeyboardButton(text="❌ Удалить слот", callback_data="del_slot")])

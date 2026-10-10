@@ -119,7 +119,8 @@ async def _poll_pending(legacy, *, telegram_bot=None) -> None:
                     int(booking_id),
                 )
                 current = dict(current_row) if current_row else None
-                if not current or not legacy.booking_needs_payment_poll(current):
+                if (not current or not legacy.booking_needs_payment_poll(current)
+                        or str(current.get("tinkoff_payment_id")) != str(payment_id)):
                     continue
 
                 payment_state = await legacy.check_payment(str(payment_id))

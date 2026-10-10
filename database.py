@@ -70,6 +70,32 @@ def _stats_counted_after_status_change(old_status: str, new_status: str,
     return bool(currently_counted)
 
 
+async def get_student_timezone_offset(platform: str, platform_user_id: int) -> int:
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        student_id = await _student_for_account_conn(conn, platform, platform_user_id, create=True)
+        value = await conn.fetchval(
+            "SELECT timezone_offset_minutes FROM student_profiles WHERE id=$1",
+            int(student_id),
+        )
+    return int(value if value is not None else 180)
+
+
+async def set_student_timezone_offset(platform: str, platform_user_id: int, offset_minutes: int) -> int:
+    offset_minutes = int(offset_minutes)
+    if offset_minutes < -720 or offset_minutes > 840:
+        raise ValueError("timezone offset is out of supported range")
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            student_id = await _student_for_account_conn(conn, platform, platform_user_id, create=True)
+            await conn.execute(
+                "UPDATE student_profiles SET timezone_offset_minutes=$1 WHERE id=$2",
+                offset_minutes, int(student_id),
+            )
+    return offset_minutes
+
+
 async def _student_for_account_conn(conn, platform: str, platform_user_id: int,
                                     *, create: bool = True) -> Optional[int]:
     platform = str(platform or "").lower()
@@ -127,6 +153,7 @@ async def init_db():
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS email TEXT;
+                ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS timezone_offset_minutes INTEGER NOT NULL DEFAULT 180;
                 ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS acquisition_source TEXT;
                 ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS acquisition_platform TEXT;
                 ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS acquisition_payload TEXT;
@@ -845,6 +872,30 @@ async def get_booking_events(booking_id: int) -> list:
             booking_id,
         )
     return [dict(row) for row in rows]
+
+
+async def replace_expired_booking_payment(booking_id: int, old_payment_id: str,
+                                          new_payment_id: str) -> bool:
+    """Attach the new payment without rewriting the lesson or its price snapshot."""
+    await _ensure_pool()
+    async with _legacy.pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """UPDATE bookings SET tinkoff_payment_id=$3, updated_at=NOW()
+                   WHERE id=$1 AND tinkoff_payment_id=$2 AND status='confirmed'
+                     AND booking_type='regular'
+                   RETURNING id""",
+                int(booking_id), str(old_payment_id), str(new_payment_id),
+            )
+            if not row:
+                return False
+            await _add_booking_event(
+                conn, int(booking_id), "payment_renewed", "confirmed", "confirmed",
+                "payment", None,
+                {"old_payment_id": str(old_payment_id), "payment_id": str(new_payment_id),
+                 "reason": "DEADLINE_EXPIRED"},
+            )
+    return True
 
 
 async def _sync_booking_record_safely(booking_id: int):

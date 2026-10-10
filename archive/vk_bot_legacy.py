@@ -34,8 +34,10 @@ from database import (
     get_booked_slots, mark_booking_paid_once, mark_booking_payment_failed, reschedule_booking, move_booking_in_place,
     get_student_email, set_student_email, is_trial_available,
     get_linked_accounts, create_account_link_code, consume_account_link_code,
-    get_bookings_for_account,
+    get_bookings_for_account, get_student_timezone_offset, set_student_timezone_offset,
 )
+from timezone_support import SUPPORTED_TIMEZONES, booking_local_text, slot_button_label, timezone_label
+from vk_keyboard_pagination import PaginatedAPI, show_page
 from payments import create_payment, check_payment
 from messaging import (
     send_to_user, send_to_tutor, send_telegram_message,
@@ -100,7 +102,7 @@ if not TELEGRAM_BOT_TOKEN:
 
 # -------------------- Бот и диспетчер состояний --------------------
 state_dispenser = StateDispenserWithUpdate()
-bot = Bot(token=BOT_TOKEN, state_dispenser=state_dispenser)
+bot = Bot(api=PaginatedAPI(BOT_TOKEN), state_dispenser=state_dispenser)
 
 
 # -------------------- Группы состояний (FSM) --------------------
@@ -253,6 +255,7 @@ async def get_main_menu(user_id: int) -> str:
     kb.row()
     kb.add(Text("❓ Помощь"), color=KeyboardButtonColor.PRIMARY)
     kb.row()
+    kb.add(Text("🌍 Часовой пояс"), color=KeyboardButtonColor.PRIMARY)
     kb.add(Text("🔗 Связать Telegram и VK"), color=KeyboardButtonColor.PRIMARY)
     return kb.get_json()
 
@@ -522,6 +525,43 @@ def account_link_result_text(result: dict) -> str:
     return "⚠️ Код не найден или уже использован. Проверьте код либо создайте новый."
 
 
+@bot.on.private_message(text=["🌍 Часовой пояс", "/timezone"])
+async def timezone_menu(message: Message):
+    await state_dispenser.delete(message.from_id)
+    current = await get_student_timezone_offset("vk", message.from_id)
+    kb = Keyboard(inline=True)
+    for index, (label, offset) in enumerate(SUPPORTED_TIMEZONES):
+        text = ("✅ " if offset == current else "") + label
+        kb.add(Callback(text, payload={"cmd": f"timezone_set_{offset}"}))
+        if (index + 1) % 3 == 0:
+            kb.row()
+    if len(SUPPORTED_TIMEZONES) % 3:
+        kb.row()
+    kb.add(Callback("🔙 В главное меню", payload={"cmd": "back_to_menu"}))
+    await message.answer(
+        f"Ваш часовой пояс: {timezone_label(current)}\nВыберите свой часовой пояс. Время записи будет отображаться с его учётом.",
+        keyboard=kb.get_json(),
+    )
+
+
+async def timezone_set(event: MessageEvent):
+    try:
+        offset = int(event.payload["cmd"].rsplit("_", 1)[1])
+        if offset not in {value for _, value in SUPPORTED_TIMEZONES}:
+            raise ValueError("unsupported timezone")
+    except (KeyError, ValueError, IndexError):
+        await answer_event(event, "Не удалось определить часовой пояс.", snackbar=True)
+        return
+    await set_student_timezone_offset("vk", event.user_id, offset)
+    kb = Keyboard(inline=True)
+    kb.add(Callback("🔙 В главное меню", payload={"cmd": "back_to_menu"}))
+    await edit_event_message(
+        event,
+        f"✅ Часовой пояс сохранён: {timezone_label(offset)}. Теперь время записи будет показываться локально.",
+        keyboard=kb.get_json(),
+    )
+
+
 @bot.on.private_message(text="🔗 Связать Telegram и VK")
 async def account_link_menu(message: Message):
     await state_dispenser.delete(message.from_id)
@@ -751,8 +791,12 @@ async def trial_date_chosen(event: MessageEvent):
 
     kb = Keyboard(inline=True)
     row = []
+    tz_offset = await get_student_timezone_offset("vk", event.user_id)
     for s in slots:
-        row.append(Callback(s, payload={"cmd": "trial_slot", "slot": s}))
+        row.append(Callback(
+            slot_button_label(date_str, s, tz_offset),
+            payload={"cmd": "trial_slot", "slot": s},
+        ))
         if len(row) == 3:
             for btn in row:
                 kb.add(btn)
@@ -763,7 +807,11 @@ async def trial_date_chosen(event: MessageEvent):
             kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_trial_dates"}))
-    await edit_event_message(event, "Выберите время:", keyboard=kb.get_json())
+    await edit_event_message(
+        event,
+        f"Выберите время ({timezone_label(tz_offset)}). Изменить часовой пояс можно кнопкой «🌍 Часовой пояс» в главном меню.",
+        keyboard=kb.get_json(),
+    )
     await state_dispenser.set(event.user_id, TrialBookingStates.waiting_time)
 
 
@@ -785,8 +833,8 @@ async def trial_slot_chosen(event: MessageEvent):
         f"🎓 <b>Пробное занятие</b>\n"
         f"👨‍🏫 Репетитор: {tutor_name}\n"
         f"📚 Предмет: {data['subject']}\n"
-        f"📅 Дата: {data['date']}\n"
-        f"🕒 Время: {slot}\n\nПодтвердить запись?"
+        f"📅 Когда: {booking_local_text(data['date'], slot, await get_student_timezone_offset('vk', event.user_id))}\n"
+        f"🇷🇺 По Москве: {data['date']} {slot}\n\nПодтвердить запись?"
     )
     keyboard = Keyboard(inline=True)
     keyboard.add(Callback("✅ Подтвердить", payload={"cmd": "confirm_trial"}))
@@ -999,8 +1047,12 @@ async def choose_date(event: MessageEvent):
 
     kb = Keyboard(inline=True)
     row = []
+    tz_offset = await get_student_timezone_offset("vk", event.user_id)
     for s in slots:
-        row.append(Callback(s, payload={"cmd": f"slot_{s}"}))
+        row.append(Callback(
+            slot_button_label(date_str, s, tz_offset),
+            payload={"cmd": f"slot_{s}"},
+        ))
         if len(row) == 3:
             for btn in row:
                 kb.add(btn)
@@ -1011,7 +1063,11 @@ async def choose_date(event: MessageEvent):
             kb.add(btn)
         kb.row()
     kb.add(Callback("🔙 К выбору даты", payload={"cmd": "back_to_date"}))
-    await edit_event_message(event, "Выберите время:", keyboard=kb.get_json())
+    await edit_event_message(
+        event,
+        f"Выберите время ({timezone_label(tz_offset)}). Изменить часовой пояс можно кнопкой «🌍 Часовой пояс» в главном меню.",
+        keyboard=kb.get_json(),
+    )
     await state_dispenser.set(event.user_id, BookingStates.waiting_time)
 
 
@@ -1062,8 +1118,8 @@ async def choose_slot(event: MessageEvent):
     text = (f"Проверьте данные:\n"
             f"Репетитор: {tutor_name}\n"
             f"Предмет: {data['subject']}\n"
-            f"Дата: {data['date']}\n"
-            f"Время: {slot}\n\nВсё верно?")
+            f"Когда: {booking_local_text(data['date'], slot, await get_student_timezone_offset('vk', event.user_id))}\n"
+            f"По Москве: {data['date']} {slot}\n\nВсё верно?")
     kb = Keyboard(inline=True)
     kb.add(Callback("✅ Подтвердить запись", payload={"cmd": "confirm_booking"}))
     kb.row()
@@ -2847,7 +2903,7 @@ async def edit_day(event: MessageEvent):
     kb = Keyboard(inline=True)
     kb.add(Callback("➕ Добавить слот", payload={"cmd": "add_slot"}))
     kb.row()
-    kb.add(Callback("📅 Заполнить промежуток", payload={"cmd": "add_range"}))
+    kb.add(Callback("📅 Интервал/несколько слотов", payload={"cmd": "add_range"}))
     kb.row()
     if slots:
         kb.add(Callback("❌ Удалить слот", payload={"cmd": "del_slot"}))
@@ -2932,7 +2988,7 @@ async def process_add_slot(message: Message):
     kb = Keyboard(inline=True)
     kb.add(Callback("➕ Добавить слот", payload={"cmd": "add_slot"}))
     kb.row()
-    kb.add(Callback("📅 Заполнить промежуток", payload={"cmd": "add_range"}))
+    kb.add(Callback("📅 Интервал/несколько слотов", payload={"cmd": "add_range"}))
     kb.row()
     kb.add(Callback("❌ Удалить слот", payload={"cmd": "del_slot"}))
     kb.row()
@@ -3044,7 +3100,7 @@ async def process_add_range(message: Message):
     kb = Keyboard(inline=True)
     kb.add(Callback("➕ Добавить слот", payload={"cmd": "add_slot"}))
     kb.row()
-    kb.add(Callback("📅 Заполнить промежуток", payload={"cmd": "add_range"}))
+    kb.add(Callback("📅 Интервал/несколько слотов", payload={"cmd": "add_range"}))
     kb.row()
     kb.add(Callback("❌ Удалить слот", payload={"cmd": "del_slot"}))
     kb.row()
@@ -3094,7 +3150,7 @@ async def confirm_del_slot(event: MessageEvent):
     kb = Keyboard(inline=True)
     kb.add(Callback("➕ Добавить слот", payload={"cmd": "add_slot"}))
     kb.row()
-    kb.add(Callback("📅 Заполнить промежуток", payload={"cmd": "add_range"}))
+    kb.add(Callback("📅 Интервал/несколько слотов", payload={"cmd": "add_range"}))
     kb.row()
     if slots:
         kb.add(Callback("❌ Удалить слот", payload={"cmd": "del_slot"}))
@@ -3256,7 +3312,11 @@ async def universal_callback_handler(event: MessageEvent):
         return
 
     # --- Навигация и общие действия ---
-    if cmd == "back_to_menu":
+    if cmd == "keyboard_page":
+        await show_page(sys.modules[__name__], event)
+    elif cmd.startswith("timezone_set_"):
+        await timezone_set(event)
+    elif cmd == "back_to_menu":
         await state_dispenser.delete(user_id)
         await edit_event_message(event, "Главное меню", keyboard=await get_main_menu(user_id))
     elif cmd in {"booking_hub", "booking_regular", "booking_trial"}:

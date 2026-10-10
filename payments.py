@@ -353,6 +353,26 @@ async def check_payment(payment_id: str) -> dict:
     return result
 
 
+async def booking_payment_action(payment_id: str) -> str:
+    """Renew only a bank-confirmed expired session; fail closed on uncertainty."""
+    try:
+        state = await check_payment(str(payment_id))
+    except Exception:
+        logging.exception("Could not check payment before reissuing link")
+        return "unavailable"
+    if not state.get("Success"):
+        return "unavailable"
+    status = _payment_status(state)
+    if status == "DEADLINE_EXPIRED":
+        return "renew"
+    if status in {"CONFIRMED", "AUTHORIZED"}:
+        return "paid"
+    if status in {"NEW", "FORM_SHOWED"}:
+        return "reuse"
+    # Processing, refunds and other terminal statuses must not trigger Init.
+    return "blocked"
+
+
 def _payment_status(response: dict) -> str:
     return str((response or {}).get("Status") or "").upper()
 
