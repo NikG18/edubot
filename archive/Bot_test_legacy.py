@@ -854,14 +854,18 @@ async def trial_date_chosen(call: CallbackQuery, state: FSMContext):
     )] for s in slots]
     buttons.append([InlineKeyboardButton(text="🔙 К выбору даты", callback_data="back_to_trial_dates")])
 
+    prompt = f"Выберите время ({timezone_label(tz_offset)}). Чтобы изменить часовой пояс: /timezone"
     if call.message.content_type != 'text':
         await call.message.delete()
-        await call.message.answer("Выберите время:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        await call.message.answer(
+            prompt,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
     else:
         await call.message.edit_text(
-        f"Выберите время ({timezone_label(tz_offset)}). Чтобы изменить часовой пояс: /timezone",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
+            prompt,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
     await state.set_state(TrialBookingStates.waiting_time)
 
 
@@ -1140,7 +1144,10 @@ async def choose_date(call: CallbackQuery, state: FSMContext):
         callback_data=f"slot_{s}",
     )] for s in slots]
     buttons.append([InlineKeyboardButton(text="🔙 К выбору даты", callback_data="back_to_date")])
-    await call.message.edit_text("Выберите время:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await call.message.edit_text(
+        f"Выберите время ({timezone_label(tz_offset)}). Чтобы изменить часовой пояс: /timezone",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
     await state.set_state(BookingStates.waiting_time)
 
 
