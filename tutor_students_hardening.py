@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tutor_students_rules import group_tutor_students, platform_label
+from booking_visibility_rules import payment_delivery_note
 
 _runtime_vk_legacy = None
 
@@ -44,6 +45,9 @@ async def _telegram_show_students(call, bot):
                 f"  {status_emoji} [{messenger}] {booking['date']} {booking['time_slot']} "
                 f"– {booking['subject']}\n"
             )
+            delivery_note = _tutor_payment_delivery_note(booking)
+            if delivery_note:
+                text += f"  {delivery_note}\n"
             if booking["status"] == "pending":
                 keyboard.append([
                     InlineKeyboardButton(
@@ -139,6 +143,7 @@ def install_telegram_tutor_students_hardening(app) -> None:
     legacy._group_tutor_students = group_tutor_students
     legacy._tutor_platform_label = platform_label
     legacy._tutor_booking_platform_label = _booking_platform_label
+    legacy._tutor_payment_delivery_note = payment_delivery_note
     if legacy.show_students.__code__.co_freevars or _telegram_show_students.__code__.co_freevars:
         raise RuntimeError("Telegram tutor student-panel replacement cannot use closures")
     legacy.show_students.__code__ = _telegram_show_students.__code__

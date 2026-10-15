@@ -127,6 +127,18 @@ async def _vk_message_preflight(legacy, source, booking_id: int):
     }
 
 
+async def _track_payment_delivery(booking_id: int, create_payment):
+    # Email was supplied. Clear the waiting-email marker even if Init or link
+    # delivery fails; the confirmed lesson remains available in the payment menu.
+    await db.set_booking_payment_delivery_state(
+        int(booking_id), "not_sent", expected_states={None, "awaiting_email"}
+    )
+    result = await create_payment()
+    if isinstance(result, dict) and result.get("link_sent"):
+        await db.set_booking_payment_delivery_state(int(booking_id), "sent")
+    return result
+
+
 def install_telegram_email_payment_safety(app) -> None:
     legacy = app.legacy
     if getattr(legacy, "_telegram_email_payment_safety_installed", False):
@@ -137,7 +149,9 @@ def install_telegram_email_payment_safety(app) -> None:
         result = await _telegram_message_preflight(legacy, source, int(booking_id))
         if result is not None:
             return result
-        return await original(source, bot, booking, email, booking_id)
+        return await _track_payment_delivery(
+            int(booking_id), lambda: original(source, bot, booking, email, booking_id)
+        )
 
     legacy.create_and_send_payment = guarded
     if hasattr(app, "create_and_send_payment"):
@@ -155,7 +169,9 @@ def install_vk_email_payment_safety(app) -> None:
         result = await _vk_message_preflight(legacy, source, int(booking_id))
         if result is not None:
             return result
-        return await original(source, booking, email, booking_id)
+        return await _track_payment_delivery(
+            int(booking_id), lambda: original(source, booking, email, booking_id)
+        )
 
     legacy.create_and_send_payment = guarded
     if hasattr(app, "create_and_send_payment"):
