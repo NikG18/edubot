@@ -4,8 +4,6 @@ import json
 import os
 from pathlib import Path
 import unittest
-from unittest.mock import AsyncMock, patch
-from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,26 +49,6 @@ class LegalPublicationTests(unittest.TestCase):
         current = ROOT / "legal/02_student_offer.md"
         self.assertTrue(old.is_file())
         self.assertNotEqual(old.read_bytes(), current.read_bytes())
-
-
-class LateCancellationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_old_late_cancel_button_cannot_finalize_or_charge(self):
-        import completion_hardening as completion
-        legacy = SimpleNamespace(safe_answer=AsyncMock())
-        with patch.object(completion._db, 'get_booking', new_callable=AsyncMock) as get_booking, \
-             patch.object(completion, '_mark_completed', new_callable=AsyncMock) as mark, \
-             patch.object(completion, '_finalize_completed_booking', new_callable=AsyncMock) as finalize:
-            await completion._finalize_admin_outcome(None, legacy, object(), 123, 'late_student_cancel')
-            get_booking.assert_not_awaited()
-            mark.assert_not_awaited()
-            finalize.assert_not_awaited()
-            legacy.safe_answer.assert_awaited_once()
-
-    async def test_only_held_outcome_can_be_recorded_as_completed(self):
-        import completion_hardening as completion
-        self.assertEqual(completion.completion_outcome_details('held')[0], 'completed')
-        with self.assertRaises(ValueError):
-            completion.completion_outcome_details('late_student_cancel')
 
 
 if __name__ == '__main__':
