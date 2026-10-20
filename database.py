@@ -138,6 +138,7 @@ async def init_db():
             "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_status TEXT DEFAULT 'none'",
             "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_updated_at TIMESTAMPTZ",
             "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS stats_counted BOOLEAN",
+            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_delivery_state TEXT",
         ]
         for sql in migrations:
             await conn.execute(sql)
@@ -340,6 +341,7 @@ def _booking_dict(row) -> dict:
         "commission_percent": row["commission_percent"],
         "tinkoff_payment_id": row["tinkoff_payment_id"],
         "payment_msg_id": row["payment_msg_id"],
+        "payment_delivery_state": row.get("payment_delivery_state"),
         "user_platform": row["user_platform"],
         "student_id": row["student_id"],
         "booking_type": row["booking_type"],
@@ -983,6 +985,33 @@ async def add_booking(tutor_id, user_id, username, subject, date, time_slot,
             return None
     await _sync_booking_record_safely(booking_id)
     return booking_id
+
+
+async def set_booking_payment_delivery_state(booking_id: int, state: str, *, expected_states=None) -> bool:
+    """Track payment delivery separately from the tutor's confirmation.
+
+    Closed/paid lessons and trials cannot be changed by a late email or delivery
+    response. Existing rows keep NULL until they enter the new flow.
+    """
+    if state not in {"not_sent", "awaiting_email", "sent"}:
+        raise ValueError("Invalid payment delivery state")
+    await _ensure_pool()
+    expected = None if expected_states is None else [value or "" for value in expected_states]
+    async with _legacy.pool.acquire() as conn:
+        changed = await conn.fetchval(
+            """
+            UPDATE bookings SET payment_delivery_state=$2, updated_at=NOW()
+            WHERE id=$1 AND status='confirmed' AND booking_type='regular'
+              AND ($2 <> 'awaiting_email' OR NULLIF(tinkoff_payment_id, '') IS NULL)
+              AND ($3::text[] IS NULL OR COALESCE(payment_delivery_state, '')=ANY($3))
+              AND payment_delivery_state IS DISTINCT FROM $2
+            RETURNING id
+            """,
+            int(booking_id), state, expected,
+        )
+    if changed:
+        await _sync_booking_record_safely(int(booking_id))
+    return bool(changed)
 
 
 async def update_booking(booking_id, **kwargs):
