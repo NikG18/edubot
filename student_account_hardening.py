@@ -85,6 +85,8 @@ async def set_pending_email_request(platform: str, platform_user_id: int, bookin
             int(platform_user_id),
             int(booking_id),
         )
+    if int(booking_id) > 0:
+        await _db.set_booking_payment_delivery_state(int(booking_id), "awaiting_email")
 
 
 async def delete_pending_email_request(platform: str, platform_user_id: int):

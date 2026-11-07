@@ -1,3 +1,4 @@
+import inspect
 import unittest
 from datetime import date
 from decimal import Decimal
@@ -23,7 +24,7 @@ class TaxAdminTests(unittest.IsolatedAsyncioTestCase):
         self.call.from_user.id=999
         with patch.object(ui.accounting,'sync_sources',AsyncMock()) as sync:
             for name,callback in self.callbacks.items():
-                if name in {'menu','prompt','no_deductions'}:await callback(self.call,self.state)
+                if 'state' in inspect.signature(callback).parameters:await callback(self.call,self.state)
                 else:await callback(self.call)
             message=SimpleNamespace(from_user=SimpleNamespace(id=999),answer=AsyncMock())
             await self.save(message,self.state)

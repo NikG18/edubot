@@ -5,9 +5,11 @@ from types import FunctionType, SimpleNamespace
 import database as _db
 import Bot_test_legacy as legacy
 from Bot_test_legacy import *
+from booking_cards import student_list
 from booking_records import format_dt, render_event, sync_booking_record
 from fiscal_agent import get_tutor_phone, normalize_supplier_phone, set_tutor_phone
 from payments import refund_booking_payment
+from booking_visibility_rules import payment_delivery_note
 
 
 def _is_trial(booking) -> bool:
@@ -119,72 +121,8 @@ def _tg_student_can_change(booking) -> bool:
 
 
 async def _tg_render_records(message):
-    user_id = message.from_user.id
-    bookings = await _db.get_bookings_for_account(
-        "telegram", user_id, statuses={"pending", "confirmed", "paid"}
-    )
-    rows = list(bookings.items())
-    if not rows:
-        await message.answer(
-            "У вас пока нет активных записей.",
-            reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=[
-                [legacy.InlineKeyboardButton(text="📊 Статистика", callback_data="student_stats")],
-                [legacy.InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")],
-            ]),
-        )
-        return
-
-    tutors = await legacy.get_all_tutors()
-    text_lines = ["Ваши записи:\n"]
-    buttons = []
-    for bid, booking in rows:
-        tutor_name = tutors.get(booking["tutor_id"], {}).get("name", "Неизвестный")
-        can_change = _tg_student_can_change(booking)
-        can_reschedule = can_change
-        if _is_trial(booking):
-            can_reschedule = (
-                legacy.parse_booking_time(booking) - legacy.now_msk_naive()
-            ) > timedelta(hours=24)
-        status_text = {
-            "pending": "ожидает подтверждения",
-            "confirmed": "подтверждено, ожидает оплаты",
-            "paid": "оплачено",
-        }.get(booking["status"], booking["status"])
-        if _is_trial(booking) and booking["status"] == "confirmed":
-            status_text = "пробное подтверждено, оплата не требуется"
-        action_note = "⚠️ Действия недоступны"
-        if can_change:
-            action_note = (
-                "⚠️ Можно отменить; пробное будет считаться использованным"
-                if _is_trial(booking) and not can_reschedule
-                else "✅ Можно отменить/перенести"
-            )
-        text_lines.append(
-            f"👨‍🏫 {tutor_name}\n"
-            f"📚 {booking['subject']}\n"
-            f"📅 {booking['date']} 🕒 {booking['time_slot']} ({status_text})\n"
-            + action_note
-        )
-        if can_reschedule:
-            buttons.append([
-                legacy.InlineKeyboardButton(
-                    text=f"🔄 Перенести: {tutor_name} {booking['date']} {booking['time_slot']}"[:64],
-                    callback_data=f"reschedule_student_{bid}",
-                )
-            ])
-        if can_change:
-            buttons.append([
-                legacy.InlineKeyboardButton(
-                    text=f"❌ Отменить: {tutor_name} {booking['date']} {booking['time_slot']}"[:64],
-                    callback_data=f"cancel_student_{bid}",
-                )
-            ])
-    buttons.append([legacy.InlineKeyboardButton(text="📊 Статистика", callback_data="student_stats")])
-    buttons.append([legacy.InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
-    await message.answer(
-        "\n".join(text_lines),
-        reply_markup=legacy.InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
+    text, keyboard = await student_list(legacy, _db, message.from_user.id)
+    await message.answer(text, reply_markup=keyboard, parse_mode=None)
 
 
 async def _tg_my_records(message, state):
@@ -656,6 +594,8 @@ async def _show_admin_booking(call, booking_id: int):
             f"\n❌ Кем отменено: {legacy.html.quote(str(booking['cancelled_by']))}"
             f"\n🕒 Отмена: {format_dt(booking.get('cancelled_at'))}"
         )
+    delivery_note = payment_delivery_note(booking)
+    delivery_line = f"{delivery_note}\n" if delivery_note else ""
     text = (
         f"📚 <b>Занятие #{booking_id}</b>\n\n"
         f"Статус: <b>{legacy.html.quote(str(booking['status']))}</b>\n"
@@ -666,6 +606,7 @@ async def _show_admin_booking(call, booking_id: int):
         f"🕒 {legacy.html.quote(str(booking['time_slot']))}\n"
         f"🌐 {legacy.html.quote(str(booking.get('user_platform') or 'telegram'))}\n"
         f"💳 {amount:.2f} ₽\n"
+        f"{delivery_line}"
         f"↩️ Возврат: {legacy.html.quote(str(booking.get('refund_status') or 'none'))}\n"
         f"🕘 Обновлено: {format_dt(booking.get('updated_at'))}"
         f"{cancelled_line}"

@@ -4,6 +4,7 @@ from datetime import timedelta
 import database as _db
 import vk_bot_legacy as legacy
 from vk_bot_legacy import *
+from booking_visibility_rules import payment_delivery_note
 from fiscal_agent import get_tutor_phone, normalize_supplier_phone, set_tutor_phone
 
 TRIAL_PREFIX = "Пробное: "
@@ -391,6 +392,8 @@ async def _compat_render_my_records(user_id, *, edit_event=None, message=None):
         }.get(b["status"], b["status"])
         if _is_trial(b) and b["status"] == "confirmed":
             status_text = "пробное подтверждено, оплата не требуется"
+        if delivery_note := payment_delivery_note(b):
+            status_text = f"подтверждено; {delivery_note}"
         action_note = "⚠️ Действия недоступны"
         if can_act:
             action_note = (
@@ -399,19 +402,19 @@ async def _compat_render_my_records(user_id, *, edit_event=None, message=None):
                 else "✅ Можно отменить/перенести"
             )
         text_lines.append(
-            f"👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n"
+            f"№{bid} · 👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n"
             f"📅 {b['date']} 🕒 {b['time_slot']} ({status_text})\n"
             + action_note
         )
         if can_reschedule:
             kb.add(legacy.Callback(
-                f"🔄 Перенести: {tutor['name']} {b['date']} {b['time_slot']}",
+                f"🔄 Перенести №{bid} · {b['date']} {b['time_slot']}",
                 payload={"cmd": f"reschedule_student_{bid}"},
             ))
             kb.row()
         if can_act:
             kb.add(legacy.Callback(
-                f"❌ Отменить: {tutor['name']} {b['date']} {b['time_slot']}",
+                f"❌ Отменить №{bid} · {b['date']} {b['time_slot']}",
                 payload={"cmd": f"cancel_student_{bid}"},
             ))
             kb.row()

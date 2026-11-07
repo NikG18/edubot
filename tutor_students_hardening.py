@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from booking_cards import tutor_list
 from tutor_students_rules import group_tutor_students, platform_label
+from booking_visibility_rules import payment_delivery_note
 
 _runtime_vk_legacy = None
 
@@ -18,58 +20,10 @@ async def _telegram_show_students(call, bot):
         await safe_answer(call, "⛔ Доступ запрещён.", show_alert=True)
         return
 
-    bookings = await get_all_bookings()
-    students = _group_tutor_students(bookings, tid)
-    if not students:
-        await call.message.edit_text(
-            "У вас пока нет активных записей.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_tutor_panel_{tid}")]
-            ]),
-        )
-        return
-
-    text = "📋 Ваши ученики:\n\n"
-    keyboard = []
-    for student in students:
-        identity_platforms = _tutor_platform_label(student["platforms"])
-        text += (
-            f"👤 {student['username']} · {identity_platforms} "
-            f"(проведено: {student['completed_lessons']})\n"
-        )
-        for bid, booking in student["active_bookings"]:
-            status_emoji = "✅" if booking["status"] == "paid" else "⏳"
-            messenger = _tutor_booking_platform_label(booking)
-            text += (
-                f"  {status_emoji} [{messenger}] {booking['date']} {booking['time_slot']} "
-                f"– {booking['subject']}\n"
-            )
-            if booking["status"] == "pending":
-                keyboard.append([
-                    InlineKeyboardButton(
-                        text=(f"✅ Подтвердить {booking['username']} {booking['date']} {booking['time_slot']}")[:64],
-                        callback_data=f"tutor_confirm_{bid}",
-                    ),
-                    InlineKeyboardButton(text="❌ Отклонить", callback_data=f"tutor_reject_{bid}"),
-                ])
-            elif booking["status"] == "confirmed":
-                dt = datetime.strptime(
-                    booking["date"] + " " + booking["time_slot"].split("-")[0],
-                    "%d.%m.%Y %H:%M",
-                )
-                if (dt - now_msk_naive()) > timedelta(hours=24):
-                    keyboard.append([
-                        InlineKeyboardButton(text="❌ Отменить", callback_data=f"tutor_cancel_{bid}"),
-                        InlineKeyboardButton(text="🔄 Перенести", callback_data=f"tutor_reschedule_{bid}"),
-                    ])
-        text += "\n"
-
-    keyboard.append([
-        InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_tutor_panel_{tid}")
-    ])
-    await call.message.edit_text(
-        text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
-    )
+    await safe_answer(call)
+    students = _group_tutor_students(await get_all_bookings(), tid)
+    text, keyboard = _render_tutor_records(students, tid)
+    await call.message.edit_text(text, reply_markup=keyboard, parse_mode=None)
 
 
 async def _vk_show_students(event):
@@ -104,17 +58,19 @@ async def _vk_show_students(event):
             status_emoji = "✅" if booking["status"] == "paid" else "⏳"
             messenger = _booking_platform_label(booking)
             text += (
-                f"  {status_emoji} [{messenger}] {booking['date']} {booking['time_slot']} "
+                f"  {status_emoji} №{bid} [{messenger}] {booking['date']} {booking['time_slot']} "
                 f"– {booking['subject']}\n"
             )
+            if delivery_note := payment_delivery_note(booking):
+                text += f"  {delivery_note}\n"
             if booking["status"] == "pending":
                 kb.add(
                     legacy.Callback(
-                        f"✅ Подтвердить {booking['username']} {booking['date']} {booking['time_slot']}",
+                        f"✅ Подтвердить №{bid}",
                         payload={"cmd": f"tutor_confirm_{bid}"},
                     )
                 )
-                kb.add(legacy.Callback("❌ Отклонить", payload={"cmd": f"tutor_reject_{bid}"}))
+                kb.add(legacy.Callback(f"❌ Отклонить №{bid}", payload={"cmd": f"tutor_reject_{bid}"}))
                 kb.row()
             elif booking["status"] == "confirmed":
                 dt = legacy.datetime.strptime(
@@ -122,8 +78,8 @@ async def _vk_show_students(event):
                     "%d.%m.%Y %H:%M",
                 )
                 if (dt - legacy.now_msk_naive()) > legacy.timedelta(hours=24):
-                    kb.add(legacy.Callback("❌ Отменить", payload={"cmd": f"tutor_cancel_{bid}"}))
-                    kb.add(legacy.Callback("🔄 Перенести", payload={"cmd": f"tutor_reschedule_{bid}"}))
+                    kb.add(legacy.Callback(f"❌ Отменить №{bid}", payload={"cmd": f"tutor_cancel_{bid}"}))
+                    kb.add(legacy.Callback(f"🔄 Перенести №{bid}", payload={"cmd": f"tutor_reschedule_{bid}"}))
                     kb.row()
         text += "\n"
 
@@ -137,6 +93,7 @@ def install_telegram_tutor_students_hardening(app) -> None:
         return
 
     legacy._group_tutor_students = group_tutor_students
+    legacy._render_tutor_records = tutor_list
     legacy._tutor_platform_label = platform_label
     legacy._tutor_booking_platform_label = _booking_platform_label
     if legacy.show_students.__code__.co_freevars or _telegram_show_students.__code__.co_freevars:

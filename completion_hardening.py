@@ -16,6 +16,7 @@ from datetime import datetime
 import database as _db
 import fiscal_receipts
 import subscription_hardening as subs
+from booking_visibility_rules import payment_delivery_note
 
 
 async def _trial_only_cleanup(legacy):
@@ -152,6 +153,8 @@ async def _render_admin_booking_with_completion(legacy, call, booking_id: int):
             f"\n🎟 Абонемент: #{booking['subscription_id']}"
             f" · занятие {booking.get('subscription_unit_index') or '—'}"
         )
+    delivery_note = payment_delivery_note(booking)
+    delivery_line = f"{delivery_note}\n" if delivery_note else ""
     finalization_line = ""
     lesson_ended = _booking_has_ended(legacy, booking)
     if booking["status"] == "paid" and not lesson_ended:
@@ -166,6 +169,7 @@ async def _render_admin_booking_with_completion(legacy, call, booking_id: int):
         f"🕒 {legacy.html.quote(str(booking['time_slot']))}\n"
         f"🌐 {legacy.html.quote(str(booking.get('user_platform') or 'telegram'))}\n"
         f"💳 {amount:.2f} ₽\n"
+        f"{delivery_line}"
         f"↩️ Возврат: {legacy.html.quote(str(booking.get('refund_status') or 'none'))}\n"
         f"🕘 Обновлено: {legacy.format_dt(booking.get('updated_at'))}"
         f"{subscription_line}{cancelled_line}{finalization_line}"
