@@ -76,7 +76,9 @@ from booking_hub import install_telegram_booking_hub
 install_telegram_booking_hub(app)
 install_telegram_agent_reports(app)
 
+from booking_cards import install_telegram_booking_cards
 from tax_admin import install_telegram_tax_accounting
+install_telegram_booking_cards(app)
 install_telegram_tax_accounting(app)
 
 

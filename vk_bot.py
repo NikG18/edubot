@@ -399,19 +399,19 @@ async def _compat_render_my_records(user_id, *, edit_event=None, message=None):
                 else "✅ Можно отменить/перенести"
             )
         text_lines.append(
-            f"👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n"
+            f"№{bid} · 👨‍🏫 {tutor['name']}\n📚 {b['subject']}\n"
             f"📅 {b['date']} 🕒 {b['time_slot']} ({status_text})\n"
             + action_note
         )
         if can_reschedule:
             kb.add(legacy.Callback(
-                f"🔄 Перенести: {tutor['name']} {b['date']} {b['time_slot']}",
+                f"🔄 Перенести №{bid} · {b['date']} {b['time_slot']}",
                 payload={"cmd": f"reschedule_student_{bid}"},
             ))
             kb.row()
         if can_act:
             kb.add(legacy.Callback(
-                f"❌ Отменить: {tutor['name']} {b['date']} {b['time_slot']}",
+                f"❌ Отменить №{bid} · {b['date']} {b['time_slot']}",
                 payload={"cmd": f"cancel_student_{bid}"},
             ))
             kb.row()

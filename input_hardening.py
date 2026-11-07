@@ -42,7 +42,11 @@ def install_telegram_input_hardening(app) -> None:
                 if current == edit_state and state is not None and event.photo:
                     values = await state.get_data()
                     editing_photo = values.get("edit_field") == "photo"
-                if current and current != photo_state and not editing_photo:
+                accepting_document = (
+                    getattr(event, "document", None) is not None
+                    and current in getattr(legacy, "_document_input_states", ())
+                )
+                if current and current != photo_state and not editing_photo and not accepting_document:
                     await event.answer(
                         "Сейчас бот ожидает текстовое сообщение. "
                         "Отправьте текст или вернитесь в меню."

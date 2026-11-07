@@ -17,6 +17,7 @@ import asyncpg
 import tax_accounting as tax
 from tax_rules import parse_import, import_template
 from tax_export import export_bundle
+from tax_admin import build_guided_row
 
 
 class Clock:
@@ -84,6 +85,35 @@ class TaxDatabaseTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError): await tax.import_entries([row('one',amount='2')],1)
         with self.assertRaises(ValueError): await tax.import_entries([row('two'),row('one',amount='2')],1)
         self.assertEqual(len((await tax.data_for_year(2026))[1]),1)
+
+    async def test_source_card_keeps_document_date_and_links_refund_in_journal(self):
+        await self.seed_payment()
+        async with self.pool.acquire() as c:
+            await c.execute(
+                "INSERT INTO booking_events(booking_id,event_type,details) VALUES(1,'refunded',$1::jsonb)",
+                json.dumps(dict(payment_id='100', amount=100000)),
+            )
+        await tax.sync_sources()
+        count, sources = await tax.unresolved()
+        self.assertEqual(count, 2)
+        refs = {s['source_key']: s['review_ref'] for s in sources}
+        with self.assertRaisesRegex(ValueError, 'исходное поступление'):
+            await build_guided_row({'source': refs['refund:100:full']}, '20.09.2026;Возврат №1')
+        income = await build_guided_row({'source': refs['payment:100']}, '10.09.2026;Выписка №1')
+        await tax.import_entries([income], 1)
+        posted = await tax.review_source(refs['payment:100'])
+        self.assertEqual(posted['posted_operation'], income['operation_id'])
+        refund = await build_guided_row({'source': refs['refund:100:full']}, '20.09.2026;Возврат №1')
+        self.assertEqual(refund['original_id'], income['operation_id'])
+        await tax.import_entries([refund], 1)
+        count, offset, entries = await tax.entries_page(2026, limit=1, offset=100)
+        self.assertEqual((count, offset), (2, 1))
+        self.assertEqual(entries[0]['tax_date'], date(2026, 9, 10))
+        _, _, entries = await tax.entries_page(2026)
+        detail = await tax.get_entry(entries[0]['id'], 2026)
+        self.assertEqual(detail['original_operation'], income['operation_id'])
+        self.assertEqual(detail['income_kop'], -100000)
+        self.assertEqual((await tax.unresolved())[0], 0)
 
     async def test_supplier_role_and_gross_amount_guard(self):
         await self.seed_payment();await self.seed_payment('300','transit')

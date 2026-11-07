@@ -11,6 +11,11 @@ import payments
 from tax_rules import (RULES_YEAR, calculate_tax, money_kop, validate_allocation)
 
 _SCHEMA_READY = False
+SOURCE_ENTRY_KINDS = {
+    'payment': {'own': 'income', 'transit': 'transit'},
+    'refund': {'own': 'refund', 'transit': 'transit'},
+    'agent_fee': {'fee': 'agent_fee'},
+}
 
 
 async def ensure_schema():
@@ -173,11 +178,45 @@ async def unresolved(limit=20, offset=0):
     async with db._legacy.pool.acquire() as conn:
         count = await conn.fetchval('''SELECT COUNT(*) FROM tax_sources s WHERE NOT EXISTS
                                    (SELECT 1 FROM tax_entries e WHERE e.source_key=s.source_key)''')
-        rows = await conn.fetch('''SELECT s.* FROM tax_sources s WHERE NOT EXISTS
+        rows = await conn.fetch('''SELECT s.*,md5(s.source_key) AS review_ref FROM tax_sources s WHERE NOT EXISTS
                                   (SELECT 1 FROM tax_entries e WHERE e.source_key=s.source_key)
                                   ORDER BY s.observed_at NULLS LAST,s.source_key LIMIT $1 OFFSET $2''',
                                 int(limit),max(0,int(offset)))
     return int(count),[dict(r) for r in rows]
+
+
+async def review_source(ref):
+    """Resolve a compact Telegram callback reference to an accounting source."""
+    await ensure_schema()
+    async with db._legacy.pool.acquire() as conn:
+        row = await conn.fetchrow('''SELECT s.*,e.operation_id AS posted_operation,
+                origin.operation_id AS original_operation
+            FROM tax_sources s
+            LEFT JOIN tax_entries e ON e.source_key=s.source_key
+            LEFT JOIN tax_entries origin ON origin.source_key=s.payload->>'original_source'
+            WHERE md5(s.source_key)=$1''', ref)
+    return dict(row) if row else None
+
+
+async def entries_page(year, *, limit=8, offset=0):
+    await ensure_schema()
+    async with db._legacy.pool.acquire() as conn:
+        async with conn.transaction(isolation='repeatable_read', readonly=True):
+            count = await conn.fetchval('SELECT COUNT(*) FROM tax_entries WHERE tax_year=$1', year)
+            offset = min(max(0, int(offset)), max(0, (count - 1) // limit) * limit)
+            rows = await conn.fetch('''SELECT id,operation_id,tax_date,kind,gross_kop
+                FROM tax_entries WHERE tax_year=$1
+                ORDER BY tax_date DESC,id DESC LIMIT $2 OFFSET $3''', year, limit, offset)
+    return int(count), offset, [dict(row) for row in rows]
+
+
+async def get_entry(entry_id, year):
+    await ensure_schema()
+    async with db._legacy.pool.acquire() as conn:
+        row = await conn.fetchrow('''SELECT e.*, original.operation_id AS original_operation
+            FROM tax_entries e LEFT JOIN tax_entries original ON original.id=e.original_id
+            WHERE e.id=$1 AND e.tax_year=$2''', entry_id, year)
+    return dict(row) if row else None
 
 
 def fingerprint(row):
@@ -224,10 +263,7 @@ async def import_entries(rows, actor_id):
                     if kind!='exclude':
                         if amount!=int(source['gross_kop']):
                             raise ValueError('Сумма не совпадает с исходной операцией (нужна полная сумма до комиссии банка).')
-                        expected={'payment':{'own':'income','transit':'transit'},
-                                  'refund':{'own':'refund','transit':'transit'},
-                                  'agent_fee':{'fee':'agent_fee'}}
-                        required=expected.get(source['source_kind'],{}).get(source['role'])
+                        required=SOURCE_ENTRY_KINDS.get(source['source_kind'],{}).get(source['role'])
                         if not required:
                             raise ValueError('У источника нет достоверных реквизитов поставщика. Нужна ручная сверка.')
                         if kind!=required:
