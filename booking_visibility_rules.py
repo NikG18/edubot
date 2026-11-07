@@ -23,6 +23,17 @@ def can_offer_separate_payment(booking: dict | None) -> bool:
     )
 
 
+def payment_delivery_note(booking: dict | None) -> str:
+    """A payment substate never replaces confirmed or makes a lesson paid."""
+    if not booking or booking.get("status") != "confirmed" or is_trial_booking(booking):
+        return ""
+    return {
+        "awaiting_email": "📧 Ожидаем e-mail ученика; платёж ещё не отправлен",
+        "not_sent": "💳 Ссылка на оплату ещё не отправлена",
+        "sent": "💳 Ссылка на оплату отправлена",
+    }.get(booking.get("payment_delivery_state"), "")
+
+
 def admin_booking_matches(booking: dict | None, section: str) -> bool:
     """Keep trials out of regular status buckets and expose one dedicated section."""
     if not booking:

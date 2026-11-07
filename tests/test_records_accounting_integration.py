@@ -10,6 +10,7 @@ from aiogram.client.session.base import BaseSession
 from aiogram.types import Message, Update
 
 import tax_admin as tax
+import tutor_confirmation_hardening as confirmation
 
 TEST_ENV = {
     'DATABASE_URL': 'postgresql://unused',
@@ -188,3 +189,43 @@ class TelegramScenarioTests(unittest.IsolatedAsyncioTestCase):
             previous = self.screen()
             await self.feed(31, callback='record_tutor_80_0')
             self.assertIs(previous, self.screen())
+
+    async def test_confirming_from_card_shows_email_wait_in_all_telegram_panels(self):
+        booking = dict(id=80, tutor_id=7, status='pending', subject='Химия', date='12.11.2026',
+                       time_slot='12:00-13:00', username='Ученица', user_id=20,
+                       user_platform='telegram', booking_type='regular', updated_at=None)
+        db = self.app._db
+
+        async def accept(bid, status, **kwargs):
+            self.assertEqual((bid, status, kwargs['expected_statuses']), (80, 'confirmed', {'pending'}))
+            booking['status'] = status
+            return True, dict(booking)
+
+        async def request_email(platform, uid, bid):
+            self.assertEqual((platform, uid, bid), ('telegram', 20, 80))
+            self.assertEqual(booking['status'], 'confirmed')
+            booking['payment_delivery_state'] = 'awaiting_email'
+
+        with patch.multiple(db, get_booking=AsyncMock(side_effect=lambda bid: dict(booking)),
+                            change_booking_status=AsyncMock(side_effect=accept),
+                            set_booking_payment_delivery_state=AsyncMock(),
+                            get_student_email=AsyncMock(return_value=None),
+                            get_all_tutors=AsyncMock(return_value={7: {'name': 'Tutor'}}),
+                            account_owns_booking=AsyncMock(return_value=True)), \
+             patch.multiple(self.legacy, get_all_tutors=AsyncMock(return_value={7: {'name': 'Tutor'}}),
+                            get_tutor_by_telegram_id=AsyncMock(return_value=7),
+                            _require_booking_tutor=AsyncMock(return_value=True),
+                            send_to_user=AsyncMock(), create_and_send_payment=AsyncMock()), \
+             patch.object(confirmation, 'resolve_booking_subscription', AsyncMock(return_value=None)), \
+             patch.object(confirmation.accounts, 'set_pending_email_request', AsyncMock(side_effect=request_email)):
+            await self.feed(30, callback='record_tutor_80_0')
+            self.assertIn('tutor_confirm_80', self.callbacks())
+            await self.feed(30, callback='tutor_confirm_80')
+            self.assertEqual(booking['status'], 'confirmed')
+            self.legacy.create_and_send_payment.assert_not_awaited()
+            for uid, callback in ((30, 'record_tutor_80_0'), (20, 'record_student_80_0'),
+                                  (self.admin, 'admin_booking_view_80')):
+                with self.subTest(callback=callback):
+                    await self.feed(uid, callback=callback)
+                    self.assertIn('Ожидаем e-mail', self.screen().text)
+                    self.assertNotIn('tutor_confirm_80', self.callbacks())

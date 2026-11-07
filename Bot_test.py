@@ -9,6 +9,7 @@ from booking_cards import student_list
 from booking_records import format_dt, render_event, sync_booking_record
 from fiscal_agent import get_tutor_phone, normalize_supplier_phone, set_tutor_phone
 from payments import refund_booking_payment
+from booking_visibility_rules import payment_delivery_note
 
 
 def _is_trial(booking) -> bool:
@@ -593,6 +594,8 @@ async def _show_admin_booking(call, booking_id: int):
             f"\n❌ Кем отменено: {legacy.html.quote(str(booking['cancelled_by']))}"
             f"\n🕒 Отмена: {format_dt(booking.get('cancelled_at'))}"
         )
+    delivery_note = payment_delivery_note(booking)
+    delivery_line = f"{delivery_note}\n" if delivery_note else ""
     text = (
         f"📚 <b>Занятие #{booking_id}</b>\n\n"
         f"Статус: <b>{legacy.html.quote(str(booking['status']))}</b>\n"
@@ -603,6 +606,7 @@ async def _show_admin_booking(call, booking_id: int):
         f"🕒 {legacy.html.quote(str(booking['time_slot']))}\n"
         f"🌐 {legacy.html.quote(str(booking.get('user_platform') or 'telegram'))}\n"
         f"💳 {amount:.2f} ₽\n"
+        f"{delivery_line}"
         f"↩️ Возврат: {legacy.html.quote(str(booking.get('refund_status') or 'none'))}\n"
         f"🕘 Обновлено: {format_dt(booking.get('updated_at'))}"
         f"{cancelled_line}"

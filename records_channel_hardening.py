@@ -6,7 +6,7 @@ import logging
 
 import booking_records as records
 import subscription_hardening as subs
-from booking_visibility_rules import is_trial_booking
+from booking_visibility_rules import is_trial_booking, payment_delivery_note
 from database import get_all_tutors, get_booking, get_booking_events
 
 
@@ -50,6 +50,8 @@ async def render_booking_record(booking_id: int):
     status = str(booking.get("status") or "")
     header = TRIAL_HEADERS.get(status) if trial else None
     header = header or records.STATUS_HEADERS.get(status, status)
+    if not trial and status == "confirmed" and booking.get("payment_delivery_state") == "awaiting_email":
+        header = "🟡 ПОДТВЕРЖДЕНО — ОЖИДАЕМ E-MAIL"
     if status == "paid" and usage:
         header = "🎟 ЗАНЯТИЕ ОПЛАЧЕНО ИЗ АБОНЕМЕНТА"
     if status == "cancelled" and not trial:
@@ -86,6 +88,10 @@ async def render_booking_record(booking_id: int):
         payment_source = "💳 Отдельная оплата ещё не создана/ожидается"
     else:
         payment_source = "💳 Отдельный платёж отсутствует"
+
+    delivery_note = payment_delivery_note(booking)
+    if delivery_note and not usage:
+        payment_source += " · " + delivery_note
 
     booking_type = "Пробное" if trial else "Обычное"
     student_id = booking.get("student_id")

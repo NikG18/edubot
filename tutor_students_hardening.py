@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from booking_cards import tutor_list
 from tutor_students_rules import group_tutor_students, platform_label
+from booking_visibility_rules import payment_delivery_note
 
 _runtime_vk_legacy = None
 
@@ -60,6 +61,8 @@ async def _vk_show_students(event):
                 f"  {status_emoji} №{bid} [{messenger}] {booking['date']} {booking['time_slot']} "
                 f"– {booking['subject']}\n"
             )
+            if delivery_note := payment_delivery_note(booking):
+                text += f"  {delivery_note}\n"
             if booking["status"] == "pending":
                 kb.add(
                     legacy.Callback(

@@ -4,6 +4,7 @@ from datetime import timedelta
 import database as _db
 import vk_bot_legacy as legacy
 from vk_bot_legacy import *
+from booking_visibility_rules import payment_delivery_note
 from fiscal_agent import get_tutor_phone, normalize_supplier_phone, set_tutor_phone
 
 TRIAL_PREFIX = "Пробное: "
@@ -391,6 +392,8 @@ async def _compat_render_my_records(user_id, *, edit_event=None, message=None):
         }.get(b["status"], b["status"])
         if _is_trial(b) and b["status"] == "confirmed":
             status_text = "пробное подтверждено, оплата не требуется"
+        if delivery_note := payment_delivery_note(b):
+            status_text = f"подтверждено; {delivery_note}"
         action_note = "⚠️ Действия недоступны"
         if can_act:
             action_note = (

@@ -5,7 +5,7 @@ from datetime import timedelta
 from aiogram import F
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from booking_visibility_rules import is_trial_booking
+from booking_visibility_rules import is_trial_booking, payment_delivery_note
 from tutor_students_rules import group_tutor_students
 
 ACTIVE_STATUSES = frozenset({"pending", "confirmed", "paid"})
@@ -30,11 +30,8 @@ def button(text, data):
 def status_label(booking):
     if booking["status"] == "confirmed" and is_trial_booking(booking):
         return "Пробное подтверждено, бесплатно"
-    if booking["status"] == "confirmed":
-        if booking.get("payment_delivery_state") == "awaiting_email":
-            return "Подтверждено, ожидается e-mail"
-        if booking.get("payment_delivery_state") == "not_sent":
-            return "Подтверждено, ссылка на оплату ещё не отправлена"
+    if delivery_note := payment_delivery_note(booking):
+        return f"Подтверждено · {delivery_note}"
     return STATUSES.get(booking["status"], "Неизвестный статус")
 
 

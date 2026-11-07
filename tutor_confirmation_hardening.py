@@ -49,8 +49,9 @@ async def _request_email(legacy, booking: dict) -> None:
     await legacy.send_to_user(
         user_id,
         platform,
-        "📧 Для завершения записи и получения чека введите ваш адрес электронной почты "
-        "обычным текстовым сообщением.",
+        "✅ Занятие подтверждено преподавателем.\n"
+        "📧 Для создания платежа и получения чека введите ваш адрес электронной почты "
+        "обычным текстовым сообщением. Ссылка на оплату придёт после ввода e-mail.",
     )
 
 
@@ -62,7 +63,7 @@ def _subscription_block_text(reason: str | None, booking_id: int) -> str:
             "не создан. После подтверждения абонемента откройте раздел «Оплата» ещё раз."
         )
     return (
-        "⚠️ Подтверждение занятия временно остановлено: найденный абонемент "
+        "✅ Занятие подтверждено преподавателем. Найденный абонемент "
         "требует проверки. "
         f"Отдельный платёж за занятие #{booking_id} не создавался. Обратитесь в поддержку."
     )
@@ -73,12 +74,38 @@ def _tutor_subscription_block_text(reason: str | None) -> str:
     if reason in PENDING_PACKAGE_ERRORS:
         return "✅ Занятие подтверждено. Ученик уведомлён."
     return (
-        "⚠️ Подтверждение занятия временно остановлено. "
+        "✅ Занятие подтверждено. Оплата требует проверки. "
         "Ученик уведомлён; при необходимости обратитесь к администратору."
     )
 
 
 async def _confirm_regular(legacy, booking: dict, actor_id: int, *, telegram_bot=None, source=None):
+    booking_id = int(booking["id"])
+    changed, current = await _db.change_booking_status(
+        booking_id,
+        "confirmed",
+        event_type="confirmed",
+        actor_type="tutor",
+        actor_id=int(actor_id),
+        reason="Подтверждено преподавателем; оплата оформляется отдельно",
+        expected_statuses={"pending"},
+    )
+    if not changed:
+        return {"kind": "already_processed"}
+    # Persist the tutor's decision before any email prompt or bank request. A
+    # delivery failure must never put the lesson back into the pending queue.
+    booking = current or dict(booking, status="confirmed")
+    try:
+        await _db.set_booking_payment_delivery_state(booking_id, "not_sent")
+        return await _prepare_confirmed_regular(
+            legacy, booking, actor_id, telegram_bot=telegram_bot, source=source
+        )
+    except Exception:
+        legacy.logging.exception("Payment preparation failed for confirmed booking=%s", booking_id)
+        return {"kind": "payment_failed"}
+
+
+async def _prepare_confirmed_regular(legacy, booking: dict, actor_id: int, *, telegram_bot=None, source=None):
     booking_id = int(booking["id"])
 
     reserved = await resolve_booking_subscription(
@@ -86,25 +113,11 @@ async def _confirm_regular(legacy, booking: dict, actor_id: int, *, telegram_bot
         booking_id,
         int(actor_id),
         actor_type="tutor",
-        allowed_statuses={"pending"},
+        allowed_statuses={"confirmed"},
     )
     if reserved is not None:
         if reserved.get("error"):
             reason = str(reserved.get("error") or "subscription_check_failed")
-            # The tutor did confirm the lesson. When only the package payment is
-            # still pending/unknown, preserve that confirmation while keeping the
-            # lesson uncharged; the payment menu can reconcile it later.
-            if reason in PENDING_PACKAGE_ERRORS:
-                await _db.change_booking_status(
-                    booking_id,
-                    "confirmed",
-                    event_type="confirmed",
-                    actor_type="tutor",
-                    actor_id=int(actor_id),
-                    reason="Подтверждено преподавателем; ожидается подтверждение оплаты абонемента",
-                    expected_statuses={"pending"},
-                    details={"subscription_payment_state": reason},
-                )
             text = _subscription_block_text(reason, booking_id)
             await legacy.send_to_user(
                 booking["user_id"], booking.get("user_platform", "telegram"), text
@@ -181,7 +194,9 @@ async def _telegram_confirm(call, bot, state):
         source=call,
     )
     await state.clear()
-    if result["kind"] == "subscription":
+    if result["kind"] == "already_processed":
+        await call.message.edit_text("Заявка уже обработана.")
+    elif result["kind"] == "subscription":
         await call.message.edit_text(
             "✅ Занятие подтверждено. Оплата списана из абонемента.\n"
             f"Остаток: {result['remaining']} занятий."
@@ -191,7 +206,7 @@ async def _telegram_confirm(call, bot, state):
             _confirmation_tutor_subscription_block_text(result.get("reason"))
         )
     elif result["kind"] == "email_required":
-        await call.message.edit_text("✅ Заявка подтверждена. Ожидаем e-mail ученика для создания платежа.")
+        await call.message.edit_text("✅ Занятие подтверждено. Ожидаем e-mail ученика; платёж ещё не отправлен.")
     elif result["kind"] == "payment_created":
         await call.message.edit_text("✅ Заявка подтверждена. Ссылка на оплату отправлена ученику.")
     elif result["kind"] == "payment_created_link_pending":
@@ -262,7 +277,9 @@ def install_vk_tutor_confirmation(app) -> None:
             telegram_bot=None,
             source=event,
         )
-        if result["kind"] == "subscription":
+        if result["kind"] == "already_processed":
+            await legacy.edit_event_message(event, "Заявка уже обработана.")
+        elif result["kind"] == "subscription":
             await legacy.edit_event_message(
                 event,
                 "✅ Занятие подтверждено. Оплата списана из абонемента.\n"
@@ -273,7 +290,7 @@ def install_vk_tutor_confirmation(app) -> None:
                 event, _tutor_subscription_block_text(result.get("reason"))
             )
         elif result["kind"] == "email_required":
-            await legacy.edit_event_message(event, "✅ Заявка подтверждена. Ожидаем e-mail ученика для создания платежа.")
+            await legacy.edit_event_message(event, "✅ Занятие подтверждено. Ожидаем e-mail ученика; платёж ещё не отправлен.")
         elif result["kind"] == "payment_created":
             await legacy.edit_event_message(event, "✅ Заявка подтверждена. Ссылка на оплату отправлена ученику.")
         elif result["kind"] == "payment_created_link_pending":
